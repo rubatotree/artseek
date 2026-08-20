@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "artseek-local"
+version = "0.1.0"
+description = "Offline-first semantic image search for illustration collections"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "ArtSeek contributors" }]
+dependencies = [
+  "huggingface-hub>=0.28,<2",
+  "httpx[socks]>=0.28,<1",
+  "numpy>=1.26,<3",
+  "pillow>=10.4,<13",
+  "platformdirs>=4.3,<5",
+  "qdrant-client>=1.13,<2",
+  "rich>=13.9,<15",
+  "safetensors>=0.5,<1",
+  "torch>=2.5,<3",  # Windows PyPI wheels are CPU-only; run scripts/install_cuda_torch.ps1
+  "transformers>=4.49,<6",
+  "typer>=0.15,<1",
+]
+
+[project.optional-dependencies]
+tagger = ["timm>=1.0.15,<2"]
+web = [
+  "fastapi>=0.115,<1",
+  "python-multipart>=0.0.20,<1",
+  "uvicorn[standard]>=0.34,<1",
+]
+dev = [
+  "httpx>=0.28,<1",
+  "pytest>=8.3,<10",
+  "ruff>=0.9,<1",
+]
+all = [
+  "timm>=1.0.15,<2",
+  "fastapi>=0.115,<1",
+  "python-multipart>=0.0.20,<1",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.scripts]
+artseek = "artseek.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/artseek"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/artseek/web/app.py" = ["B008"]

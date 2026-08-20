@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ArtSeek · 本地插画检索</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #fbfafc;
+      --panel: rgba(255, 255, 255, .86);
+      --ink: #302d38;
+      --muted: #777180;
+      --line: #e9e4ec;
+      --rose: #d97f9e;
+      --rose-soft: #f9e6ed;
+      --blue: #7799bd;
+      --blue-soft: #eaf2fa;
+      --shadow: 0 16px 45px rgba(69, 51, 76, .09);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 7% 0%, #f9e9f0 0, transparent 31rem),
+        radial-gradient(circle at 95% 10%, #e8f2fb 0, transparent 34rem),
+        var(--paper);
+      font-family: Inter, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+    }
+    .shell { width: min(1500px, calc(100% - 40px)); margin: 0 auto; }
+    header { padding: 42px 0 23px; display: flex; align-items: end; gap: 22px; }
+    .brand { font: 700 clamp(27px, 4vw, 42px)/1.05 Georgia, serif; letter-spacing: -.03em; }
+    .subtitle { color: var(--muted); padding-bottom: 4px; }
+    .search-panel {
+      position: sticky; top: 12px; z-index: 10;
+      padding: 16px; border: 1px solid rgba(255,255,255,.9); border-radius: 22px;
+      background: var(--panel); backdrop-filter: blur(18px); box-shadow: var(--shadow);
+    }
+    .search-row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; }
+    input[type="text"] {
+      width: 100%; border: 1px solid var(--line); border-radius: 14px; padding: 13px 15px;
+      color: var(--ink); background: #fff; font: inherit; outline: none;
+    }
+    input[type="text"]:focus { border-color: #ddb2c2; box-shadow: 0 0 0 4px var(--rose-soft); }
+    button, .upload-label {
+      border: 0; border-radius: 14px; padding: 12px 17px; cursor: pointer; font: 650 14px/1 inherit;
+      transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+    }
+    button:hover, .upload-label:hover { transform: translateY(-1px); }
+    .primary { color: white; background: linear-gradient(135deg, #cc7897, #b8759d); box-shadow: 0 8px 20px #e5bfd0; }
+    .secondary, .upload-label { color: #665866; background: #f6f1f5; }
+    input[type="file"] { display: none; }
+    .options { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; color: var(--muted); font-size: 13px; }
+    .options label { display: flex; align-items: center; gap: 7px; }
+    .reference {
+      display: none; align-items: center; gap: 8px; padding: 6px 9px; border-radius: 10px;
+      background: var(--blue-soft); color: #56718d;
+    }
+    .reference.visible { display: flex; }
+    .reference img { width: 34px; height: 34px; object-fit: cover; border-radius: 7px; }
+    .reference button { padding: 5px 8px; background: transparent; color: inherit; }
+    .query-info { min-height: 24px; margin: 18px 2px 8px; color: var(--muted); font-size: 13px; }
+    .chip { display: inline-block; margin: 3px 5px 3px 0; padding: 5px 9px; border-radius: 999px; background: var(--rose-soft); color: #8a5268; }
+    .chip.negative { background: #eeeef2; color: #706d77; text-decoration: line-through; }
+    .gallery { columns: 5 220px; column-gap: 14px; padding: 8px 0 60px; }
+    .card {
+      break-inside: avoid; margin: 0 0 14px; overflow: hidden; border: 1px solid #eee9ef;
+      border-radius: 16px; background: #fff; box-shadow: 0 7px 22px rgba(58, 47, 64, .055);
+    }
+    .image-wrap { position: relative; background: #f1edf2; cursor: zoom-in; }
+    .image-wrap img { display: block; width: 100%; height: auto; }
+    .score { position: absolute; top: 9px; right: 9px; padding: 5px 8px; border-radius: 999px; background: rgba(31,27,35,.72); color: #fff; font-size: 12px; backdrop-filter: blur(8px); }
+    .card-body { padding: 10px 11px 11px; }
+    .filename { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; font-weight: 650; }
+    .meta { margin-top: 4px; color: var(--muted); font-size: 11px; }
+    .hits { margin-top: 7px; font-size: 11px; color: #965a71; line-height: 1.5; }
+    .card-actions { display: flex; gap: 7px; margin-top: 8px; }
+    .card-actions button { padding: 7px 9px; border-radius: 9px; font-size: 11px; background: #f7f4f7; color: #68616b; }
+    .empty { padding: 90px 20px; text-align: center; color: var(--muted); }
+    .loading { opacity: .55; pointer-events: none; }
+    dialog { width: min(94vw, 1100px); max-height: 94vh; padding: 0; border: 0; border-radius: 18px; overflow: hidden; background: #17151a; box-shadow: 0 30px 80px #201b24aa; }
+    dialog::backdrop { background: rgba(25, 21, 27, .76); backdrop-filter: blur(8px); }
+    dialog img { display: block; width: 100%; max-height: 86vh; object-fit: contain; }
+    .modal-bar { padding: 10px; display: flex; gap: 10px; align-items: center; color: #ddd6e0; }
+    .modal-bar span { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .modal-bar button { background: #302b34; color: #eee8f0; padding: 8px 11px; }
+    @media (max-width: 720px) {
+      .shell { width: min(100% - 20px, 1500px); }
+      header { padding-top: 25px; display: block; }
+      .subtitle { margin-top: 6px; }
+      .search-row { grid-template-columns: 1fr auto; }
+      .search-row .upload-label { grid-column: 1 / -1; text-align: center; }
+      .gallery { columns: 2 145px; column-gap: 9px; }
+      .card { margin-bottom: 9px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="brand">ArtSeek</div>
+      <div class="subtitle">本地插画收藏 · 语义与相似图检索</div>
+    </header>
+    <section class="search-panel" id="panel">
+      <div class="search-row">
+        <input id="query" type="text" placeholder="例如：水色梦幻、穿宽大姬袖和过膝袜、抱膝坐在床上的少女；不要室外" autofocus>
+        <label class="upload-label" for="upload">选择参考图</label>
+        <input id="upload" type="file" accept="image/*">
+        <button class="primary" id="search">查询</button>
+      </div>
+      <div class="options">
+        <label><input id="use-llm" type="checkbox" checked> 本地大模型理解条件</label>
+        <label><input id="strict-tags" type="checkbox"> 细节标签至少命中一项</label>
+        <label>结果数 <input id="limit" type="range" min="12" max="120" step="4" value="40"> <span id="limit-value">40</span></label>
+        <div id="reference" class="reference">
+          <img id="reference-image" alt="参考图">
+          <span id="reference-name">参考图</span>
+          <button id="clear-reference" title="清除参考图">×</button>
+        </div>
+      </div>
+    </section>
+    <div id="query-info" class="query-info">输入描述，或选择一张图片开始检索。</div>
+    <main id="gallery" class="gallery"></main>
+  </div>
+  <dialog id="viewer">
+    <img id="viewer-image" alt="原图预览">
+    <div class="modal-bar"><span id="viewer-title"></span><button id="viewer-reference">用作参考</button><button id="viewer-close">关闭</button></div>
+  </dialog>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const state = { upload: null, referenceId: null, current: null, results: [] };
+
+    $('limit').addEventListener('input', () => $('limit-value').textContent = $('limit').value);
+    $('query').addEventListener('keydown', (event) => { if (event.key === 'Enter') runSearch(); });
+    $('search').addEventListener('click', runSearch);
+    $('upload').addEventListener('change', (event) => {
+      state.upload = event.target.files[0] || null;
+      state.referenceId = null;
+      if (state.upload) showReference(URL.createObjectURL(state.upload), state.upload.name);
+    });
+    $('clear-reference').addEventListener('click', () => {
+      state.upload = null; state.referenceId = null; $('upload').value = '';
+      $('reference').classList.remove('visible');
+    });
+    $('viewer-close').addEventListener('click', () => $('viewer').close());
+    $('viewer').addEventListener('click', (event) => { if (event.target === $('viewer')) $('viewer').close(); });
+    $('viewer-reference').addEventListener('click', () => {
+      if (!state.current) return;
+      state.referenceId = state.current.id; state.upload = null; $('upload').value = '';
+      showReference(`/thumb/${state.current.id}`, state.current.name);
+      $('viewer').close(); window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+
+    function showReference(src, name) {
+      $('reference-image').src = src; $('reference-name').textContent = name;
+      $('reference').classList.add('visible');
+    }
+
+    async function runSearch() {
+      const query = $('query').value.trim();
+      if (!query && !state.upload && !state.referenceId) {
+        $('query-info').textContent = '请先输入描述或选择参考图片。'; return;
+      }
+      $('panel').classList.add('loading');
+      $('query-info').textContent = '正在本地检索……首次查询需要载入模型。';
+      try {
+        let response;
+        if (state.upload) {
+          const form = new FormData();
+          form.append('file', state.upload); form.append('query', query);
+          form.append('limit', $('limit').value); form.append('expand', $('use-llm').checked);
+          form.append('strict_tags', $('strict-tags').checked);
+          response = await fetch('/api/search-upload', { method: 'POST', body: form });
+        } else {
+          response = await fetch('/api/search', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, reference_id: state.referenceId, limit: Number($('limit').value), expand: $('use-llm').checked, strict_tags: $('strict-tags').checked })
+          });
+        }
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || '查询失败');
+        state.results = data.results; renderInfo(data); renderGallery(data.results);
+      } catch (error) {
+        $('query-info').textContent = `查询失败：${error.message}`;
+      } finally { $('panel').classList.remove('loading'); }
+    }
+
+    function renderInfo(data) {
+      const plan = data.query_plan;
+      const positive = plan.positive_tags.map(tag => `<span class="chip">${escapeHtml(tag.replaceAll('_', ' '))}</span>`).join('');
+      const negative = plan.negative_tags.map(tag => `<span class="chip negative">${escapeHtml(tag.replaceAll('_', ' '))}</span>`).join('');
+      const llm = plan.used_llm ? '本地大模型已解析' : '内置插画词典已解析';
+      const warning = data.llm_warning ? ` · Ollama 未就绪，已自动回退` : '';
+      $('query-info').innerHTML = `${llm}${warning} · ${data.results.length} 个结果　${positive}${negative}`;
+    }
+
+    function renderGallery(results) {
+      if (!results.length) { $('gallery').innerHTML = '<div class="empty">没有找到符合条件的图片。可以减少排除条件，或重新建立含详细描述的索引。</div>'; return; }
+      $('gallery').innerHTML = results.map((item, index) => `
+        <article class="card" data-index="${index}">
+          <div class="image-wrap" data-action="view"><img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}"><span class="score">${item.score.toFixed(0)}</span></div>
+          <div class="card-body">
+            <div class="filename" title="${escapeHtml(item.path)}">${escapeHtml(item.name)}</div>
+            <div class="meta">${item.width} × ${item.height}</div>
+            ${item.tag_hits.length ? `<div class="hits">命中：${item.tag_hits.map(t => escapeHtml(t.replaceAll('_',' '))).join(' · ')}</div>` : ''}
+            <div class="card-actions"><button data-action="reference">作为参考图</button><button data-action="open">查看原图</button></div>
+          </div>
+        </article>`).join('');
+      $('gallery').querySelectorAll('.card').forEach(card => card.addEventListener('click', (event) => {
+        const item = results[Number(card.dataset.index)]; const action = event.target.closest('[data-action]')?.dataset.action;
+        if (action === 'reference') { state.referenceId = item.id; state.upload = null; $('upload').value = ''; showReference(`/thumb/${item.id}`, item.name); window.scrollTo({top: 0, behavior:'smooth'}); }
+        if (action === 'view' || action === 'open') openViewer(item);
+      }));
+    }
+
+    function openViewer(item) {
+      state.current = item; $('viewer-image').src = `/image/${item.id}`; $('viewer-title').textContent = item.path; $('viewer').showModal();
+    }
+    function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char])); }
+  </script>
+</body>
+</html>

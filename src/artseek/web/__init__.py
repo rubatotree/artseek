@@ -1,0 +1,2 @@
+"""Local FastAPI gallery."""
+
