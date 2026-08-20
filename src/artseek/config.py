@@ -69,6 +69,14 @@ class AppConfig:
     def thumbnail_dir(self) -> Path:
         return self.cache_dir / "thumbnails"
 
+    @property
+    def folder_scope_path(self) -> Path:
+        return self.data_dir / "folder_scope.json"
+
+    @property
+    def folder_catalog_path(self) -> Path:
+        return self.data_dir / "folder_catalog.json"
+
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.cache_dir.mkdir(parents=True, exist_ok=True)

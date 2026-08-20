@@ -33,6 +33,92 @@
     header { padding: 42px 0 23px; display: flex; align-items: end; gap: 22px; }
     .brand { font: 700 clamp(27px, 4vw, 42px)/1.05 Georgia, serif; letter-spacing: -.03em; }
     .subtitle { color: var(--muted); padding-bottom: 4px; }
+    .search-layout {
+      display: grid;
+      grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .search-column { min-width: 0; }
+    .tree-panel {
+      position: sticky; top: 12px; z-index: 9;
+      max-height: calc(100dvh - 24px);
+      overflow: auto;
+      overscroll-behavior: contain;
+      padding: 14px 12px 16px;
+      border: 1px solid rgba(255,255,255,.9); border-radius: 22px;
+      background: var(--panel); backdrop-filter: blur(18px); box-shadow: var(--shadow);
+    }
+    .tree-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+    .tree-title { font-size: 14px; font-weight: 700; }
+    .tree-sort {
+      min-width: 0; width: 100%; max-width: 168px;
+      border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px;
+      color: var(--ink); background: #fff; font: 12px/1.2 inherit;
+    }
+    .tree-sort:focus-visible, .tree-row input:focus-visible, .tree-twist:focus-visible,
+    .time-preset:focus-visible, .time-custom input:focus-visible {
+      outline: 2px solid #ddb2c2; outline-offset: 2px;
+    }
+    .tree-actions { display: flex; gap: 8px; margin-bottom: 8px; }
+    .tree-actions button { padding: 7px 10px; font-size: 12px; }
+    .tree-summary { margin-bottom: 10px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .tree-empty { padding: 18px 8px; color: var(--muted); font-size: 13px; }
+    .tree-row {
+      display: flex; align-items: center; gap: 2px;
+      min-height: 32px; margin: 1px 0; padding-right: 4px; border-radius: 8px;
+    }
+    .tree-row:hover { background: #f6f1f5; }
+    .tree-twist {
+      flex: 0 0 auto; width: 22px; height: 22px; padding: 0;
+      border-radius: 6px; background: transparent; color: var(--muted); font-size: 10px;
+    }
+    .tree-twist:hover { transform: none; background: #efeaf0; }
+    .tree-twist[hidden] { visibility: hidden; pointer-events: none; }
+    .tree-label {
+      display: flex; align-items: center; gap: 7px;
+      min-width: 0; flex: 1; cursor: pointer; font-size: 13px;
+    }
+    .tree-label input { accent-color: #c97a98; width: 15px; height: 15px; }
+    .tree-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .tree-new {
+      flex: 0 0 auto; padding: 1px 6px; border-radius: 999px;
+      background: var(--rose-soft); color: #8a5268; font-size: 10px; font-weight: 650;
+    }
+    .tree-count {
+      margin-left: auto; flex: 0 0 auto;
+      color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
+    }
+    .tree-remove {
+      flex: 0 0 auto; width: 22px; height: 22px; padding: 0;
+      border-radius: 6px; background: transparent; color: #b08996; font-size: 14px; line-height: 1;
+    }
+    .tree-remove:hover { transform: none; background: #f3e4ea; color: #8a5268; }
+    .tree-refresh {
+      flex: 0 0 auto; width: 22px; height: 22px; padding: 0;
+      border-radius: 6px; background: transparent; color: #7a8aa0; font-size: 13px; line-height: 1;
+    }
+    .tree-refresh:hover { transform: none; background: #eaf2fa; color: #56718d; }
+    .index-add { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin-bottom: 10px; }
+    .index-add input {
+      min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 7px 8px;
+      color: var(--ink); background: #fff; font: 12px/1.2 inherit;
+    }
+    .index-add button { padding: 7px 10px; font-size: 12px; }
+    .index-status { margin-bottom: 10px; color: #8a5268; font-size: 12px; line-height: 1.45; }
+    .time-filter { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+    .time-filter-label { margin-bottom: 8px; font-size: 14px; font-weight: 700; }
+    .time-preset {
+      width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 7px 8px;
+      color: var(--ink); background: #fff; font: 12px/1.2 inherit;
+    }
+    .time-custom { display: none; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+    .time-custom.visible { display: grid; }
+    .time-custom label { display: grid; gap: 4px; color: var(--muted); font-size: 11px; }
+    .time-custom input[type="date"] {
+      width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px;
+      color: var(--ink); background: #fff; font: inherit; font-size: 12px;
+    }
     .search-panel {
       position: sticky; top: 12px; z-index: 10;
       padding: 16px; border: 1px solid rgba(255,255,255,.9); border-radius: 22px;
@@ -64,13 +150,16 @@
     .query-info { min-height: 24px; margin: 18px 2px 8px; color: var(--muted); font-size: 13px; }
     .chip { display: inline-block; margin: 3px 5px 3px 0; padding: 5px 9px; border-radius: 999px; background: var(--rose-soft); color: #8a5268; }
     .chip.negative { background: #eeeef2; color: #706d77; text-decoration: line-through; }
-    .gallery { columns: 5 220px; column-gap: 14px; padding: 8px 0 60px; }
+    .gallery {
+      display: flex; align-items: flex-start; gap: 14px; padding: 8px 0 60px;
+    }
+    .gallery-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
     .card {
-      break-inside: avoid; margin: 0 0 14px; overflow: hidden; border: 1px solid #eee9ef;
+      overflow: hidden; border: 1px solid #eee9ef;
       border-radius: 16px; background: #fff; box-shadow: 0 7px 22px rgba(58, 47, 64, .055);
     }
-    .image-wrap { position: relative; background: #f1edf2; cursor: zoom-in; }
-    .image-wrap img { display: block; width: 100%; height: auto; }
+    .image-wrap { position: relative; background: #f1edf2; cursor: zoom-in; overflow: hidden; }
+    .image-wrap img { display: block; width: 100%; height: 100%; object-fit: cover; }
     .score { position: absolute; top: 9px; right: 9px; padding: 5px 8px; border-radius: 999px; background: rgba(31,27,35,.72); color: #fff; font-size: 12px; backdrop-filter: blur(8px); }
     .card-body { padding: 10px 11px 11px; }
     .filename { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; font-weight: 650; }
@@ -79,6 +168,9 @@
     .card-actions { display: flex; gap: 7px; margin-top: 8px; }
     .card-actions button { padding: 7px 9px; border-radius: 9px; font-size: 11px; background: #f7f4f7; color: #68616b; }
     .empty { padding: 90px 20px; text-align: center; color: var(--muted); }
+    .load-more {
+      padding: 18px 12px 48px; text-align: center; color: var(--muted); font-size: 13px;
+    }
     .loading { opacity: .55; pointer-events: none; }
     dialog { width: min(94vw, 1100px); max-height: 94vh; padding: 0; border: 0; border-radius: 18px; overflow: hidden; background: #17151a; box-shadow: 0 30px 80px #201b24aa; }
     dialog::backdrop { background: rgba(25, 21, 27, .76); backdrop-filter: blur(8px); }
@@ -86,14 +178,20 @@
     .modal-bar { padding: 10px; display: flex; gap: 10px; align-items: center; color: #ddd6e0; }
     .modal-bar span { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .modal-bar button { background: #302b34; color: #eee8f0; padding: 8px 11px; }
+    @media (max-width: 900px) {
+      .search-layout { grid-template-columns: 1fr; }
+      .tree-panel { position: relative; top: 0; max-height: 280px; }
+    }
     @media (max-width: 720px) {
       .shell { width: min(100% - 20px, 1500px); }
       header { padding-top: 25px; display: block; }
       .subtitle { margin-top: 6px; }
       .search-row { grid-template-columns: 1fr auto; }
       .search-row .upload-label { grid-column: 1 / -1; text-align: center; }
-      .gallery { columns: 2 145px; column-gap: 9px; }
-      .card { margin-bottom: 9px; }
+      .gallery { gap: 9px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      button, .upload-label { transition: none; }
     }
   </style>
 </head>
@@ -103,26 +201,67 @@
       <div class="brand">ArtSeek</div>
       <div class="subtitle">本地插画收藏 · 语义与相似图检索</div>
     </header>
-    <section class="search-panel" id="panel">
-      <div class="search-row">
-        <input id="query" type="text" placeholder="例如：水色梦幻、穿宽大姬袖和过膝袜、抱膝坐在床上的少女；不要室外" autofocus>
-        <label class="upload-label" for="upload">选择参考图</label>
-        <input id="upload" type="file" accept="image/*">
-        <button class="primary" id="search">查询</button>
-      </div>
-      <div class="options">
-        <label><input id="use-llm" type="checkbox" checked> 本地大模型理解条件</label>
-        <label><input id="strict-tags" type="checkbox"> 细节标签至少命中一项</label>
-        <label>结果数 <input id="limit" type="range" min="12" max="120" step="4" value="40"> <span id="limit-value">40</span></label>
-        <div id="reference" class="reference">
-          <img id="reference-image" alt="参考图">
-          <span id="reference-name">参考图</span>
-          <button id="clear-reference" title="清除参考图">×</button>
+    <div class="search-layout">
+      <aside class="tree-panel" aria-label="查询范围">
+        <div class="time-filter">
+          <div class="time-filter-label">时间范围</div>
+          <select id="time-preset" class="time-preset" aria-label="时间范围">
+            <option value="all">全部时间</option>
+            <option value="7">近 7 天</option>
+            <option value="30">近 30 天</option>
+            <option value="90">近 90 天</option>
+            <option value="365">近 1 年</option>
+            <option value="custom">自定义</option>
+          </select>
+          <div id="time-custom" class="time-custom">
+            <label>从 <input id="mtime-after" type="date" autocomplete="off"></label>
+            <label>到 <input id="mtime-before" type="date" autocomplete="off"></label>
+          </div>
         </div>
+        <div class="tree-head">
+          <div class="tree-title">查询目录</div>
+          <select id="tree-sort" class="tree-sort" aria-label="目录排序"></select>
+        </div>
+        <div class="index-add">
+          <input id="index-path" type="text" placeholder="粘贴本地目录路径" autocomplete="off" spellcheck="false">
+          <button class="secondary" id="index-add" type="button">加入索引</button>
+        </div>
+        <div id="index-status" class="index-status" hidden></div>
+        <div class="tree-actions">
+          <button class="secondary" id="tree-select-all" type="button">全选</button>
+          <button class="secondary" id="tree-select-none" type="button">全不选</button>
+          <button class="secondary" id="index-refresh-all" type="button">更新全部</button>
+        </div>
+        <div id="tree-summary" class="tree-summary">正在读取索引目录……</div>
+        <div id="tree" class="tree"></div>
+      </aside>
+      <div class="search-column">
+        <section class="search-panel" id="panel">
+          <form id="search-form" autocomplete="off">
+          <div class="search-row">
+            <input id="query" type="text" name="artseek-query" placeholder="例如：水色梦幻、穿宽大姬袖和过膝袜、抱膝坐在床上的少女；不要室外" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" autofocus>
+            <label class="upload-label" for="upload">选择参考图</label>
+            <input id="upload" type="file" accept="image/*" autocomplete="off">
+            <button class="primary" id="search" type="submit">查询</button>
+          </div>
+          <div class="options">
+            <label><input id="use-llm" type="checkbox" checked> 本地大模型理解条件</label>
+            <label><input id="strict-tags" type="checkbox"> 细节标签至少命中一项</label>
+            <label title="完全相同的图片只保留最先检索到的"><input id="dedupe" type="checkbox"> 去除重复</label>
+            <label>每批 <input id="limit" type="range" min="12" max="80" step="4" value="40"> <span id="limit-value">40</span></label>
+            <div id="reference" class="reference">
+              <img id="reference-image" alt="参考图">
+              <span id="reference-name">参考图</span>
+              <button id="clear-reference" type="button" title="清除参考图">×</button>
+            </div>
+          </div>
+          </form>
+        </section>
+        <div id="query-info" class="query-info">勾选左侧目录后，输入描述或选择参考图片开始检索。新出现的文件夹默认不在查询范围内。</div>
+        <main id="gallery" class="gallery"></main>
+        <div id="load-more" class="load-more" hidden>正在载入更多相关图片…</div>
       </div>
-    </section>
-    <div id="query-info" class="query-info">输入描述，或选择一张图片开始检索。</div>
-    <main id="gallery" class="gallery"></main>
+    </div>
   </div>
   <dialog id="viewer">
     <img id="viewer-image" alt="原图预览">
@@ -130,11 +269,44 @@
   </dialog>
   <script>
     const $ = (id) => document.getElementById(id);
-    const state = { upload: null, referenceId: null, current: null, results: [] };
+    async function parseResponse(response) {
+      const text = await response.text();
+      let data = null;
+      if (text) {
+        try { data = JSON.parse(text); }
+        catch { throw new Error(text.trim().slice(0, 180) || `HTTP ${response.status}`); }
+      }
+      if (!response.ok) {
+        const detail = data && data.detail;
+        const message = Array.isArray(detail)
+          ? detail.map((item) => item.msg || JSON.stringify(item)).join('；')
+          : (detail || text.trim().slice(0, 180) || `HTTP ${response.status}`);
+        throw new Error(message);
+      }
+      return data;
+    }
+    const state = {
+      upload: null, referenceId: null, current: null, results: [],
+      offset: 0, hasMore: false, loadingMore: false, searchSeq: 0,
+      colHeights: [],
+    };
+    const treeState = {
+      roots: [],
+      selected: new Set(),
+      newKeys: new Set(),
+      expanded: new Set(),
+      sort: 'name',
+      imageCount: 0,
+      selectedImageCount: 0,
+      saveTimer: null,
+      mtimeAfter: '',
+      mtimeBefore: '',
+      mtimeMin: '',
+      mtimeMax: '',
+    };
 
     $('limit').addEventListener('input', () => $('limit-value').textContent = $('limit').value);
-    $('query').addEventListener('keydown', (event) => { if (event.key === 'Enter') runSearch(); });
-    $('search').addEventListener('click', runSearch);
+    $('search-form').addEventListener('submit', (event) => { event.preventDefault(); runSearch(); });
     $('upload').addEventListener('change', (event) => {
       state.upload = event.target.files[0] || null;
       state.referenceId = null;
@@ -159,66 +331,577 @@
     }
 
     async function runSearch() {
+      await fetchResults({ reset: true });
+    }
+
+    async function fetchResults({ reset }) {
       const query = $('query').value.trim();
       if (!query && !state.upload && !state.referenceId) {
-        $('query-info').textContent = '请先输入描述或选择参考图片。'; return;
+        if (reset) $('query-info').textContent = '请先输入描述或选择参考图片。';
+        return;
       }
-      $('panel').classList.add('loading');
-      $('query-info').textContent = '正在本地检索……首次查询需要载入模型。';
+      if (!treeState.selected.size) {
+        if (reset) $('query-info').textContent = '请先在左侧勾选要检索的文件夹。新添加的目录默认不在查询范围内。';
+        return;
+      }
+      if (!reset && (state.loadingMore || !state.hasMore)) return;
+      const seq = reset ? ++state.searchSeq : state.searchSeq;
+      const offset = reset ? 0 : state.results.length;
+      if (reset) {
+        state.offset = 0;
+        state.hasMore = false;
+        $('panel').classList.add('loading');
+        $('query-info').textContent = '正在本地检索……首次查询需要载入模型。';
+        $('load-more').hidden = true;
+      } else {
+        state.loadingMore = true;
+        $('load-more').textContent = '正在载入更多相关图片…';
+        $('load-more').hidden = false;
+      }
       try {
         let response;
+        const folderKeys = [...treeState.selected];
+        const timeRange = currentTimeRange();
+        const limit = Number($('limit').value);
         if (state.upload) {
           const form = new FormData();
           form.append('file', state.upload); form.append('query', query);
-          form.append('limit', $('limit').value); form.append('expand', $('use-llm').checked);
+          form.append('limit', String(limit)); form.append('offset', String(offset));
+          form.append('expand', $('use-llm').checked);
           form.append('strict_tags', $('strict-tags').checked);
+          form.append('dedupe', $('dedupe').checked);
+          form.append('folder_keys', JSON.stringify(folderKeys));
+          form.append('mtime_after', timeRange.after || '');
+          form.append('mtime_before', timeRange.before || '');
+          form.append('exclude_ids', JSON.stringify(reset ? [] : state.results.map((item) => item.id)));
           response = await fetch('/api/search-upload', { method: 'POST', body: form });
         } else {
           response = await fetch('/api/search', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query, reference_id: state.referenceId, limit: Number($('limit').value), expand: $('use-llm').checked, strict_tags: $('strict-tags').checked })
+            body: JSON.stringify({
+              query,
+              reference_id: state.referenceId,
+              limit,
+              offset: reset ? 0 : state.results.length,
+              expand: $('use-llm').checked,
+              strict_tags: $('strict-tags').checked,
+              dedupe: $('dedupe').checked,
+              folder_keys: folderKeys,
+              mtime_after: timeRange.after || null,
+              mtime_before: timeRange.before || null,
+              exclude_ids: reset ? [] : state.results.map((item) => item.id),
+            })
           });
         }
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || '查询失败');
-        state.results = data.results; renderInfo(data); renderGallery(data.results);
+        const data = await parseResponse(response);
+        if (seq !== state.searchSeq) return;
+        const incoming = data.results || [];
+        if (reset) {
+          state.results = incoming;
+          renderGallery(state.results, { append: false });
+        } else {
+          const seen = new Set(state.results.map((item) => item.id));
+          const fresh = incoming.filter((item) => !seen.has(item.id));
+          state.results = state.results.concat(fresh);
+          renderGallery(fresh, { append: true });
+        }
+        state.hasMore = Boolean(data.has_more) && incoming.length > 0;
+        $('load-more').hidden = !state.hasMore;
+        renderInfo(data, state.results.length);
       } catch (error) {
-        $('query-info').textContent = `查询失败：${error.message}`;
-      } finally { $('panel').classList.remove('loading'); }
+        if (seq !== state.searchSeq) return;
+        if (reset) $('query-info').textContent = `查询失败：${error.message}`;
+        else $('load-more').textContent = `继续载入失败：${error.message}`;
+        if (!reset) state.hasMore = false;
+      } finally {
+        if (seq === state.searchSeq) {
+          $('panel').classList.remove('loading');
+          state.loadingMore = false;
+          if (!state.hasMore && state.results.length) $('load-more').hidden = true;
+        }
+      }
     }
 
-    function renderInfo(data) {
+    function renderInfo(data, total) {
       const plan = data.query_plan;
       const positive = plan.positive_tags.map(tag => `<span class="chip">${escapeHtml(tag.replaceAll('_', ' '))}</span>`).join('');
       const negative = plan.negative_tags.map(tag => `<span class="chip negative">${escapeHtml(tag.replaceAll('_', ' '))}</span>`).join('');
       const llm = plan.used_llm ? '本地大模型已解析' : '内置插画词典已解析';
       const warning = data.llm_warning ? ` · Ollama 未就绪，已自动回退` : '';
-      $('query-info').innerHTML = `${llm}${warning} · ${data.results.length} 个结果　${positive}${negative}`;
+      const more = state.hasMore ? ' · 下滑加载更多' : '';
+      $('query-info').innerHTML = `${llm}${warning} · ${total} 个结果${more}　${positive}${negative}`;
     }
 
-    function renderGallery(results) {
-      if (!results.length) { $('gallery').innerHTML = '<div class="empty">没有找到符合条件的图片。可以减少排除条件，或重新建立含详细描述的索引。</div>'; return; }
-      $('gallery').innerHTML = results.map((item, index) => `
-        <article class="card" data-index="${index}">
-          <div class="image-wrap" data-action="view"><img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}"><span class="score">${item.score.toFixed(0)}</span></div>
+    function galleryColumnCount() {
+      const width = $('gallery').clientWidth || window.innerWidth;
+      if (width < 520) return 2;
+      if (width < 780) return 3;
+      if (width < 1100) return 4;
+      return 5;
+    }
+    function estimateCardHeight(item, columnWidth) {
+      const ratio = item.width > 0 && item.height > 0 ? item.height / item.width : 1.25;
+      const hits = item.tag_hits && item.tag_hits.length ? 22 : 0;
+      return columnWidth * ratio + 108 + hits;
+    }
+    function shortestColumnIndex() {
+      let best = 0;
+      for (let index = 1; index < state.colHeights.length; index += 1) {
+        if (state.colHeights[index] < state.colHeights[best]) best = index;
+      }
+      return best;
+    }
+    function ensureGalleryColumns() {
+      const gallery = $('gallery');
+      const count = galleryColumnCount();
+      if (gallery.dataset.cols === String(count) && gallery.querySelector('.gallery-col')) return;
+      gallery.replaceChildren();
+      for (let index = 0; index < count; index += 1) {
+        const column = document.createElement('div');
+        column.className = 'gallery-col';
+        gallery.appendChild(column);
+      }
+      gallery.dataset.cols = String(count);
+      state.colHeights = Array(count).fill(0);
+    }
+    function placeCard(element, item) {
+      const cols = [...$('gallery').querySelectorAll('.gallery-col')];
+      if (!cols.length) return;
+      const index = shortestColumnIndex();
+      cols[index].appendChild(element);
+      const width = cols[index].clientWidth || (($('gallery').clientWidth - 14 * (cols.length - 1)) / cols.length);
+      state.colHeights[index] += estimateCardHeight(item, width);
+    }
+    function cardHTML(item, index) {
+      const ratio = item.width > 0 && item.height > 0 ? ` style="aspect-ratio: ${item.width} / ${item.height}"` : '';
+      return `<article class="card" data-index="${index}">
+          <div class="image-wrap" data-action="view"${ratio}><img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}"><span class="score">${item.score.toFixed(0)}</span></div>
           <div class="card-body">
             <div class="filename" title="${escapeHtml(item.path)}">${escapeHtml(item.name)}</div>
             <div class="meta">${item.width} × ${item.height}</div>
             ${item.tag_hits.length ? `<div class="hits">命中：${item.tag_hits.map(t => escapeHtml(t.replaceAll('_',' '))).join(' · ')}</div>` : ''}
             <div class="card-actions"><button data-action="reference">作为参考图</button><button data-action="open">查看原图</button></div>
           </div>
-        </article>`).join('');
-      $('gallery').querySelectorAll('.card').forEach(card => card.addEventListener('click', (event) => {
-        const item = results[Number(card.dataset.index)]; const action = event.target.closest('[data-action]')?.dataset.action;
-        if (action === 'reference') { state.referenceId = item.id; state.upload = null; $('upload').value = ''; showReference(`/thumb/${item.id}`, item.name); window.scrollTo({top: 0, behavior:'smooth'}); }
-        if (action === 'view' || action === 'open') openViewer(item);
-      }));
+        </article>`;
+    }
+    function renderGallery(results, { append } = { append: false }) {
+      if (!append && !results.length) {
+        $('gallery').innerHTML = '<div class="empty">没有找到符合条件的图片。可以减少排除条件，或重新建立含详细描述的索引。</div>';
+        delete $('gallery').dataset.cols;
+        state.colHeights = [];
+        return;
+      }
+      if (!append) {
+        $('gallery').replaceChildren();
+        delete $('gallery').dataset.cols;
+        state.colHeights = [];
+      }
+      ensureGalleryColumns();
+      const start = append ? state.results.length - results.length : 0;
+      results.forEach((item, index) => {
+        const wrap = document.createElement('div');
+        wrap.innerHTML = cardHTML(item, start + index);
+        placeCard(wrap.firstElementChild, item);
+      });
+      bindGalleryCards();
+    }
+
+    function bindGalleryCards() {
+      $('gallery').querySelectorAll('.card').forEach((card) => {
+        if (card.dataset.bound) return;
+        card.dataset.bound = '1';
+        card.addEventListener('click', (event) => {
+          const item = state.results[Number(card.dataset.index)];
+          if (!item) return;
+          const action = event.target.closest('[data-action]')?.dataset.action;
+          if (action === 'reference') {
+            state.referenceId = item.id; state.upload = null; $('upload').value = '';
+            showReference(`/thumb/${item.id}`, item.name);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }
+          if (action === 'view' || action === 'open') openViewer(item);
+        });
+      });
     }
 
     function openViewer(item) {
       state.current = item; $('viewer-image').src = `/image/${item.id}`; $('viewer-title').textContent = item.path; $('viewer').showModal();
     }
     function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char])); }
+
+    function descendantKeys(node) {
+      return [node.key, ...node.children.flatMap(descendantKeys)];
+    }
+    function allFolderKeys(nodes = treeState.roots) {
+      return nodes.flatMap(descendantKeys);
+    }
+    function nodeCheckState(node) {
+      const keys = descendantKeys(node);
+      const selected = keys.filter((key) => treeState.selected.has(key)).length;
+      if (selected === 0) return 'none';
+      if (selected === keys.length) return 'all';
+      return 'mixed';
+    }
+    function setFolderSelection(keys, selected) {
+      for (const key of keys) {
+        if (selected) treeState.selected.add(key);
+        else treeState.selected.delete(key);
+      }
+      renderTree();
+      updateTreeSummary();
+      scheduleTreeSave();
+    }
+    function scheduleTreeSave() {
+      clearTimeout(treeState.saveTimer);
+      treeState.saveTimer = setTimeout(() => saveLibraryTree(), 180);
+    }
+    function applyLibraryPayload(data, { keepExpanded = false } = {}) {
+      treeState.roots = data.roots || [];
+      treeState.sort = data.sort || 'name';
+      treeState.selected = new Set(data.selected || []);
+      treeState.newKeys = new Set(data.new_keys || []);
+      treeState.imageCount = data.image_count || 0;
+      treeState.selectedImageCount = data.selected_image_count || 0;
+      treeState.mtimeAfter = data.mtime_after || '';
+      treeState.mtimeBefore = data.mtime_before || '';
+      treeState.mtimeMin = data.mtime_min || '';
+      treeState.mtimeMax = data.mtime_max || '';
+      syncTimeInputs();
+      if (!keepExpanded) {
+        treeState.expanded = new Set();
+      }
+      const select = $('tree-sort');
+      if (select && data.sort_options && !select.dataset.ready) {
+        select.innerHTML = data.sort_options.map((option) =>
+          `<option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>`
+        ).join('');
+        select.dataset.ready = '1';
+      }
+      if (select) select.value = treeState.sort;
+      renderTree();
+      updateTreeSummary();
+    }
+    function updateTreeSummary() {
+      const folderCount = treeState.selected.size;
+      const selectedImages = countSelectedImages(treeState.roots);
+      const range = currentTimeRange();
+      const timeHint = range.after || range.before ? ' · 已限制时间' : '';
+      $('tree-summary').textContent = folderCount
+        ? `已选 ${folderCount} 个目录 · ${selectedImages} 张图在查询范围内${timeHint}`
+        : `尚未勾选目录 · 共 ${treeState.imageCount} 张图，新目录默认不选`;
+    }
+    function countSelectedImages(nodes) {
+      let total = 0;
+      for (const node of nodes) {
+        if (treeState.selected.has(node.key)) total += node.count;
+        total += countSelectedImages(node.children);
+      }
+      return total;
+    }
+    function naturalKey(name) {
+      return String(name).toLowerCase().split(/(\d+)/).filter(Boolean).map((part) => (
+        /^\d+$/.test(part) ? [0, Number(part)] : [1, part]
+      ));
+    }
+    function compareNatural(left, right) {
+      const a = naturalKey(left);
+      const b = naturalKey(right);
+      const n = Math.min(a.length, b.length);
+      for (let index = 0; index < n; index += 1) {
+        if (a[index][0] !== b[index][0]) return a[index][0] - b[index][0];
+        if (a[index][1] < b[index][1]) return -1;
+        if (a[index][1] > b[index][1]) return 1;
+      }
+      return a.length - b.length;
+    }
+    function compareFolders(left, right, method) {
+      if (method === 'name_desc') return compareNatural(right.name, left.name);
+      if (method === 'count') {
+        if (right.total !== left.total) return right.total - left.total;
+        return compareNatural(left.name, right.name);
+      }
+      if (method === 'count_asc') {
+        if (left.total !== right.total) return left.total - right.total;
+        return compareNatural(left.name, right.name);
+      }
+      if (method === 'mtime') {
+        if (right.mtime_ns !== left.mtime_ns) return right.mtime_ns - left.mtime_ns;
+        return compareNatural(left.name, right.name);
+      }
+      if (method === 'mtime_asc') {
+        if (left.mtime_ns !== right.mtime_ns) return left.mtime_ns - right.mtime_ns;
+        return compareNatural(left.name, right.name);
+      }
+      return compareNatural(left.name, right.name);
+    }
+    function sortTreeNodes(nodes, method) {
+      if (!nodes || !nodes.length) return nodes;
+      for (const node of nodes) sortTreeNodes(node.children || [], method);
+      nodes.sort((left, right) => compareFolders(left, right, method));
+      return nodes;
+    }
+    function renderTree() {
+      if (!treeState.roots.length) {
+        $('tree').innerHTML = '<div class="tree-empty">索引里还没有目录。请先运行 artseek index。</div>';
+        return;
+      }
+      const method = $('tree-sort').value || treeState.sort || 'name';
+      sortTreeNodes(treeState.roots, method);
+      $('tree').innerHTML = treeState.roots.map((node) => renderTreeNode(node, 0)).join('');
+      $('tree').querySelectorAll('[data-tree-action]').forEach((element) => {
+        element.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const key = element.dataset.key;
+          const action = element.dataset.treeAction;
+          if (action === 'twist') {
+            if (treeState.expanded.has(key)) treeState.expanded.delete(key);
+            else treeState.expanded.add(key);
+            renderTree();
+          }
+          if (action === 'remove') removeIndexedFolder(key, element.dataset.name || key);
+          if (action === 'refresh') startIndexJob({ path: element.dataset.path, label: element.dataset.name || key });
+        });
+      });
+      $('tree').querySelectorAll('input[type="checkbox"]').forEach((input) => {
+        const node = findNode(treeState.roots, input.dataset.key);
+        input.indeterminate = !!(node && nodeCheckState(node) === 'mixed');
+        input.addEventListener('change', () => {
+          const current = findNode(treeState.roots, input.dataset.key);
+          if (!current) return;
+          setFolderSelection(descendantKeys(current), nodeCheckState(current) !== 'all');
+        });
+      });
+    }
+    function renderTreeNode(node, depth) {
+      const hasChildren = node.children.length > 0;
+      const expanded = treeState.expanded.has(node.key);
+      const check = nodeCheckState(node);
+      const isNew = treeState.newKeys.has(node.key);
+      const children = hasChildren && expanded
+        ? node.children.map((child) => renderTreeNode(child, depth + 1)).join('')
+        : '';
+      return `
+        <div class="tree-row" style="padding-left:${8 + depth * 14}px">
+          <button class="tree-twist" type="button" data-tree-action="twist" data-key="${escapeHtml(node.key)}" ${hasChildren ? '' : 'hidden'} aria-label="展开或折叠" aria-expanded="${expanded}">${expanded ? '▾' : '▸'}</button>
+          <label class="tree-label" title="${escapeHtml(node.path)}">
+            <input type="checkbox" data-key="${escapeHtml(node.key)}" ${check === 'all' ? 'checked' : ''}>
+            <span class="tree-name">${escapeHtml(node.name)}</span>
+            ${isNew ? '<span class="tree-new">新</span>' : ''}
+            <span class="tree-count">${node.total}</span>
+          </label>
+          ${depth === 0 ? `<button class="tree-refresh" type="button" data-tree-action="refresh" data-key="${escapeHtml(node.key)}" data-path="${escapeHtml(node.path)}" data-name="${escapeHtml(node.name)}" title="增量更新该索引目录">↻</button>` : ''}
+          <button class="tree-remove" type="button" data-tree-action="remove" data-key="${escapeHtml(node.key)}" data-name="${escapeHtml(node.name)}" title="从索引中移出，不删除原图">×</button>
+        </div>
+        ${children}`;
+    }
+    function findNode(nodes, key) {
+      for (const node of nodes) {
+        if (node.key === key) return node;
+        const nested = findNode(node.children, key);
+        if (nested) return nested;
+      }
+      return null;
+    }
+    let indexPoll = null;
+    function showIndexStatus(text, show = true) {
+      const box = $('index-status');
+      box.hidden = !show;
+      box.textContent = text || '';
+    }
+    async function startIndexJob({ path, paths, label }) {
+      const payload = { recursive: true };
+      if (paths && paths.length) payload.paths = paths;
+      else payload.path = path;
+      showIndexStatus(label ? `正在更新「${label}」…` : '正在开始索引…');
+      try {
+        const response = await fetch('/api/index', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await parseResponse(response);
+        showIndexStatus(data.message || '正在索引…');
+        pollIndexStatus();
+      } catch (error) {
+        showIndexStatus(`索引失败：${error.message}`);
+      }
+    }
+    async function addIndexDirectory() {
+      const path = $('index-path').value.trim();
+      if (!path) { showIndexStatus('请先粘贴要加入索引的本地目录路径。'); return; }
+      await startIndexJob({ path, label: path });
+    }
+    async function refreshAllIndexed() {
+      const paths = treeState.roots.map((node) => node.path).filter(Boolean);
+      if (!paths.length) { showIndexStatus('没有可更新的索引目录。'); return; }
+      await startIndexJob({ paths, label: `${paths.length} 个索引目录` });
+    }
+    async function pollIndexStatus() {
+      if (indexPoll) return;
+      const tick = async () => {
+        try {
+          const response = await fetch('/api/index-status');
+          const data = await parseResponse(response);
+          if (data.running) {
+            showIndexStatus(data.message || '正在索引…');
+            return true;
+          }
+          if (data.error) {
+            showIndexStatus(`索引失败：${data.error}`);
+            return false;
+          }
+          const summary = data.summary;
+          showIndexStatus(
+            summary
+              ? `${data.message}：发现 ${summary.discovered}，更新 ${summary.indexed}，未变 ${summary.unchanged}`
+              : (data.message || '索引完成')
+          );
+          await loadLibraryTree();
+          return false;
+        } catch (error) {
+          showIndexStatus(`无法读取索引进度：${error.message}`);
+          return false;
+        }
+      };
+      if (await tick()) {
+        indexPoll = setInterval(async () => {
+          if (!(await tick())) {
+            clearInterval(indexPoll);
+            indexPoll = null;
+          }
+        }, 800);
+      }
+    }
+    async function removeIndexedFolder(key, name) {
+      if (!confirm(`把「${name}」从索引中移出？原图不会删除。`)) return;
+      showIndexStatus('正在移出索引…');
+      try {
+        const response = await fetch('/api/index-remove', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folder_key: key }),
+        });
+        const data = await parseResponse(response);
+        applyLibraryPayload(data, { keepExpanded: true });
+        showIndexStatus(`已移出「${name}」，原图仍在磁盘上。`);
+      } catch (error) {
+        showIndexStatus(`移出失败：${error.message}`);
+      }
+    }
+    async function loadLibraryTree() {
+      try {
+        const response = await fetch('/api/library-tree');
+        const data = await parseResponse(response);
+        applyLibraryPayload(data);
+      } catch (error) {
+        $('tree-summary').textContent = `目录树不可用：${error.message}`;
+      }
+    }
+    async function saveLibraryTree() {
+      try {
+        const response = await fetch('/api/library-tree', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sort: treeState.sort,
+            selected: [...treeState.selected],
+            mtime_after: treeState.mtimeAfter || null,
+            mtime_before: treeState.mtimeBefore || null,
+          }),
+        });
+        const data = await parseResponse(response);
+        applyLibraryPayload(data, { keepExpanded: true });
+      } catch (error) {
+        $('tree-summary').textContent = `目录选择未能保存：${error.message}`;
+      }
+    }
+
+    function localISO(day) {
+      const year = day.getFullYear();
+      const month = String(day.getMonth() + 1).padStart(2, '0');
+      const date = String(day.getDate()).padStart(2, '0');
+      return `${year}-${month}-${date}`;
+    }
+    function daysAgoISO(days) {
+      const day = new Date();
+      day.setHours(0, 0, 0, 0);
+      day.setDate(day.getDate() - days);
+      return localISO(day);
+    }
+    function currentTimeRange() {
+      return { after: treeState.mtimeAfter || '', before: treeState.mtimeBefore || '' };
+    }
+    function inferTimePreset(after, before) {
+      if (!after && !before) return 'all';
+      const today = localISO(new Date());
+      if (before && before !== today) return 'custom';
+      const presets = ['7', '30', '90', '365'];
+      for (const days of presets) {
+        if (after === daysAgoISO(Number(days))) return days;
+      }
+      return 'custom';
+    }
+    function applyTimePreset(preset) {
+      if (preset === 'all') {
+        treeState.mtimeAfter = '';
+        treeState.mtimeBefore = '';
+      } else if (preset !== 'custom') {
+        treeState.mtimeAfter = daysAgoISO(Number(preset));
+        treeState.mtimeBefore = localISO(new Date());
+      }
+      syncTimeInputs();
+      updateTreeSummary();
+      scheduleTreeSave();
+    }
+    function syncTimeInputs() {
+      const after = $('mtime-after');
+      const before = $('mtime-before');
+      after.min = treeState.mtimeMin || '';
+      after.max = treeState.mtimeMax || '';
+      before.min = treeState.mtimeMin || '';
+      before.max = treeState.mtimeMax || '';
+      after.value = treeState.mtimeAfter || '';
+      before.value = treeState.mtimeBefore || '';
+      const preset = inferTimePreset(treeState.mtimeAfter, treeState.mtimeBefore);
+      $('time-preset').value = preset;
+      $('time-custom').classList.toggle('visible', preset === 'custom');
+    }
+
+    $('index-add').addEventListener('click', addIndexDirectory);
+    $('index-refresh-all').addEventListener('click', refreshAllIndexed);
+    $('index-path').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') { event.preventDefault(); addIndexDirectory(); }
+    });
+    $('tree-select-all').addEventListener('click', () => setFolderSelection(allFolderKeys(), true));
+    $('tree-select-none').addEventListener('click', () => setFolderSelection(allFolderKeys(), false));
+    $('tree-sort').addEventListener('change', () => {
+      treeState.sort = $('tree-sort').value;
+      renderTree();
+      saveLibraryTree();
+    });
+    const loadMore = $('load-more');
+    const scrollObserver = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) fetchResults({ reset: false });
+    }, { root: null, rootMargin: '720px 0px', threshold: 0 });
+    scrollObserver.observe(loadMore);
+
+    $('time-preset').addEventListener('change', () => applyTimePreset($('time-preset').value));
+    $('mtime-after').addEventListener('change', () => {
+      treeState.mtimeAfter = $('mtime-after').value;
+      $('time-preset').value = 'custom';
+      $('time-custom').classList.add('visible');
+      updateTreeSummary();
+      scheduleTreeSave();
+    });
+    $('mtime-before').addEventListener('change', () => {
+      treeState.mtimeBefore = $('mtime-before').value;
+      $('time-preset').value = 'custom';
+      $('time-custom').classList.add('visible');
+      updateTreeSummary();
+      scheduleTreeSave();
+    });
+    loadLibraryTree();
   </script>
 </body>
 </html>

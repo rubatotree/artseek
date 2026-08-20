@@ -10,7 +10,8 @@ from PIL import Image
 from qdrant_client import models
 
 from .config import AppConfig
-from .image_io import canonical_path, image_metadata, load_rgb, point_id, scan_images
+from .image_io import canonical_path, file_digest, image_metadata, load_rgb, point_id, scan_images
+from .library import rebuild_catalog
 from .llm import OllamaClient, OllamaUnavailable, flatten_caption
 from .models.embedder import SiglipEmbedder
 from .models.tagger import PredictedTags, WDTagger
@@ -35,18 +36,35 @@ def chunks(values: Sequence[Any], size: int) -> Iterable[Sequence[Any]]:
 
 
 class ImageIndexer:
-    def __init__(self, config: AppConfig):
+    def __init__(
+        self,
+        config: AppConfig,
+        *,
+        embedder: SiglipEmbedder | None = None,
+        store: VectorStore | None = None,
+        tagger: WDTagger | None = None,
+        llm: OllamaClient | None = None,
+    ):
         self.config = config
-        self.embedder = SiglipEmbedder(config.embedding)
-        self.tagger = (
-            WDTagger(config.tagger, config.embedding) if config.tagger.enabled else None
-        )
-        self.llm = OllamaClient(config.llm)
-        self.store = VectorStore(config)
-        self.store.ensure_collection(self.embedder.dimension)
+        self.embedder = embedder or SiglipEmbedder(config.embedding)
+        if store is None:
+            self.store = VectorStore(config)
+            self.store.ensure_collection(self.embedder.dimension)
+            self._owns_store = True
+        else:
+            self.store = store
+            self._owns_store = False
+        if tagger is not None:
+            self.tagger = tagger
+        elif config.tagger.enabled:
+            self.tagger = WDTagger(config.tagger, config.embedding)
+        else:
+            self.tagger = None
+        self.llm = llm or OllamaClient(config.llm)
 
     def close(self) -> None:
-        self.store.close()
+        if self._owns_store:
+            self.store.close()
 
     def _describe_batch(
         self,
@@ -163,6 +181,8 @@ class ImageIndexer:
                         {
                             "root": str(resolved_root),
                             "root_key": root_key,
+                            "folder_key": canonical_path(path.parent),
+                            "content_hash": file_digest(path),
                             "tags": tags.tags,
                             "tag_scores": tags.scores,
                             "caption": caption,
@@ -193,4 +213,6 @@ class ImageIndexer:
                 ]
                 self.store.delete_ids(stale_ids)
                 summary.deleted += len(stale_ids)
+        if summary.indexed or summary.deleted:
+            rebuild_catalog(self.store, self.config)
         return summary

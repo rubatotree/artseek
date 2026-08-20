@@ -31,6 +31,14 @@ def point_id(path: Path | str) -> str:
     return f"{digest[:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:32]}"
 
 
+def file_digest(path: Path | str, *, chunk_size: int = 1024 * 1024) -> str:
+    hasher = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        while chunk := handle.read(chunk_size):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
 def scan_images(roots: Iterable[Path], recursive: bool = True) -> Iterator[tuple[Path, Path]]:
     seen: set[str] = set()
     for raw_root in roots:

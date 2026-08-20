@@ -201,6 +201,9 @@ def search_command(
     strict_tags: Annotated[
         bool, typer.Option("--strict-tags", help="要求结果至少精确命中一个细节标签")
     ] = False,
+    dedupe: Annotated[
+        bool, typer.Option("--dedupe", help="完全相同的图片只保留最先检索到的")
+    ] = False,
     json_output: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     """用自然语言、关键词，或参考图加文字组合查询。"""
@@ -212,6 +215,7 @@ def search_command(
             limit=limit,
             expand=not no_llm,
             strict_tags=strict_tags,
+            dedupe=dedupe,
         )
     finally:
         engine.close()

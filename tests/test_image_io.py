@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from artseek.image_io import canonical_path, load_rgb, point_id, scan_images
+from artseek.image_io import canonical_path, file_digest, load_rgb, point_id, scan_images
 
 
 class ImageIOTests(unittest.TestCase):
@@ -24,6 +24,8 @@ class ImageIOTests(unittest.TestCase):
             self.assertEqual(results[0][1], image_path)
             self.assertEqual(point_id(image_path), point_id(Path(canonical_path(image_path))))
             self.assertEqual(load_rgb(image_path).mode, "RGB")
+            self.assertEqual(file_digest(image_path), file_digest(image_path))
+            self.assertEqual(len(file_digest(image_path)), 64)
 
 
 if __name__ == "__main__":
