@@ -107,7 +107,10 @@ class SiglipEmbedder:
             torch.cuda.synchronize()
 
     def encode_images(self, images: Sequence[Path | Image.Image]) -> np.ndarray:
-        opened = [load_rgb(item) if isinstance(item, (str, Path)) else item.convert("RGB") for item in images]
+        opened = [
+            load_rgb(item) if isinstance(item, (str, Path)) else item.convert("RGB")
+            for item in images
+        ]
         inputs = self._move_inputs(self.processor(images=opened, return_tensors="pt"))
         with torch.inference_mode():
             features = self.model.get_image_features(**inputs)

@@ -8,8 +8,8 @@ from unittest.mock import patch
 import numpy as np
 
 from artseek.config import (
-    AppConfig,
     DEFAULT_AUTO_UNLOAD_SECONDS,
+    AppConfig,
     clamp_auto_unload_seconds,
     load_auto_unload_seconds,
     save_auto_unload_seconds,

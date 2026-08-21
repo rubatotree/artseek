@@ -71,7 +71,9 @@ class WDTagger:
         results: list[PredictedTags] = []
         for row in probabilities:
             candidates: list[tuple[str, float]] = []
-            for name, category, score in zip(self.names, self.categories, row.tolist(), strict=True):
+            for name, category, score in zip(
+                self.names, self.categories, row.tolist(), strict=True
+            ):
                 allowed = category == 0 or (self.config.include_character_tags and category == 4)
                 if allowed and score >= self.config.threshold:
                     candidates.append((name, float(score)))

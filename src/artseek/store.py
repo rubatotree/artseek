@@ -51,7 +51,9 @@ class VectorStore:
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "ignore",
-                message="Local mode is not recommended for collections with more than 20,000 points",
+                message=(
+                    "Local mode is not recommended for collections with more than 20,000 points"
+                ),
                 category=UserWarning,
             )
             self.client = QdrantClient(path=str(config.qdrant_path))

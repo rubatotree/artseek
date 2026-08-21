@@ -88,7 +88,10 @@ class FakeStore:
         if point_ids is not None:
             allowed = set(point_ids)
             order = [key for key in order if key in allowed]
-        return [Neighbor(key, 0.9 - index * 0.1, self.payloads[key]) for index, key in enumerate(order)]
+        return [
+            Neighbor(key, 0.9 - index * 0.1, self.payloads[key])
+            for index, key in enumerate(order)
+        ]
 
 
 class DuplicateStore(FakeStore):
@@ -114,7 +117,10 @@ class DuplicateStore(FakeStore):
         if point_ids is not None:
             allowed = set(point_ids)
             order = [key for key in order if key in allowed]
-        return [Neighbor(key, 0.9 - index * 0.1, self.payloads[key]) for index, key in enumerate(order)]
+        return [
+            Neighbor(key, 0.9 - index * 0.1, self.payloads[key])
+            for index, key in enumerate(order)
+        ]
 
 
 class SearchFusionTests(unittest.TestCase):
@@ -136,7 +142,9 @@ class SearchFusionTests(unittest.TestCase):
         engine.embedder = FakeEmbedder()
         engine.store = FakeStore()
 
-        response = engine.search("衬衫", expand=False, folder_keys=[canonical_path(SHIRTS)], limit=10)
+        response = engine.search(
+            "衬衫", expand=False, folder_keys=[canonical_path(SHIRTS)], limit=10
+        )
         self.assertEqual([item.id for item in response.results], ["c"])
 
         empty = engine.search("衬衫", expand=False, folder_keys=[], limit=10)
@@ -271,7 +279,9 @@ class ComposeVisualTests(unittest.TestCase):
         text = np.array([1.0, 0.0, 0.0], dtype=np.float32)
         images = [np.array([0.0, 1.0, 0.0], dtype=np.float32)]
         out = compose_visual_vector(text, images, text_weight=1.0, image_weights=[1.0])
-        np.testing.assert_allclose(out, np.array([0.70710678, 0.70710678, 0.0], dtype=np.float32), atol=1e-5)
+        np.testing.assert_allclose(
+            out, np.array([0.70710678, 0.70710678, 0.0], dtype=np.float32), atol=1e-5
+        )
 
     def test_image_weight_scales_contribution(self) -> None:
         text = np.array([1.0, 0.0, 0.0], dtype=np.float32)

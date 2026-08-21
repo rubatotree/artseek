@@ -10,6 +10,27 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "ArtSeek contributors" }]
+keywords = [
+  "image-search",
+  "illustration",
+  "siglip",
+  "danbooru",
+  "local-first",
+  "offline",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Environment :: Web Environment",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Multimedia :: Graphics",
+  "Typing :: Typed",
+]
 dependencies = [
   "huggingface-hub>=0.28,<2",
   "httpx[socks]>=0.28,<1",
@@ -49,6 +70,19 @@ artseek = "artseek.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/artseek"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/tests",
+  "/docs",
+  "/scripts",
+  "/README.md",
+  "/LICENSE",
+  "/CONTRIBUTING.md",
+  "/SECURITY.md",
+  "/pyproject.toml",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install CPU PyTorch and project extras
+        run: |
+          uv venv
+          uv pip install --python .venv/bin/python torch --index-url https://download.pytorch.org/whl/cpu
+          uv pip install --python .venv/bin/python -e ".[all,dev]"
+
+      - name: Lint
+        run: .venv/bin/ruff check src tests
+
+      - name: Test
+        run: .venv/bin/python -m pytest

@@ -138,7 +138,9 @@ class LibraryTreeTests(unittest.TestCase):
                     ("nested-img", _payload(nested / "b.png", root)),
                 ]
             )
-            self.assertEqual(set(catalog.subtree_ids(canonical_path(root))), {"root-img", "nested-img"})
+            self.assertEqual(
+                set(catalog.subtree_ids(canonical_path(root))), {"root-img", "nested-img"}
+            )
             self.assertEqual(catalog.subtree_ids(canonical_path(nested)), ["nested-img"])
 
     def test_point_ids_only_direct_folder(self) -> None:
@@ -252,7 +254,10 @@ class LibraryTreeTests(unittest.TestCase):
                     ("o", _payload(other / "sky.png", root, mtime=9)),
                 ]
             )
-            names = [name for _, name, _ in catalog.list_folder_images(canonical_path(clothes), "name")]
+            names = [
+                name
+                for _, name, _ in catalog.list_folder_images(canonical_path(clothes), "name")
+            ]
             self.assertEqual(names, ["coat.png"])
 
     def test_folder_images_unknown_key_is_empty(self) -> None:

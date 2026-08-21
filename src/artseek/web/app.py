@@ -327,7 +327,9 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     ) -> dict:
         if app.state.index_job.running:
             raise HTTPException(409, "正在索引图片，请稍后再检索")
-        library_paths, library_weights = resolve_library_references(parse_reference_specs(references))
+        library_paths, library_weights = resolve_library_references(
+            parse_reference_specs(references)
+        )
         upload_weights = _parse_weight_list(file_weights, len(files))
         temps: list[Path] = []
         try:

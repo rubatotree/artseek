@@ -197,7 +197,9 @@ def search_command(
         list[Path] | None, typer.Option("--image", "-i", help="参考图，可重复传入多张")
     ] = None,
     text_weight: Annotated[
-        float, typer.Option("--text-weight", min=0.0, max=8.0, help="文字在混合查询中的权重，默认 1")
+        float,
+        typer.Option("--text-weight", min=0.0, max=8.0, help="文字在混合查询中的权重，默认 1"),
+    
     ] = 1.0,
     no_llm: Annotated[
         bool, typer.Option("--no-llm", help="不调用 Ollama，仅用内置词典扩展")
@@ -307,7 +309,10 @@ def stats_command(
             console.print("根据界面选择缓存，索引根目录可能是：")
             for root in roots:
                 console.print(f"         {root}")
-        console.print("若网页服务正在运行，等目录树加载完成后会生成 folder_catalog.json，之后 stats 可立即返回。")
+        console.print(
+            "若网页服务正在运行，等目录树加载完成后会生成 folder_catalog.json，"
+            "之后 stats 可立即返回。"
+        )
         return
     try:
         roots: dict[str, int] = {}

@@ -80,7 +80,9 @@ class PreloadTests(unittest.TestCase):
                 client.preload()
 
     def test_unload_sends_keep_alive_zero(self) -> None:
-        client = OllamaClient(LLMConfig(enabled=True, query_model="qwen3:4b", vision_model="qwen3-vl:4b"))
+        client = OllamaClient(
+            LLMConfig(enabled=True, query_model="qwen3:4b", vision_model="qwen3-vl:4b")
+        )
         seen: list[dict] = []
 
         def fake_urlopen(request, timeout=None):

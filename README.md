@@ -1,5 +1,7 @@
 # ArtSeek
 
+ArtSeek is a fully local search tool for illustration collections. Originals stay on disk: nothing is copied, moved, or uploaded. After indexing, you can search in Chinese, Japanese, or English, with tags, a reference image, or image-plus-text.
+
 ArtSeek 是一个完全本地运行的插画图片收藏检索工具。它不会移动、复制或上传原图；首次建立索引后，可以用中文、日文、英文自然语言、细节关键词、参考图片，或“参考图 + 修改要求”查找图片。
 
 它针对插画做了两层表示：
@@ -24,7 +26,7 @@ ArtSeek 是一个完全本地运行的插画图片收藏检索工具。它不会
 
 ## 推荐配置
 
-你的 RTX 4060 Laptop 8 GB 可以直接使用默认配置：
+约 8 GB 显存的 NVIDIA GPU（例如 RTX 4060 Laptop）可以直接使用默认配置。没有独立显卡时也可以用 CPU，索引会慢一个数量级。
 
 | 模块 | 默认模型 | 作用 |
 |---|---|---|
@@ -230,7 +232,7 @@ python -m pytest
 ruff check src tests
 ```
 
-架构与检索融合细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+架构与检索融合细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。贡献方式见 [CONTRIBUTING.md](CONTRIBUTING.md)；安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。
 
 ## 模型与许可证
 

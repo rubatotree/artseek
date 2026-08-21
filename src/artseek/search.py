@@ -11,8 +11,8 @@ from typing import Any
 import numpy as np
 
 from .config import (
-    AppConfig,
     DEFAULT_AUTO_UNLOAD_SECONDS,
+    AppConfig,
     clamp_auto_unload_seconds,
     load_auto_unload_seconds,
     save_auto_unload_seconds,
@@ -359,7 +359,9 @@ class SearchEngine:
         cached = getattr(self, "_folder_catalog", None)
         if cached is not None and getattr(self, "_folder_catalog_count", None) == count:
             return cached
-        catalog = load_catalog(self.config.folder_catalog_path, count) if count is not None else None
+        catalog = (
+            load_catalog(self.config.folder_catalog_path, count) if count is not None else None
+        )
         if catalog is None:
             if count is not None:
                 catalog = rebuild_catalog(self.store, self.config)
@@ -511,7 +513,9 @@ class SearchEngine:
             if image_weights is not None
             else [1.0] * len(refs)
         )
-        active_paths = [path for path, weight in zip(refs, declared_weights) if weight > 0]
+        active_paths = [
+            path for path, weight in zip(refs, declared_weights, strict=False) if weight > 0
+        ]
         active_weights = [weight for weight in declared_weights if weight > 0]
         image_vectors: list[np.ndarray] = []
         if active_paths:

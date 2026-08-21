@@ -534,9 +534,15 @@ def save_catalog(path: Path, catalog: FolderCatalog, count: int) -> None:
 
 
 def rebuild_catalog(store: Any, config: AppConfig) -> FolderCatalog:
-    rows = store.iter_folder_payloads() if hasattr(store, "iter_folder_payloads") else store.iter_payloads()
+    if hasattr(store, "iter_folder_payloads"):
+        rows = store.iter_folder_payloads()
+    else:
+        rows = store.iter_payloads()
     catalog = build_catalog(rows)
-    count = int(store.count()) if hasattr(store, "count") else sum(len(acc.ids) for acc in catalog.folders.values())
+    if hasattr(store, "count"):
+        count = int(store.count())
+    else:
+        count = sum(len(acc.ids) for acc in catalog.folders.values())
     save_catalog(config.folder_catalog_path, catalog, count)
     return catalog
 
