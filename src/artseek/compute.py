@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import shutil
 
 import torch
@@ -34,6 +35,21 @@ def configure_inference(device: torch.device) -> None:
     torch.backends.cudnn.allow_tf32 = True
     torch.backends.cudnn.benchmark = True
     torch.set_float32_matmul_precision("high")
+
+
+def release_accelerator() -> None:
+    """Drop cached GPU blocks after a model has been deleted."""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+        return
+    mps = getattr(torch, "mps", None)
+    empty_cache = getattr(mps, "empty_cache", None) if mps is not None else None
+    backends = getattr(torch, "backends", None)
+    mps_backend = getattr(backends, "mps", None) if backends is not None else None
+    if callable(empty_cache) and mps_backend is not None and mps_backend.is_available():
+        empty_cache()
 
 
 def nvidia_gpu_detected() -> bool:

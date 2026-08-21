@@ -379,6 +379,7 @@ def build_catalog(payloads: Iterable[tuple[str, dict[str, Any]]]) -> FolderCatal
         leaf.id_mtimes.append(stamp)
         leaf.mtime_ns = max(leaf.mtime_ns, stamp)
 
+    _restore_child_keys(folders)
     return FolderCatalog(folders=folders, root_keys=root_keys)
 
 
@@ -447,7 +448,7 @@ def apply_scope(catalog: FolderCatalog, scope: FolderScope) -> tuple[FolderScope
     new_keys = sorted(current - known, key=str) if known else []
     selected = [key for key in scope.selected if key in current]
     merged_known = sorted(known | current)
-    sort = scope.sort if scope.sort in SORT_KEYS else DEFAULT_SORT,
+    sort = _sort_method(scope.sort)
     after = normalize_day(scope.mtime_after)
     before = normalize_day(scope.mtime_before)
     if after and before and after > before:
@@ -464,8 +465,8 @@ def apply_scope(catalog: FolderCatalog, scope: FolderScope) -> tuple[FolderScope
     )
 
 
-def load_catalog(path: Path, expected_count: int) -> FolderCatalog | None:
-    if expected_count < 0 or not path.exists():
+def load_catalog(path: Path, expected_count: int | None = None) -> FolderCatalog | None:
+    if not path.exists():
         return None
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -473,7 +474,7 @@ def load_catalog(path: Path, expected_count: int) -> FolderCatalog | None:
         return None
     if int(raw.get("version", 0)) != CATALOG_VERSION:
         return None
-    if int(raw.get("count", -1)) != expected_count:
+    if expected_count is not None and int(raw.get("count", -1)) != expected_count:
         return None
     folders: dict[str, _FolderAcc] = {}
     for item in raw.get("folders", []):
@@ -499,6 +500,7 @@ def load_catalog(path: Path, expected_count: int) -> FolderCatalog | None:
             id_names=names[: len(ids)],
             id_mtimes=mtimes[: len(ids)],
         )
+    _restore_child_keys(folders)
     return FolderCatalog(folders=folders, root_keys=[str(key) for key in raw.get("root_keys", [])])
 
 
@@ -537,6 +539,35 @@ def rebuild_catalog(store: Any, config: AppConfig) -> FolderCatalog:
     count = int(store.count()) if hasattr(store, "count") else sum(len(acc.ids) for acc in catalog.folders.values())
     save_catalog(config.folder_catalog_path, catalog, count)
     return catalog
+
+
+def _restore_child_keys(folders: dict[str, _FolderAcc]) -> None:
+    for acc in folders.values():
+        acc.child_keys.clear()
+    for acc in folders.values():
+        parent = acc.parent_key
+        if parent and parent in folders:
+            siblings = folders[parent].child_keys
+            if acc.key not in siblings:
+                siblings.append(acc.key)
+
+
+def root_image_counts(catalog: FolderCatalog) -> list[tuple[str, int]]:
+    rows: list[tuple[str, int]] = []
+    for key in catalog.root_keys:
+        acc = catalog.folders.get(key)
+        path = acc.path if acc is not None else key
+        count = sum(len(catalog.folders[item].ids) for item in catalog.subtree_keys(key))
+        rows.append((path, count))
+    rows.sort(key=lambda item: item[0].casefold())
+    return rows
+
+
+def index_roots_from_scope(scope: FolderScope) -> list[str]:
+    known = {canonical_path(key) for key in scope.known if key}
+    roots = [key for key in known if canonical_path(Path(key).parent) not in known]
+    roots.sort(key=str.casefold)
+    return roots
 
 
 def library_payload(

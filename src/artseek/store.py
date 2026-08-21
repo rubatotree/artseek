@@ -59,14 +59,38 @@ class VectorStore:
     def close(self) -> None:
         self.client.close()
 
-    def ensure_collection(self, dimension: int) -> None:
-        if self.config.manifest_path.exists():
+    def _read_manifest(self) -> dict[str, Any] | None:
+        if not self.config.manifest_path.exists():
+            return None
+        try:
+            data = json.loads(self.config.manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError("索引清单损坏，请运行 artseek rebuild 重建") from exc
+        return data if isinstance(data, dict) else None
+
+    def known_dimension(self) -> int | None:
+        manifest = self._read_manifest()
+        if manifest:
+            value = manifest.get("dimension")
             try:
-                manifest = json.loads(
-                    self.config.manifest_path.read_text(encoding="utf-8")
-                )
-            except (OSError, json.JSONDecodeError) as exc:
-                raise RuntimeError("索引清单损坏，请运行 artseek rebuild 重建") from exc
+                dimension = int(value)
+            except (TypeError, ValueError):
+                dimension = 0
+            if dimension > 0:
+                return dimension
+        existing = {item.name for item in self.client.get_collections().collections}
+        if COLLECTION not in existing:
+            return None
+        info = self.client.get_collection(COLLECTION)
+        vectors = info.config.params.vectors
+        try:
+            return int(vectors["visual"].size)  # type: ignore[index]
+        except (KeyError, TypeError, AttributeError):
+            return None
+
+    def ensure_collection(self, dimension: int) -> None:
+        manifest = self._read_manifest()
+        if manifest:
             indexed_model = manifest.get("embedding_model")
             if indexed_model and indexed_model != self.config.embedding.model:
                 raise RuntimeError(

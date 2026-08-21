@@ -130,6 +130,17 @@
     .advanced-options { display: grid; gap: 14px; color: var(--muted); font-size: 13px; }
     .advanced-options label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .advanced-options input[type="range"] { flex: 1; min-width: 80px; }
+    .model-block {
+      display: grid; gap: 8px; padding-top: 4px;
+      border-top: 1px solid var(--line);
+    }
+    .model-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .model-state { color: #8a5268; font-size: 12px; font-weight: 650; }
+    .model-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .advanced-options input[type="number"] {
+      width: 64px; border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px;
+      color: var(--ink); background: #fff; font: inherit; font-size: 13px;
+    }
     #tab-scope[hidden], #tab-advanced[hidden] { display: none; }
     .time-filter { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
     .time-filter-label { margin-bottom: 8px; font-size: 14px; font-weight: 700; }
@@ -303,6 +314,12 @@
       transform-origin: 0 0;
       will-change: transform; -webkit-user-drag: none;
     }
+    .viewer-stage img[data-slot="prev"],
+    .viewer-stage img[data-slot="next"] {
+      pointer-events: none;
+      z-index: 0;
+    }
+    .viewer-stage img[data-slot="current"] { z-index: 1; }
     .viewer-nav {
       position: absolute; top: 50%; z-index: 2;
       width: 46px; height: 72px; padding: 0;
@@ -357,10 +374,12 @@
       .search-layout {
         display: flex;
         flex-direction: column;
+        align-items: stretch;
         gap: 0;
         padding-inline: 0;
         width: 100%;
       }
+      .results-column { width: 100%; max-width: 100%; }
       .search-column { display: contents; }
       .search-panel {
         order: -3;
@@ -462,7 +481,8 @@
       }
       .tree-body { padding-inline: var(--page-gutter); }
       .tree-actions { flex-wrap: wrap; }
-      .index-add input, .tree-sort, .time-preset, .time-custom input { font-size: 16px; }
+      .index-add input, .tree-sort, .time-preset, .time-custom input,
+      .advanced-options input[type="number"] { font-size: 16px; }
       .query-info {
         margin: 6px var(--page-gutter) 4px;
         min-height: 0;
@@ -473,13 +493,17 @@
       .text-weight-card, .ref-add, .ref-card { width: 52px; height: 52px; border-radius: 10px; }
       .text-weight-card input { width: 44px; font-size: 14px; }
       .gallery {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
         gap: 4px;
         width: 100%;
+        max-width: 100%;
         padding: 4px 0 28px;
       }
       .gallery-col {
-        flex: 1 1 0;
-        width: 0;
+        display: flex;
+        flex-direction: column;
+        width: auto;
         min-width: 0;
         gap: 4px;
       }
@@ -575,6 +599,14 @@
           <label><input id="strict-tags" type="checkbox"> 细节标签至少命中一项</label>
           <label title="完全相同的图片只保留最先检索到的"><input id="dedupe" type="checkbox" checked> 去除重复</label>
           <label>每批 <input id="limit" type="range" min="12" max="80" step="4" value="40"> <span id="limit-value">40</span></label>
+          <div class="model-block">
+            <div class="model-head">
+              <label><input id="model-loaded" type="checkbox"> 图文向量模型</label>
+              <span id="model-state" class="model-state">未载入</span>
+            </div>
+            <p id="model-hint" class="model-hint">启动时不占用显存；检索时自动载入，闲置后卸载。</p>
+            <label title="0 表示保持载入，直到手动卸载">自动卸载 <input id="auto-unload" type="number" min="0" max="1440" step="1" value="10"> 分钟</label>
+          </div>
         </div>
         </div>
       </aside>
@@ -611,7 +643,9 @@
     <div class="viewer-stage" id="viewer-stage">
       <button class="viewer-close" id="viewer-close" type="button" aria-label="关闭">×</button>
       <button class="viewer-nav prev" id="viewer-prev" type="button" tabindex="-1" aria-label="上一张">‹</button>
-      <img id="viewer-image" alt="原图预览" draggable="false">
+      <img id="viewer-image-prev" data-slot="prev" alt="" draggable="false" decoding="async" loading="eager">
+      <img id="viewer-image" data-slot="current" alt="原图预览" draggable="false" decoding="async" loading="eager">
+      <img id="viewer-image-next" data-slot="next" alt="" draggable="false" decoding="async" loading="eager">
       <button class="viewer-nav next" id="viewer-next" type="button" tabindex="-1" aria-label="下一张">›</button>
     </div>
     <div class="modal-bar">
@@ -675,6 +709,13 @@
       slideX: 0, slideTarget: 0, swiping: false, flipping: false, preserveSlide: false,
       lastTapAt: 0, lastTapX: 0, lastTapY: 0, suppressClick: 0,
     };
+    const viewerSlots = {
+      prev: $('viewer-image-prev'),
+      current: $('viewer-image'),
+      next: $('viewer-image-next'),
+    };
+    const viewerPreload = new Map();
+    const VIEWER_PRELOAD_LIMIT = 12;
     function prefersReducedMotion() {
       return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     }
@@ -682,23 +723,36 @@
       const fit = view.fitScale || 1;
       return Math.abs(view.targetScale - fit) < 0.04 * Math.max(fit, 0.08);
     }
-    function isNativeScale() {
-      return Math.abs(view.targetScale - 1) < 0.05;
+    function defaultViewLayoutScale(stageWidth, stageHeight, imageWidth, imageHeight) {
+      if (!imageWidth || !imageHeight || stageWidth < 8 || stageHeight < 8) return 1;
+      const contain = Math.min(stageWidth / imageWidth, stageHeight / imageHeight);
+      const largerThanStage = imageWidth > stageWidth || imageHeight > stageHeight;
+      if (largerThanStage) return contain;
+      const landscape = stageWidth >= stageHeight;
+      if (landscape && imageHeight < stageHeight / 2) return (stageHeight / 2) / imageHeight;
+      if (!landscape && imageWidth < stageWidth / 2) return (stageWidth / 2) / imageWidth;
+      return 1;
     }
-    function computeContainScale() {
-      const image = $('viewer-image');
+    function imageBitmapFitScale(image) {
+      const bitmapWidth = image.naturalWidth;
+      const bitmapHeight = image.naturalHeight;
+      if (!bitmapWidth || !bitmapHeight) return 1;
       const stage = $('viewer-stage');
-      const width = image.naturalWidth;
-      const height = image.naturalHeight;
-      if (!width || !height) return 1;
       const stageWidth = stage.clientWidth || window.innerWidth;
       const stageHeight = stage.clientHeight || window.innerHeight;
-      if (stageWidth < 8 || stageHeight < 8) return 1;
-      return Math.min(stageWidth / width, stageHeight / height);
+      const shown = image.getAttribute('src') || '';
+      const intended = image.dataset.src || '';
+      const placeholder = Boolean(intended && shown && shown !== intended);
+      const layoutWidth = (placeholder && Number(image.dataset.layoutWidth)) || bitmapWidth;
+      const layoutHeight = (placeholder && Number(image.dataset.layoutHeight)) || bitmapHeight;
+      const layoutScale = defaultViewLayoutScale(stageWidth, stageHeight, layoutWidth, layoutHeight);
+      return layoutScale * (layoutWidth / bitmapWidth);
+    }
+    function computeContainScale(image = viewerSlots.current) {
+      return imageBitmapFitScale(image);
     }
     function updateFitScale() {
-      const contain = computeContainScale();
-      view.fitScale = Math.min(contain, 1);
+      view.fitScale = computeContainScale();
       return view.fitScale;
     }
     const treeState = {
@@ -716,7 +770,92 @@
       mtimeMax: '',
     };
 
+    const modelUi = { poll: null, applying: false, loaded: false };
+    function modelHint(data) {
+      if (data.loading) return '正在载入图文向量模型…';
+      if (!data.loaded) return '启动时不占用显存；检索时自动载入。';
+      if (!data.auto_unload_minutes) return '已载入 · 自动卸载已关闭，将保持占用显存。';
+      const sec = data.idle_remaining_seconds;
+      if (typeof sec === 'number') {
+        if (sec >= 60) return `已载入 · 约 ${Math.ceil(sec / 60)} 分钟无检索后卸载`;
+        if (sec > 0) return `已载入 · 约 ${Math.ceil(sec)} 秒后自动卸载`;
+        return '已载入 · 即将自动卸载';
+      }
+      return `已载入 · ${data.auto_unload_minutes} 分钟无检索后卸载`;
+    }
+    function applyModelStatus(data) {
+      modelUi.loaded = Boolean(data.loaded);
+      modelUi.applying = true;
+      const box = $('model-loaded');
+      if (document.activeElement !== box) box.checked = Boolean(data.loaded);
+      box.disabled = Boolean(data.loading);
+      $('model-state').textContent = data.loading ? '载入中' : (data.loaded ? '已载入' : '未载入');
+      $('model-hint').textContent = data.message || modelHint(data);
+      const minutes = Number(data.auto_unload_minutes);
+      if (Number.isFinite(minutes) && document.activeElement !== $('auto-unload')) {
+        $('auto-unload').value = String(minutes);
+      }
+      modelUi.applying = false;
+    }
+    function modelApiErrorMessage(error) {
+      const message = String(error && error.message || '');
+      if (/not found/i.test(message) || message.includes('404')) {
+        return '模型接口尚未生效，请重启 artseek serve 后再试。';
+      }
+      return message || '未知错误';
+    }
+    async function fetchModelStatus() {
+      const data = await parseResponse(await fetch('/api/model'));
+      applyModelStatus(data);
+      return data;
+    }
+    function startModelPoll() {
+      const showError = (error) => { $('model-hint').textContent = modelApiErrorMessage(error); };
+      fetchModelStatus().catch(showError);
+      if (modelUi.poll) return;
+      modelUi.poll = setInterval(() => { fetchModelStatus().catch(showError); }, 4000);
+    }
+    function stopModelPoll() {
+      if (!modelUi.poll) return;
+      clearInterval(modelUi.poll);
+      modelUi.poll = null;
+    }
     $('limit').addEventListener('input', () => $('limit-value').textContent = $('limit').value);
+    $('model-loaded').addEventListener('change', async () => {
+      if (modelUi.applying) return;
+      const want = $('model-loaded').checked;
+      $('model-loaded').disabled = true;
+      $('model-state').textContent = want ? '载入中' : '卸载中';
+      $('model-hint').textContent = want ? '正在载入图文向量模型…' : '正在卸载并释放显存…';
+      try {
+        const data = await parseResponse(await fetch('/api/model', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ loaded: want }),
+        }));
+        applyModelStatus(data);
+      } catch (error) {
+        $('model-loaded').checked = !want;
+        $('model-loaded').disabled = false;
+        $('model-state').textContent = want ? '未载入' : '已载入';
+        $('model-hint').textContent = `操作失败：${modelApiErrorMessage(error)}`;
+      }
+    });
+    $('auto-unload').addEventListener('change', async () => {
+      if (modelUi.applying) return;
+      const minutes = Math.max(0, Math.min(1440, Math.round(Number($('auto-unload').value) || 0)));
+      $('auto-unload').value = String(minutes);
+      try {
+        const data = await parseResponse(await fetch('/api/model', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ auto_unload_minutes: minutes }),
+        }));
+        applyModelStatus(data);
+      } catch (error) {
+        $('model-hint').textContent = `未能保存自动卸载时间：${modelApiErrorMessage(error)}`;
+      }
+    });
     $('search-form').addEventListener('submit', (event) => { event.preventDefault(); runSearch(); });
     $('upload').addEventListener('change', (event) => {
       addReferenceFiles(event.target.files);
@@ -731,6 +870,7 @@
     $('viewer-close').addEventListener('click', () => $('viewer').close());
     $('viewer').addEventListener('close', () => {
       resetView();
+      clearViewerSlots();
       state.currentRefKey = null;
       state.viewerSource = 'gallery';
       syncRefSelection();
@@ -815,6 +955,8 @@
         src: `/image/${item.id}`,
         preview: `/thumb/${item.id}`,
         objectUrl: null,
+        width: item.width || 0,
+        height: item.height || 0,
         weight: 1,
       });
       renderReferences();
@@ -940,7 +1082,11 @@
         state.hasMore = Boolean(data.has_more) && incoming.length > 0;
         $('load-more').hidden = !state.hasMore;
         renderBrowseInfo(data, state.results.length);
-        if ($('viewer').open) updateViewerNav();
+        if ($('viewer').open) {
+          updateViewerNav();
+          syncNeighborImages();
+          prefetchViewerAhead();
+        }
       } catch (error) {
         if (seq !== state.searchSeq) return;
         if (reset) $('query-info').textContent = `无法预览目录：${error.message}`;
@@ -991,7 +1137,8 @@
         state.offset = 0;
         state.hasMore = false;
         $('panel').classList.add('loading');
-        $('query-info').textContent = '正在本地检索……';
+        try { await fetchModelStatus(); } catch { /* keep last known load state */ }
+        $('query-info').textContent = modelUi.loaded ? '正在本地检索……' : '正在载入图文向量模型并检索……';
         $('load-more').hidden = true;
       } else {
         state.loadingMore = true;
@@ -1061,7 +1208,12 @@
         state.hasMore = Boolean(data.has_more) && incoming.length > 0;
         $('load-more').hidden = !state.hasMore;
         renderInfo(data, state.results.length);
-        if ($('viewer').open) updateViewerNav();
+        if ($('viewer').open) {
+          updateViewerNav();
+          syncNeighborImages();
+          prefetchViewerAhead();
+        }
+        fetchModelStatus().catch(() => {});
       } catch (error) {
         if (seq !== state.searchSeq) return;
         if (reset) $('query-info').textContent = `查询失败：${error.message}`;
@@ -1216,15 +1368,29 @@
     function updateViewerNav() {
       syncViewerChrome();
     }
-    function applyViewTransform() {
-      const image = $('viewer-image');
-      const width = $('viewer-stage').clientWidth || 1;
-      const scale = view.scale;
-      const tx = view.x + view.slideX - (image.naturalWidth * scale) / 2;
-      const ty = view.y - (image.naturalHeight * scale) / 2;
+    function layoutViewerSlot(image, slotX, { live = false } = {}) {
+      const nw = image.naturalWidth;
+      const nh = image.naturalHeight;
+      const shown = image.getAttribute('src') || '';
+      if (!shown || !image.complete || !nw || !nh) {
+        image.style.visibility = 'hidden';
+        return;
+      }
+      const fit = imageBitmapFitScale(image);
+      const scale = live ? view.scale : fit;
+      const x = live ? view.x : 0;
+      const y = live ? view.y : 0;
+      const tx = x + view.slideX + slotX - (nw * scale) / 2;
+      const ty = y - (nh * scale) / 2;
       image.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
-      image.style.opacity = String(1 - Math.min(0.5, Math.abs(view.slideX) / width * 0.55));
+      image.style.visibility = 'visible';
+    }
+    function applyViewTransform() {
       const stage = $('viewer-stage');
+      const width = stage.clientWidth || window.innerWidth;
+      layoutViewerSlot(viewerSlots.prev, -width);
+      layoutViewerSlot(viewerSlots.current, 0, { live: true });
+      layoutViewerSlot(viewerSlots.next, width);
       stage.classList.toggle('is-zoomed', !isViewFitted());
       stage.classList.toggle('is-dragging', view.dragging || view.swiping);
       const shown = view.targetScale;
@@ -1344,7 +1510,7 @@
       }
     }
     function applyLoadedFit() {
-      const image = $('viewer-image');
+      const image = viewerSlots.current;
       if (!$('viewer').open) return;
       if (!image.naturalWidth) return;
       updateFitScale();
@@ -1357,37 +1523,178 @@
       image.style.visibility = 'visible';
       applyViewTransform();
     }
-    function openViewer(item) {
+    function galleryImageSrc(item) {
+      return `/image/${item.id}`;
+    }
+    function galleryThumbSrc(item) {
+      return `/thumb/${item.id}`;
+    }
+    function viewerNeighbor(delta) {
+      if (state.viewerSource === 'reference') {
+        const index = currentRefIndex() + delta;
+        if (index < 0 || index >= state.references.length) return null;
+        const ref = state.references[index];
+        return { src: ref.src, thumb: ref.preview || ref.src, width: ref.width || 0, height: ref.height || 0 };
+      }
+      const index = currentIndex() + delta;
+      if (index < 0 || index >= state.results.length) return null;
+      const item = state.results[index];
+      return {
+        src: galleryImageSrc(item),
+        thumb: galleryThumbSrc(item),
+        width: item.width || 0,
+        height: item.height || 0,
+      };
+    }
+    function preloadSrc(src) {
+      if (!src) return null;
+      const existing = viewerPreload.get(src);
+      if (existing) {
+        viewerPreload.delete(src);
+        viewerPreload.set(src, existing);
+        return existing;
+      }
+      const probe = new Image();
+      probe.decoding = 'async';
+      probe.src = src;
+      viewerPreload.set(src, probe);
+      while (viewerPreload.size > VIEWER_PRELOAD_LIMIT) {
+        viewerPreload.delete(viewerPreload.keys().next().value);
+      }
+      return probe;
+    }
+    function fillViewerSlot(image, neighbor, { placeholder = false } = {}) {
+      if (!neighbor) {
+        image.removeAttribute('src');
+        image.dataset.src = '';
+        image.dataset.layoutWidth = '';
+        image.dataset.layoutHeight = '';
+        image.style.visibility = 'hidden';
+        return;
+      }
+      image.dataset.src = neighbor.src;
+      image.dataset.layoutWidth = neighbor.width ? String(neighbor.width) : '';
+      image.dataset.layoutHeight = neighbor.height ? String(neighbor.height) : '';
+      const shown = image.getAttribute('src') || '';
+      if (shown === neighbor.src) {
+        image.style.visibility = image.complete && image.naturalWidth ? 'visible' : 'hidden';
+        return;
+      }
+      if (placeholder && neighbor.thumb && shown !== neighbor.thumb) {
+        image.src = neighbor.thumb;
+        image.style.visibility = image.complete && image.naturalWidth ? 'visible' : 'hidden';
+      } else if (!shown) {
+        image.style.visibility = 'hidden';
+      }
+      const probe = preloadSrc(neighbor.src);
+      const assignFull = () => {
+        if (image.dataset.src !== neighbor.src) return;
+        if ((image.getAttribute('src') || '') === neighbor.src) {
+          image.style.visibility = image.complete && image.naturalWidth ? 'visible' : 'hidden';
+          applyViewTransform();
+          return;
+        }
+        image.src = neighbor.src;
+      };
+      const showFull = () => {
+        if (image.dataset.src !== neighbor.src || !probe) {
+          assignFull();
+          return;
+        }
+        if (probe.decode) probe.decode().then(assignFull, assignFull);
+        else assignFull();
+      };
+      if (probe && probe.complete && probe.naturalWidth) showFull();
+      else if (probe) probe.addEventListener('load', showFull, { once: true });
+    }
+    function syncNeighborImages() {
+      fillViewerSlot(viewerSlots.current, viewerNeighbor(0), { placeholder: true });
+      fillViewerSlot(viewerSlots.prev, viewerNeighbor(-1), { placeholder: true });
+      fillViewerSlot(viewerSlots.next, viewerNeighbor(1), { placeholder: true });
+      applyViewTransform();
+    }
+    function prefetchViewerAhead() {
+      for (const delta of [-2, -1, 1, 2]) {
+        const neighbor = viewerNeighbor(delta);
+        if (neighbor) preloadSrc(neighbor.src);
+      }
+      if (state.viewerSource === 'reference' || !state.hasMore) return;
+      const index = currentIndex();
+      if (index < 0 || index < state.results.length - 2) return;
+      void Promise.resolve(loadMoreResults()).then(() => {
+        if (!$('viewer').open) return;
+        updateViewerNav();
+        syncNeighborImages();
+        const extra = viewerNeighbor(1) || viewerNeighbor(2);
+        if (extra) preloadSrc(extra.src);
+      });
+    }
+    function clearViewerSlots() {
+      for (const image of Object.values(viewerSlots)) {
+        image.removeAttribute('src');
+        image.dataset.src = '';
+        image.dataset.layoutWidth = '';
+        image.dataset.layoutHeight = '';
+        image.style.visibility = 'hidden';
+      }
+    }
+    function rotateViewerSlots(delta) {
+      if (delta > 0) {
+        const recycled = viewerSlots.prev;
+        viewerSlots.prev = viewerSlots.current;
+        viewerSlots.current = viewerSlots.next;
+        viewerSlots.next = recycled;
+      } else if (delta < 0) {
+        const recycled = viewerSlots.next;
+        viewerSlots.next = viewerSlots.current;
+        viewerSlots.current = viewerSlots.prev;
+        viewerSlots.prev = recycled;
+      } else {
+        return;
+      }
+      viewerSlots.prev.dataset.slot = 'prev';
+      viewerSlots.current.dataset.slot = 'current';
+      viewerSlots.next.dataset.slot = 'next';
+      viewerSlots.prev.id = 'viewer-image-prev';
+      viewerSlots.current.id = 'viewer-image';
+      viewerSlots.next.id = 'viewer-image-next';
+      viewerSlots.prev.alt = '';
+      viewerSlots.current.alt = '原图预览';
+      viewerSlots.next.alt = '';
+    }
+    function applyGalleryViewerState(item) {
       state.viewerSource = 'gallery';
       state.current = item;
       state.currentRefKey = null;
-      resetView();
-      const image = $('viewer-image');
-      image.style.visibility = 'hidden';
-      image.src = `/image/${item.id}`;
-      if (image.complete && image.naturalWidth) applyLoadedFit();
       $('viewer-title').textContent = item.path;
       updateViewerNav();
+    }
+    function applyReferenceViewerState(ref) {
+      state.viewerSource = 'reference';
+      state.currentRefKey = ref.key;
+      state.current = ref.id ? { id: ref.id, name: ref.name, path: ref.name } : null;
+      $('viewer-title').textContent = ref.name;
+      updateViewerNav();
+    }
+    function openViewer(item) {
+      applyGalleryViewerState(item);
+      resetView();
       if (!$('viewer').open) $('viewer').showModal();
       fitViewerFrame();
-      if (image.complete && image.naturalWidth) applyLoadedFit();
+      syncNeighborImages();
+      if (viewerSlots.current.complete && viewerSlots.current.naturalWidth) applyLoadedFit();
+      prefetchViewerAhead();
     }
     function openReferenceViewer(key) {
       const ref = state.references.find((item) => item.key === key);
       if (!ref) return;
-      state.viewerSource = 'reference';
-      state.currentRefKey = key;
-      state.current = ref.id ? { id: ref.id, name: ref.name, path: ref.name } : null;
+      applyReferenceViewerState(ref);
       resetView();
-      const image = $('viewer-image');
-      image.style.visibility = 'hidden';
-      image.src = ref.src;
-      if (image.complete && image.naturalWidth) applyLoadedFit();
-      $('viewer-title').textContent = ref.name;
-      updateViewerNav();
       if (!$('viewer').open) $('viewer').showModal();
       fitViewerFrame();
-      if (image.complete && image.naturalWidth) applyLoadedFit();
+      syncNeighborImages();
+      if (viewerSlots.current.complete && viewerSlots.current.naturalWidth) applyLoadedFit();
+      prefetchViewerAhead();
     }
     function canStepViewer(delta) {
       if (state.viewerSource === 'reference') {
@@ -1399,6 +1706,20 @@
       if (next >= state.results.length) return Boolean(state.hasMore);
       return true;
     }
+    function commitViewerStep(delta) {
+      if (state.viewerSource === 'reference') {
+        const next = currentRefIndex() + delta;
+        if (next < 0 || next >= state.references.length) return false;
+        applyReferenceViewerState(state.references[next]);
+        return true;
+      }
+      const index = currentIndex();
+      if (index < 0) return false;
+      const item = state.results[index + delta];
+      if (!item) return false;
+      applyGalleryViewerState(item);
+      return true;
+    }
     async function stepViewer(delta, { animate = false } = {}) {
       if (view.flipping) return false;
       if (!canStepViewer(delta)) {
@@ -1406,63 +1727,73 @@
         startViewAnim();
         return false;
       }
-      const reduce = prefersReducedMotion();
-      const width = $('viewer-stage').clientWidth || window.innerWidth;
-      const outbound = (delta > 0 ? -1 : 1) * width;
-      if (animate && !reduce) {
-        view.flipping = true;
-        view.preserveSlide = true;
-        view.slideTarget = outbound;
-        await waitSlide();
-      }
-      if (state.viewerSource === 'reference') {
-        const next = currentRefIndex() + delta;
-        if (next < 0 || next >= state.references.length) {
-          view.flipping = false;
-          view.preserveSlide = false;
-          return false;
+      view.flipping = true;
+      try {
+        if (state.viewerSource !== 'reference') {
+          const next = currentIndex() + delta;
+          if (next >= state.results.length) {
+            if (state.hasMore) await loadMoreResults();
+            if (!state.results[next]) {
+              view.slideTarget = 0;
+              startViewAnim();
+              return false;
+            }
+            syncNeighborImages();
+          }
         }
-        openReferenceViewer(state.references[next].key);
-      } else {
-        const index = currentIndex();
-        if (index < 0) {
-          view.flipping = false;
+        const reduce = prefersReducedMotion();
+        const width = $('viewer-stage').clientWidth || window.innerWidth;
+        const outbound = (delta > 0 ? -1 : 1) * width;
+        const shouldAnimate = animate && !reduce;
+        if (shouldAnimate) {
+          view.preserveSlide = true;
+          view.slideTarget = outbound;
+          await waitSlide();
+          rotateViewerSlots(delta);
+          view.slideX = 0;
+          view.slideTarget = 0;
           view.preserveSlide = false;
-          return false;
-        }
-        const next = index + delta;
-        if (next < 0) {
-          view.flipping = false;
+          if (!commitViewerStep(delta)) {
+            rotateViewerSlots(-delta);
+            view.slideTarget = 0;
+            startViewAnim();
+            return false;
+          }
+          resetView(true);
+          syncNeighborImages();
+          applyLoadedFit();
+        } else if (state.viewerSource === 'reference') {
+          const next = currentRefIndex() + delta;
+          if (next < 0 || next >= state.references.length) {
+            view.preserveSlide = false;
+            return false;
+          }
+          openReferenceViewer(state.references[next].key);
           view.preserveSlide = false;
-          return false;
-        }
-        if (next >= state.results.length) {
-          if (state.hasMore) await loadMoreResults();
-          if (!state.results[next]) {
-            view.flipping = false;
+        } else {
+          const index = currentIndex();
+          if (index < 0) {
+            view.preserveSlide = false;
+            return false;
+          }
+          const item = state.results[index + delta];
+          if (!item) {
             view.preserveSlide = false;
             view.slideTarget = 0;
             startViewAnim();
             return false;
           }
+          openViewer(item);
+          view.preserveSlide = false;
         }
-        openViewer(state.results[next]);
-      }
-      if (animate && !reduce) {
-        view.slideX = -outbound * 0.22;
-        view.slideTarget = 0;
-        view.preserveSlide = false;
-        startViewAnim();
-        view.flipping = false;
-      } else {
-        view.preserveSlide = false;
+        prefetchViewerAhead();
+        return true;
+      } finally {
         view.flipping = false;
       }
-      return true;
     }
-    function toggleViewerZoom(clientX, clientY) {
-      if (!isNativeScale()) zoomAt(clientX, clientY, 1);
-      else resetView(false);
+    function toggleViewerZoom() {
+      resetView(false);
     }
     function bindViewerGestures() {
       const stage = $('viewer-stage');
@@ -1501,7 +1832,8 @@
         }
         view.dragging = !isViewFitted();
         view.swiping = isViewFitted() && !view.flipping;
-        view.hitImage = event.target.id === 'viewer-image';
+        if (view.swiping) prefetchViewerAhead();
+        view.hitImage = event.target === viewerSlots.current;
         view.pointerId = event.pointerId;
         view.px = event.clientX; view.py = event.clientY;
         view.startX = event.clientX; view.startY = event.clientY;
@@ -1635,7 +1967,15 @@
       });
     }
     bindViewerGestures();
-    $('viewer-image').addEventListener('load', applyLoadedFit);
+    function onViewerImageLoad(event) {
+      const image = event.target;
+      if (!$('viewer').open) return;
+      if (image === viewerSlots.current) applyLoadedFit();
+      else applyViewTransform();
+    }
+    for (const image of Object.values(viewerSlots)) {
+      image.addEventListener('load', onViewerImageLoad);
+    }
     function bindViewerViewport() {
       const sync = () => fitViewerFrame();
       const viewport = window.visualViewport;
@@ -2092,6 +2432,8 @@
       $('tab-btn-advanced').classList.toggle('is-active', !scope);
       $('tab-btn-scope').setAttribute('aria-selected', String(scope));
       $('tab-btn-advanced').setAttribute('aria-selected', String(!scope));
+      if (scope) stopModelPoll();
+      else startModelPoll();
     }
     $('tab-btn-scope').addEventListener('click', () => setSideTab('scope'));
     $('tab-btn-advanced').addEventListener('click', () => setSideTab('advanced'));
@@ -2106,6 +2448,9 @@
     });
     if (window.matchMedia('(pointer: fine)').matches) $('query').focus();
     loadLibraryTree();
+    fetchModelStatus().catch((error) => {
+      $('model-hint').textContent = modelApiErrorMessage(error);
+    });
   </script>
 </body>
 </html>

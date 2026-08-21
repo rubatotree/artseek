@@ -1,13 +1,22 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import threading
+import time
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from .config import AppConfig
+from .config import (
+    AppConfig,
+    DEFAULT_AUTO_UNLOAD_SECONDS,
+    clamp_auto_unload_seconds,
+    load_auto_unload_seconds,
+    save_auto_unload_seconds,
+)
 from .library import (
     FolderCatalog,
     build_catalog,
@@ -106,36 +115,239 @@ class SearchResponse:
 
 
 class SearchEngine:
-    def __init__(self, config: AppConfig):
+    def __init__(
+        self,
+        config: AppConfig,
+        *,
+        store: VectorStore | None = None,
+        embedder_factory: Callable[[], Any] | None = None,
+        llm: OllamaClient | None = None,
+        auto_unload_seconds: int | None = None,
+    ):
         self.config = config
-        self.embedder = SiglipEmbedder(config.embedding)
-        self.store = VectorStore(config)
-        self.store.ensure_collection(self.embedder.dimension)
-        self.llm = OllamaClient(config.llm)
+        self.embedder: Any = None
+        self._embedder_factory = embedder_factory or (lambda: SiglipEmbedder(config.embedding))
+        self.store = store if store is not None else VectorStore(config)
+        known = getattr(self.store, "known_dimension", None)
+        dimension = known() if callable(known) else None
+        if dimension is not None:
+            self.store.ensure_collection(dimension)
+        self.llm = llm if llm is not None else OllamaClient(config.llm)
         self._folder_catalog: FolderCatalog | None = None
         self._folder_catalog_count: int | None = None
         self._plan_cache: dict[str, QueryPlan] = {}
+        self._lifecycle_ready = True
+        self._model_lock = threading.RLock()
+        self._busy = 0
+        self._loading = False
+        self._idle_timer: threading.Timer | None = None
+        self._last_used_at: float | None = None
+        if auto_unload_seconds is None:
+            auto_unload_seconds = load_auto_unload_seconds(config)
+        self.auto_unload_seconds = clamp_auto_unload_seconds(
+            auto_unload_seconds, DEFAULT_AUTO_UNLOAD_SECONDS
+        )
 
     def close(self) -> None:
-        self.store.close()
+        self.unload_model(force=True)
+        closer = getattr(self.store, "close", None)
+        if callable(closer):
+            closer()
 
     def warmup(self, status: Callable[[str], None] | None = None) -> None:
         """Compile inference kernels and preload the query LLM before serving."""
         notify = status or (lambda _message: None)
-        notify("正在预热图文向量模型……")
-        warmup = getattr(self.embedder, "warmup", None)
-        if callable(warmup):
-            warmup()
-        else:
-            self.embedder.encode_texts(["warmup"])
-        if not self.config.llm.enabled:
+        with self.hold_model() as embedder:
+            notify("正在预热图文向量模型……")
+            warmup = getattr(embedder, "warmup", None)
+            if callable(warmup):
+                warmup()
+            else:
+                embedder.encode_texts(["warmup"])
+            if not self.config.llm.enabled:
+                return
+            notify(f"正在载入本地大模型 {self.config.llm.query_model}……")
+            try:
+                preload = self.llm.preload
+                try:
+                    preload(keep_alive=self._ollama_keep_alive())
+                except TypeError:
+                    preload()
+                notify(f"本地大模型 {self.config.llm.query_model} 已载入")
+            except OllamaUnavailable as exc:
+                notify(f"Ollama 未就绪，查询将使用内置词典：{exc}")
+
+    def _ollama_keep_alive(self) -> int:
+        seconds = int(getattr(self, "auto_unload_seconds", 0) or 0)
+        return -1 if seconds <= 0 else seconds
+
+    def model_status(self) -> dict[str, Any]:
+        if not getattr(self, "_lifecycle_ready", False):
+            loaded = getattr(self, "embedder", None) is not None
+            return {
+                "loaded": loaded,
+                "loading": False,
+                "busy": False,
+                "model": self.config.embedding.model,
+                "auto_unload_seconds": int(getattr(self, "auto_unload_seconds", 0) or 0),
+                "auto_unload_minutes": 0,
+                "idle_remaining_seconds": None,
+            }
+        with self._model_lock:
+            loaded = self.embedder is not None
+            remaining = None
+            if loaded and self.auto_unload_seconds > 0 and self._last_used_at is not None:
+                remaining = max(
+                    0, int(self.auto_unload_seconds - (time.monotonic() - self._last_used_at))
+                )
+            minutes, extra = divmod(max(0, self.auto_unload_seconds), 60)
+            if extra:
+                minutes += 1
+            return {
+                "loaded": loaded,
+                "loading": self._loading,
+                "busy": self._busy > 0,
+                "model": self.config.embedding.model,
+                "auto_unload_seconds": self.auto_unload_seconds,
+                "auto_unload_minutes": minutes,
+                "idle_remaining_seconds": remaining,
+            }
+
+    def set_auto_unload_seconds(self, seconds: int) -> None:
+        value = clamp_auto_unload_seconds(seconds, DEFAULT_AUTO_UNLOAD_SECONDS)
+        persist = getattr(self, "_lifecycle_ready", False)
+        if persist:
+            with self._model_lock:
+                self.auto_unload_seconds = value
+                self._last_used_at = time.monotonic() if self.embedder is not None else None
+                if self._busy == 0:
+                    self._schedule_unload_locked()
+            save_auto_unload_seconds(self.config, value)
             return
-        notify(f"正在载入本地大模型 {self.config.llm.query_model}……")
+        self.auto_unload_seconds = value
+
+    def load_model(self) -> None:
+        if not getattr(self, "_lifecycle_ready", False):
+            if self.embedder is None:
+                self.embedder = self._create_embedder()
+            return
+        with self._model_lock:
+            self._load_if_needed_locked()
+            self._last_used_at = time.monotonic()
+            if self._busy == 0:
+                self._schedule_unload_locked()
+
+    def unload_model(self, *, force: bool = False) -> bool:
+        if not getattr(self, "_lifecycle_ready", False):
+            closer = getattr(self.embedder, "close", None)
+            if callable(closer):
+                closer()
+            self.embedder = None
+            return True
+        with self._model_lock:
+            if self._busy > 0 and not force:
+                return False
+            self._unload_locked()
+            return True
+
+    @contextmanager
+    def hold_model(self) -> Iterator[Any]:
+        self.ensure_loaded()
         try:
-            self.llm.preload()
-            notify(f"本地大模型 {self.config.llm.query_model} 已载入")
-        except OllamaUnavailable as exc:
-            notify(f"Ollama 未就绪，查询将使用内置词典：{exc}")
+            yield self.embedder
+        finally:
+            self.release()
+
+    def ensure_loaded(self) -> None:
+        if not getattr(self, "_lifecycle_ready", False):
+            if getattr(self, "embedder", None) is None:
+                self.embedder = self._create_embedder()
+            return
+        with self._model_lock:
+            self._load_if_needed_locked()
+            self._busy += 1
+            self._last_used_at = time.monotonic()
+            self._cancel_timer_locked()
+
+    def release(self) -> None:
+        if not getattr(self, "_lifecycle_ready", False):
+            return
+        with self._model_lock:
+            self._busy = max(0, self._busy - 1)
+            self._last_used_at = time.monotonic()
+            if self._busy == 0:
+                self._schedule_unload_locked()
+
+    def _create_embedder(self) -> Any:
+        factory = getattr(self, "_embedder_factory", None)
+        if callable(factory):
+            return factory()
+        return SiglipEmbedder(self.config.embedding)
+
+    def _load_if_needed_locked(self) -> None:
+        if self.embedder is not None:
+            return
+        self._loading = True
+        try:
+            self.embedder = self._create_embedder()
+            dimension = getattr(self.embedder, "dimension", None)
+            ensure = getattr(self.store, "ensure_collection", None)
+            if dimension is not None and callable(ensure):
+                ensure(dimension)
+        finally:
+            self._loading = False
+
+    def _unload_locked(self) -> None:
+        self._cancel_timer_locked()
+        embedder = self.embedder
+        self.embedder = None
+        self._last_used_at = None
+        if embedder is not None:
+            closer = getattr(embedder, "close", None)
+            if callable(closer):
+                closer()
+        unload_llm = getattr(self.llm, "unload", None)
+        if callable(unload_llm):
+            try:
+                unload_llm()
+            except Exception:
+                pass
+
+    def _cancel_timer_locked(self) -> None:
+        timer = self._idle_timer
+        self._idle_timer = None
+        if timer is not None:
+            timer.cancel()
+
+    def _schedule_unload_locked(self) -> None:
+        self._cancel_timer_locked()
+        if self.auto_unload_seconds <= 0 or self.embedder is None:
+            return
+        timer = threading.Timer(self.auto_unload_seconds, self._idle_unload)
+        timer.daemon = True
+        self._idle_timer = timer
+        timer.start()
+
+    def _idle_unload(self) -> None:
+        try:
+            if not getattr(self, "_lifecycle_ready", False):
+                return
+            with self._model_lock:
+                if self._busy > 0 or self.embedder is None:
+                    return
+                if self.auto_unload_seconds <= 0 or self._last_used_at is None:
+                    return
+                elapsed = time.monotonic() - self._last_used_at
+                if elapsed < self.auto_unload_seconds:
+                    remaining = self.auto_unload_seconds - elapsed
+                    timer = threading.Timer(remaining, self._idle_unload)
+                    timer.daemon = True
+                    self._idle_timer = timer
+                    timer.start()
+                    return
+                self._unload_locked()
+        except Exception:
+            pass
 
     def invalidate_folder_catalog(self) -> None:
         self._folder_catalog = None
@@ -169,7 +381,11 @@ class SearchEngine:
         if cached is not None:
             return cached, None
         try:
-            plan = self.llm.expand_query(text)
+            expand_query = self.llm.expand_query
+            try:
+                plan = expand_query(text, keep_alive=self._ollama_keep_alive())
+            except TypeError:
+                plan = expand_query(text)
         except OllamaUnavailable as exc:
             return static_expand(text), str(exc)
         if len(cache) >= 64:
@@ -249,9 +465,47 @@ class SearchEngine:
             if point_ids is not None and not point_ids:
                 return SearchResponse(plan, [], llm_warning, has_more=False, offset=offset)
 
+        with self.hold_model() as embedder:
+            return self._search_with_embedder(
+                embedder,
+                text=text,
+                refs=refs,
+                text_weight=text_weight,
+                image_weights=image_weights,
+                plan=plan,
+                llm_warning=llm_warning,
+                limit=limit,
+                offset=offset,
+                excluded=excluded,
+                candidate_count=candidate_count,
+                point_ids=point_ids,
+                universe=universe,
+                strict_tags=strict_tags,
+                dedupe=dedupe,
+            )
+
+    def _search_with_embedder(
+        self,
+        embedder: Any,
+        *,
+        text: str,
+        refs: Sequence[Path],
+        text_weight: float,
+        image_weights: Sequence[float] | None,
+        plan: QueryPlan,
+        llm_warning: str | None,
+        limit: int,
+        offset: int,
+        excluded: set[str],
+        candidate_count: int,
+        point_ids: list[str] | None,
+        universe: int | None,
+        strict_tags: bool,
+        dedupe: bool,
+    ) -> SearchResponse:
         text_vector = None
         if text.strip():
-            text_vector = self.embedder.encode_texts([plan.embedding_text])[0]
+            text_vector = embedder.encode_texts([plan.embedding_text])[0]
         declared_weights = (
             [float(weight) for weight in image_weights]
             if image_weights is not None
@@ -261,7 +515,7 @@ class SearchEngine:
         active_weights = [weight for weight in declared_weights if weight > 0]
         image_vectors: list[np.ndarray] = []
         if active_paths:
-            encoded = self.embedder.encode_images(active_paths)
+            encoded = embedder.encode_images(active_paths)
             image_vectors = [encoded[index] for index in range(len(active_paths))]
         visual_vector = compose_visual_vector(
             text_vector,

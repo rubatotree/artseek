@@ -13,8 +13,10 @@ from artseek.library import (
     day_end_ns,
     day_start_ns,
     folder_key_of,
+    index_roots_from_scope,
     load_catalog,
     load_scope,
+    root_image_counts,
     save_catalog,
     save_scope,
 )
@@ -170,7 +172,12 @@ class LibraryTreeTests(unittest.TestCase):
             self.assertIsNotNone(loaded)
             assert loaded is not None
             self.assertEqual(loaded.point_ids([canonical_path(nested)]), ["b"])
+            self.assertEqual(set(loaded.subtree_ids(canonical_path(root))), {"a", "b"})
             self.assertIsNone(load_catalog(path, 3))
+            unscoped = load_catalog(path)
+            self.assertIsNotNone(unscoped)
+            assert unscoped is not None
+            self.assertEqual(set(unscoped.subtree_ids(canonical_path(root))), {"a", "b"})
 
     def test_scope_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -179,6 +186,17 @@ class LibraryTreeTests(unittest.TestCase):
             loaded = load_scope(cfg)
             self.assertEqual(loaded.sort, "mtime")
             self.assertEqual(loaded.selected, [canonical_path("D:/pics/a")])
+
+    def test_apply_scope_keeps_sort_as_string(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = build_catalog([("a", _payload(root / "a.png", root))])
+            scope, _ = apply_scope(catalog, FolderScope(sort="count", selected=[], known=[]))
+            self.assertEqual(scope.sort, "count")
+            self.assertIsInstance(scope.sort, str)
+            cfg = AppConfig(data_dir=root, cache_dir=root / "cache")
+            save_scope(cfg, scope)
+            self.assertEqual(load_scope(cfg).sort, "count")
 
     def test_time_range_filters_ids(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -263,6 +281,31 @@ class LibraryTreeTests(unittest.TestCase):
         assert start is not None and end is not None
         self.assertLess(start, end)
         self.assertEqual(day_start_ns(""), None)
+
+    def test_root_image_counts_include_nested(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            first = Path(directory) / "one"
+            second = Path(directory) / "two"
+            nested = first / "nested"
+            nested.mkdir(parents=True)
+            second.mkdir()
+            catalog = build_catalog(
+                [
+                    ("a", _payload(first / "a.png", first)),
+                    ("b", _payload(nested / "b.png", first)),
+                    ("c", _payload(second / "c.png", second)),
+                ]
+            )
+            counts = dict(root_image_counts(catalog))
+            self.assertEqual(counts[str(first)], 2)
+            self.assertEqual(counts[str(second)], 1)
+
+    def test_index_roots_from_scope_ignore_children(self) -> None:
+        parent = canonical_path(Path("D:/pics/a"))
+        child = canonical_path(Path("D:/pics/a/child"))
+        other = canonical_path(Path("D:/pics/b"))
+        roots = index_roots_from_scope(FolderScope(known=[parent, child, other]))
+        self.assertEqual(roots, sorted([parent, other], key=str.casefold))
 
     def test_folder_key_fallback(self) -> None:
         path = Path("D:/art/set/img.png")

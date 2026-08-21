@@ -17,6 +17,7 @@ from .compute import cuda_mismatch_hint, describe_runtime
 from .config import AppConfig, default_config_path, load_config, write_default_config
 from .image_io import canonical_path
 from .indexer import ImageIndexer
+from .library import index_roots_from_scope, load_catalog, load_scope, root_image_counts
 from .llm import OllamaClient
 from .model_manager import pull_models
 from .search import SearchEngine
@@ -253,7 +254,7 @@ def serve_command(
         bool, typer.Option("--open/--no-open", help="模型就绪并开始监听后再打开浏览器")
     ] = False,
 ) -> None:
-    """启动只监听本机的可视化图库界面。先载入模型，再打开端口。"""
+    """启动只监听本机的可视化图库界面。模型在首次检索时载入。"""
     try:
         import uvicorn
     except ImportError as exc:
@@ -264,13 +265,11 @@ def serve_command(
     mismatch = cuda_mismatch_hint()
     if mismatch:
         console.print(f"[yellow]{mismatch}[/yellow]")
-    console.print("正在载入图文向量模型……")
+    console.print("正在启动本地图库……")
     application = create_app(cfg)
     console.print(f"推理设备：{describe_runtime(cfg.embedding.device)}")
-    application.state.engine.warmup(
-        status=lambda message: console.print(f"[cyan]→[/cyan] {message}")
-    )
-    console.print(f"[green]模型已就绪。[/green] 即将监听 http://{host}:{port}")
+    console.print("图文向量模型将在首次检索时载入，闲置后自动卸载以释放显存。")
+    console.print(f"[green]已就绪。[/green] 即将监听 http://{host}:{port}")
     if open_browser:
         import threading
         import webbrowser
@@ -279,21 +278,43 @@ def serve_command(
     uvicorn.run(application, host=host, port=port, log_level="info")
 
 
+def _print_root_counts(rows: list[tuple[str, int]]) -> None:
+    console.print(f"图片总数：[bold]{sum(count for _, count in rows)}[/bold]")
+    if not rows:
+        console.print("  （还没有索引任何目录）")
+        return
+    for root, count in rows:
+        console.print(f"  {count:>7}  {root}")
+
+
 @app.command("stats")
 def stats_command(
     config: Annotated[Path | None, typer.Option("--config", "-c")] = None,
 ) -> None:
-    """显示本地索引概况。"""
+    """显示本地索引概况。优先读目录缓存，不打开向量库。"""
     cfg = _config(config)
-    store = VectorStore(cfg)
+    catalog = load_catalog(cfg.folder_catalog_path)
+    if catalog is not None:
+        _print_root_counts(root_image_counts(catalog))
+        return
+    console.print("[yellow]目录缓存缺失，正在扫描向量库（图片多时会较慢）…[/yellow]")
+    try:
+        store = VectorStore(cfg)
+    except Exception as exc:
+        console.print(f"[red]无法打开向量库：{exc}[/red]")
+        roots = index_roots_from_scope(load_scope(cfg))
+        if roots:
+            console.print("根据界面选择缓存，索引根目录可能是：")
+            for root in roots:
+                console.print(f"         {root}")
+        console.print("若网页服务正在运行，等目录树加载完成后会生成 folder_catalog.json，之后 stats 可立即返回。")
+        return
     try:
         roots: dict[str, int] = {}
-        for _, payload in store.iter_payloads():
-            root = str(payload.get("root", "未知目录"))
+        for _, payload in store.iter_folder_payloads():
+            root = str(payload.get("root") or payload.get("root_key") or "未知目录")
             roots[root] = roots.get(root, 0) + 1
-        console.print(f"图片总数：[bold]{sum(roots.values())}[/bold]")
-        for root, count in sorted(roots.items()):
-            console.print(f"  {count:>7}  {root}")
+        _print_root_counts(sorted(roots.items()))
     finally:
         store.close()
 

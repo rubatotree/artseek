@@ -79,6 +79,42 @@ class PreloadTests(unittest.TestCase):
             with self.assertRaises(OllamaUnavailable):
                 client.preload()
 
+    def test_unload_sends_keep_alive_zero(self) -> None:
+        client = OllamaClient(LLMConfig(enabled=True, query_model="qwen3:4b", vision_model="qwen3-vl:4b"))
+        seen: list[dict] = []
+
+        def fake_urlopen(request, timeout=None):
+            del timeout
+            seen.append(json.loads(request.data.decode("utf-8")))
+
+            class Handle:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def read(self):
+                    return json.dumps({"done": True}).encode("utf-8")
+
+            return Handle()
+
+        with patch("artseek.llm.urllib.request.urlopen", side_effect=fake_urlopen):
+            client.unload()
+        self.assertEqual(
+            seen,
+            [
+                {"model": "qwen3:4b", "keep_alive": 0},
+                {"model": "qwen3-vl:4b", "keep_alive": 0},
+            ],
+        )
+
+    def test_disabled_unload_does_not_touch_network(self) -> None:
+        client = OllamaClient(LLMConfig(enabled=False))
+        with patch("artseek.llm.urllib.request.urlopen") as urlopen:
+            client.unload()
+        urlopen.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

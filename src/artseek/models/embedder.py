@@ -9,7 +9,7 @@ import torch
 from PIL import Image
 from transformers import AutoModel, AutoProcessor
 
-from ..compute import configure_inference, resolve_device, resolve_dtype
+from ..compute import configure_inference, release_accelerator, resolve_device, resolve_dtype
 from ..config import EmbeddingConfig
 from ..image_io import load_rgb
 
@@ -85,6 +85,18 @@ class SiglipEmbedder:
             else:
                 moved[key] = value.to(device=self.device, non_blocking=non_blocking)
         return moved
+
+    def close(self) -> None:
+        model = getattr(self, "model", None)
+        if model is None:
+            return
+        try:
+            model.to("cpu")
+        except Exception:
+            pass
+        self.model = None
+        self.processor = None
+        release_accelerator()
 
     def warmup(self) -> None:
         """Run a dummy forward pass so CUDA kernels compile before the first query."""

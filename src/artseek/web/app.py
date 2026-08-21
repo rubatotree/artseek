@@ -125,6 +125,11 @@ class IndexRemoveRequest(BaseModel):
     folder_key: str
 
 
+class ModelControlRequest(BaseModel):
+    loaded: bool | None = None
+    auto_unload_minutes: int | None = Field(default=None, ge=0, le=1440)
+
+
 @dataclass
 class IndexJob:
     running: bool = False
@@ -136,10 +141,10 @@ class IndexJob:
     summary: dict[str, Any] | None = None
 
 
-def create_app(config: AppConfig) -> FastAPI:
+def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> FastAPI:
     app = FastAPI(title="ArtSeek", docs_url="/api/docs", redoc_url=None)
     app.state.config = config
-    app.state.engine = SearchEngine(config)
+    app.state.engine = engine or SearchEngine(config)
     app.state.tagger = None
     app.state.index_job = IndexJob()
     app.state.index_lock = threading.Lock()
@@ -387,6 +392,13 @@ def create_app(config: AppConfig) -> FastAPI:
             app.state.tagger = WDTagger(config.tagger, config.embedding)
         return app.state.tagger
 
+    def close_tagger() -> None:
+        tagger = app.state.tagger
+        app.state.tagger = None
+        closer = getattr(tagger, "close", None)
+        if callable(closer):
+            closer()
+
     def job_status() -> dict[str, Any]:
         job: IndexJob = app.state.index_job
         return {
@@ -408,37 +420,40 @@ def create_app(config: AppConfig) -> FastAPI:
         job.summary = None
         job.message = "正在准备索引…"
         try:
-            job.message = "正在载入标签器…"
-            indexer = ImageIndexer(
-                config,
-                embedder=app.state.engine.embedder,
-                store=app.state.engine.store,
-                tagger=ensure_tagger(),
-                llm=app.state.engine.llm,
-            )
-            job.message = "正在扫描并编码图片…"
+            job.message = "正在载入图文向量模型…"
+            with app.state.engine.hold_model():
+                job.message = "正在载入标签器…"
+                indexer = ImageIndexer(
+                    config,
+                    embedder=app.state.engine.embedder,
+                    store=app.state.engine.store,
+                    tagger=ensure_tagger(),
+                    llm=app.state.engine.llm,
+                )
+                job.message = "正在扫描并编码图片…"
 
-            def progress(done: int, total: int, root: str) -> None:
-                job.done = done
-                job.total = total
-                job.message = f"正在更新 {Path(root).name or root}（{done}/{max(total, 1)}）"
+                def progress(done: int, total: int, root: str) -> None:
+                    job.done = done
+                    job.total = total
+                    job.message = f"正在更新 {Path(root).name or root}（{done}/{max(total, 1)}）"
 
-            summary = indexer.index(directories, recursive=recursive, progress=progress)
-            app.state.engine.invalidate_folder_catalog()
-            job.summary = {
-                "discovered": summary.discovered,
-                "indexed": summary.indexed,
-                "unchanged": summary.unchanged,
-                "deleted": summary.deleted,
-                "failed": len(summary.failed),
-            }
-            job.message = "索引完成"
-            if summary.llm_warning:
-                job.message = f"索引完成（{summary.llm_warning}）"
+                summary = indexer.index(directories, recursive=recursive, progress=progress)
+                app.state.engine.invalidate_folder_catalog()
+                job.summary = {
+                    "discovered": summary.discovered,
+                    "indexed": summary.indexed,
+                    "unchanged": summary.unchanged,
+                    "deleted": summary.deleted,
+                    "failed": len(summary.failed),
+                }
+                job.message = "索引完成"
+                if summary.llm_warning:
+                    job.message = f"索引完成（{summary.llm_warning}）"
         except Exception as exc:
             job.error = str(exc)
             job.message = "索引失败"
         finally:
+            close_tagger()
             job.running = False
 
     @app.get("/api/index-status")
@@ -514,5 +529,26 @@ def create_app(config: AppConfig) -> FastAPI:
         scope.known = [item for item in scope.known if item not in drop_keys]
         save_scope(config, scope)
         return current_library()
+
+    @app.get("/api/model")
+    def model_status() -> dict:
+        return app.state.engine.model_status()
+
+    @app.post("/api/model")
+    def update_model(request: ModelControlRequest) -> dict:
+        engine = app.state.engine
+        if request.auto_unload_minutes is not None:
+            engine.set_auto_unload_seconds(request.auto_unload_minutes * 60)
+        if request.loaded is True:
+            try:
+                engine.load_model()
+            except Exception as exc:
+                raise HTTPException(500, f"载入模型失败：{exc}") from exc
+        elif request.loaded is False:
+            if not engine.unload_model():
+                status = engine.model_status()
+                status["message"] = "正在检索或索引，稍后再卸载"
+                return status
+        return engine.model_status()
 
     return app

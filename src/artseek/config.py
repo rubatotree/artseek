@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -9,6 +10,7 @@ from typing import Any
 from platformdirs import user_cache_dir, user_config_dir, user_data_dir
 
 APP_NAME = "ArtSeek"
+DEFAULT_AUTO_UNLOAD_SECONDS = 600
 
 
 @dataclass(slots=True)
@@ -76,6 +78,10 @@ class AppConfig:
     @property
     def folder_catalog_path(self) -> Path:
         return self.data_dir / "folder_catalog.json"
+
+    @property
+    def runtime_path(self) -> Path:
+        return self.data_dir / "runtime.json"
 
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -162,4 +168,34 @@ def load_config(path: Path | None = None) -> AppConfig:
             _merge_dataclass(cfg, tomllib.load(handle))
     cfg.ensure_dirs()
     return cfg
+
+
+def clamp_auto_unload_seconds(value: Any, default: int = DEFAULT_AUTO_UNLOAD_SECONDS) -> int:
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        seconds = default
+    return max(0, min(seconds, 86400))
+
+
+def load_auto_unload_seconds(config: AppConfig) -> int:
+    path = config.runtime_path
+    if not path.exists():
+        return DEFAULT_AUTO_UNLOAD_SECONDS
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return DEFAULT_AUTO_UNLOAD_SECONDS
+    if not isinstance(data, dict):
+        return DEFAULT_AUTO_UNLOAD_SECONDS
+    return clamp_auto_unload_seconds(data.get("auto_unload_seconds", DEFAULT_AUTO_UNLOAD_SECONDS))
+
+
+def save_auto_unload_seconds(config: AppConfig, seconds: int) -> None:
+    config.ensure_dirs()
+    payload = {"auto_unload_seconds": clamp_auto_unload_seconds(seconds)}
+    config.runtime_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 

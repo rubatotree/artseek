@@ -120,7 +120,7 @@ artseek index "D:\Pictures\Illustrations" --captions --force
 artseek serve
 ```
 
-启动时会先载入图文向量模型，并尝试把 Ollama 查询模型载入内存；全部就绪后再监听 `http://127.0.0.1:7860`。默认不打开浏览器。若要自动打开，使用 `artseek serve --open`。服务默认只监听本机。
+启动后立即监听 `http://127.0.0.1:7860`，图文向量模型默认不占显存；第一次检索时再载入，闲置 10 分钟无搜图后自动卸载。可在网页「高级」设置中手动加载/卸载，或改自动卸载时间。默认不打开浏览器。若要自动打开，使用 `artseek serve --open`。服务默认只监听本机。
 
 ## 查询示例
 
@@ -169,7 +169,7 @@ artseek search "泡泡袖 低头" --json
 | `artseek search TEXT` | 文字或图文组合搜索 |
 | `artseek similar IMAGE` | 以图搜图 |
 | `artseek stats` | 查看各目录图片数量 |
-| `artseek serve` | 先载入模型，再启动本地网页界面；加 `--open` 可打开浏览器 |
+| `artseek serve` | 启动本地网页界面；模型在首次检索时载入；加 `--open` 可打开浏览器 |
 
 ## 如何理解三种检索模式
 

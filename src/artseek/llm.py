@@ -102,7 +102,13 @@ class OllamaClient:
     def model_installed(wanted: str, installed: list[str]) -> bool:
         return any(item == wanted or item.startswith(wanted + "-") for item in installed)
 
-    def preload(self) -> None:
+    @staticmethod
+    def _keep_alive_value(keep_alive: int | None) -> int:
+        if keep_alive is None or keep_alive <= 0:
+            return -1
+        return int(keep_alive)
+
+    def preload(self, *, keep_alive: int | None = None) -> None:
         """Load the query model into Ollama so the first search does not pay that cost."""
         if not self.config.enabled:
             return
@@ -114,11 +120,22 @@ class OllamaClient:
             "/api/generate",
             {
                 "model": name,
-                "keep_alive": -1,
+                "keep_alive": self._keep_alive_value(keep_alive),
             },
         )
 
-    def expand_query(self, query: str) -> QueryPlan:
+    def unload(self) -> None:
+        if not self.config.enabled:
+            return
+        for name in dict.fromkeys([self.config.query_model, self.config.vision_model]):
+            if not name:
+                continue
+            try:
+                self._post("/api/generate", {"model": name, "keep_alive": 0})
+            except OllamaUnavailable:
+                continue
+
+    def expand_query(self, query: str, *, keep_alive: int | None = None) -> QueryPlan:
         base = static_expand(query)
         if not self.config.enabled:
             return base
@@ -134,7 +151,7 @@ positive_tags 与 negative_tags 使用简短英语视觉标签，空格改下划
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
                 "think": False,
-                "keep_alive": -1,
+                "keep_alive": self._keep_alive_value(keep_alive),
                 "format": QUERY_SCHEMA,
                 "options": {"temperature": 0},
             },

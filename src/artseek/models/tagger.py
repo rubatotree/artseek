@@ -9,7 +9,7 @@ import torch
 from huggingface_hub import hf_hub_download
 from PIL import Image
 
-from ..compute import configure_inference, resolve_device, resolve_dtype
+from ..compute import configure_inference, release_accelerator, resolve_device, resolve_dtype
 from ..config import EmbeddingConfig, TaggerConfig
 
 
@@ -37,6 +37,18 @@ class WDTagger:
         self.transform = create_transform(**data_config, is_training=False)
         labels_path = hf_hub_download(config.model, "selected_tags.csv")
         self.names, self.categories = self._load_labels(Path(labels_path))
+
+    def close(self) -> None:
+        model = getattr(self, "model", None)
+        if model is None:
+            return
+        try:
+            model.to("cpu")
+        except Exception:
+            pass
+        self.model = None
+        self.transform = None
+        release_accelerator()
 
     @staticmethod
     def _load_labels(path: Path) -> tuple[list[str], list[int]]:

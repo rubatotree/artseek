@@ -46,6 +46,7 @@ class ImageIndexer:
         llm: OllamaClient | None = None,
     ):
         self.config = config
+        self._owns_embedder = embedder is None
         self.embedder = embedder or SiglipEmbedder(config.embedding)
         if store is None:
             self.store = VectorStore(config)
@@ -56,13 +57,26 @@ class ImageIndexer:
             self._owns_store = False
         if tagger is not None:
             self.tagger = tagger
+            self._owns_tagger = False
         elif config.tagger.enabled:
             self.tagger = WDTagger(config.tagger, config.embedding)
+            self._owns_tagger = True
         else:
             self.tagger = None
+            self._owns_tagger = False
         self.llm = llm or OllamaClient(config.llm)
 
     def close(self) -> None:
+        if self._owns_embedder:
+            closer = getattr(self.embedder, "close", None)
+            if callable(closer):
+                closer()
+            self.embedder = None  # type: ignore[assignment]
+        if self._owns_tagger:
+            closer = getattr(self.tagger, "close", None)
+            if callable(closer):
+                closer()
+            self.tagger = None
         if self._owns_store:
             self.store.close()
 
@@ -213,6 +227,10 @@ class ImageIndexer:
                 ]
                 self.store.delete_ids(stale_ids)
                 summary.deleted += len(stale_ids)
-        if summary.indexed or summary.deleted:
+        if (
+            summary.indexed
+            or summary.deleted
+            or not self.config.folder_catalog_path.exists()
+        ):
             rebuild_catalog(self.store, self.config)
         return summary
