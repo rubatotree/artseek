@@ -8,7 +8,9 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
     uv venv --python 3.11
-    uv pip install --python .venv\Scripts\python.exe -e ".[all]"
+    # Windows 上 uv 默认 hardlink；venv 与 cache 跨盘时链接会 silently 失效，
+    # 表现为 dist-info 还在、google.protobuf 源文件却丢失。
+    uv pip install --link-mode=copy --python .venv\Scripts\python.exe -e ".[all]"
     # PyPI 上的 Windows torch 是 CPU 轮子，必须再换成 CUDA 构建，否则索引会一直走 CPU。
     & (Join-Path $PSScriptRoot "install_cuda_torch.ps1")
     .\.venv\Scripts\python.exe -m artseek.cli init

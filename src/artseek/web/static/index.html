@@ -20,10 +20,12 @@
       --page-gutter: 20px;
     }
     * { box-sizing: border-box; }
-    html { -webkit-text-size-adjust: 100%; }
+    html { -webkit-text-size-adjust: 100%; overflow-x: hidden; }
     body {
       margin: 0;
       min-height: 100dvh;
+      overflow-x: hidden;
+      -webkit-tap-highlight-color: rgba(201, 122, 152, .18);
       color: var(--ink);
       background:
         radial-gradient(circle at 7% 0%, #f9e9f0 0, transparent 31rem),
@@ -287,7 +289,7 @@
     dialog[open] { display: flex; flex-direction: column; }
     dialog::backdrop { background: rgba(16, 13, 18, .22); }
     .viewer-stage {
-      position: relative; flex: 1; min-height: 0;
+      position: relative; flex: 1; min-width: 0; min-height: 0;
       display: grid; place-items: center;
       overflow: hidden; touch-action: none; overscroll-behavior: none;
       cursor: zoom-in; user-select: none; background: transparent;
@@ -295,9 +297,10 @@
     .viewer-stage.is-zoomed { cursor: grab; }
     .viewer-stage.is-dragging { cursor: grabbing; }
     .viewer-stage img {
+      position: absolute; left: 50%; top: 50%;
       display: block; width: auto; height: auto;
-      max-width: min(100%, 1400px); max-height: 100%;
-      object-fit: contain; transform-origin: center center;
+      max-width: none; max-height: none;
+      transform-origin: 0 0;
       will-change: transform; -webkit-user-drag: none;
     }
     .viewer-nav {
@@ -346,58 +349,68 @@
     }
     @media (max-width: 900px) {
       :root { --page-gutter: 12px; }
+      .shell { padding-inline: 0; width: 100%; }
+      header {
+        padding: 10px var(--page-gutter) 4px;
+        display: flex; align-items: baseline; gap: 8px;
+      }
       .search-layout {
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 0;
+        padding-inline: 0;
+        width: 100%;
       }
-      .search-column,
-      .search-panel,
-      #search-form { display: contents; }
-      .search-row {
+      .search-column { display: contents; }
+      .search-panel {
         order: -3;
-        position: sticky;
-        top: 0;
-        z-index: 20;
-        flex-shrink: 0;
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        gap: 8px;
-        width: auto;
-        margin-inline: calc(-1 * var(--page-gutter));
-        padding: 8px var(--page-gutter) 10px;
-        background: var(--paper);
+        position: static;
+        z-index: auto;
+        width: 100%;
+        margin: 0;
+        padding: 8px var(--page-gutter) 12px;
         border: 0;
         border-bottom: 1px solid var(--line);
         border-radius: 0;
+        background: var(--paper);
+        box-shadow: none;
+        backdrop-filter: none;
+      }
+      .search-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        width: 100%;
+        margin: 0;
+        padding: 0;
+        position: static;
+        background: transparent;
+        border: 0;
         box-shadow: none;
       }
-      .composer { order: -2; margin-top: 0; }
+      #query { font-size: 16px; min-height: 44px; padding: 10px 12px; min-width: 0; }
+      #search { min-height: 44px; padding: 10px 14px; box-shadow: none; }
+      .composer { margin-top: 8px; }
       .tree-panel { order: -1; }
       .results-column { order: 0; }
       body.file-drag .search-panel {
-        background: transparent;
-        outline: none;
-        box-shadow: none;
-      }
-      body.file-drag .search-row,
-      body.file-drag .composer {
         background: #fff8fb;
         outline: 2px dashed #d7a3b6;
-        outline-offset: -2px;
+        outline-offset: -4px;
+        box-shadow: none;
       }
-      .search-panel.loading .search-row,
-      .search-panel.loading .composer { opacity: .55; pointer-events: none; }
+      .search-panel.loading { opacity: .55; pointer-events: none; }
       .fold-toggle { display: flex; }
       .fold-toggle {
         align-items: center;
         justify-content: space-between;
         gap: 8px;
         width: 100%;
-        min-height: 44px;
-        padding: 10px 12px;
-        border: 1px solid var(--line);
-        border-radius: 12px;
+        min-height: 40px;
+        padding: 8px var(--page-gutter);
+        border: 0;
+        border-block: 1px solid var(--line);
+        border-radius: 0;
         background: #fff;
         color: var(--ink);
         font-size: 13px;
@@ -420,6 +433,7 @@
         position: relative;
         top: auto;
         z-index: auto;
+        width: 100%;
         max-height: none;
         overflow: visible;
         padding: 0;
@@ -431,47 +445,73 @@
       }
       .tree-panel:not(.is-open) .tree-body { display: none; }
       .tree-panel.is-open {
-        max-height: min(52dvh, 420px);
+        max-height: min(46dvh, 360px);
         overflow: auto;
         overscroll-behavior: contain;
-        padding: 8px 10px 12px;
-        border: 1px solid rgba(255,255,255,.9);
-        border-radius: 16px;
+        padding: 0 0 10px;
+        border: 0;
+        border-bottom: 1px solid var(--line);
+        border-radius: 0;
         background: #fff;
-        box-shadow: var(--shadow);
+        box-shadow: none;
       }
       .tree-panel.is-open .fold-toggle {
         margin-bottom: 8px;
         background: #f6f1f5;
-        border-color: transparent;
+        border-bottom-color: var(--line);
       }
-      .query-info { margin: 10px 2px 6px; }
-      .composer { padding-bottom: 2px; }
-      .text-weight-card, .ref-add, .ref-card { width: 56px; height: 56px; border-radius: 10px; }
+      .tree-body { padding-inline: var(--page-gutter); }
+      .tree-actions { flex-wrap: wrap; }
+      .index-add input, .tree-sort, .time-preset, .time-custom input { font-size: 16px; }
+      .query-info {
+        margin: 6px var(--page-gutter) 4px;
+        min-height: 0;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .chip { padding: 3px 7px; font-size: 11px; }
+      .text-weight-card, .ref-add, .ref-card { width: 52px; height: 52px; border-radius: 10px; }
+      .text-weight-card input { width: 44px; font-size: 14px; }
+      .gallery {
+        gap: 4px;
+        width: 100%;
+        padding: 4px 0 28px;
+      }
+      .gallery-col {
+        flex: 1 1 0;
+        width: 0;
+        min-width: 0;
+        gap: 4px;
+      }
+      .card, .image-wrap, .image-wrap img { width: 100%; max-width: 100%; min-width: 0; }
     }
     @media (max-width: 720px) {
-      header {
-        padding: 12px 0 8px;
-        display: flex;
-        align-items: baseline;
-        gap: 10px;
-      }
-      .brand { font-size: 22px; line-height: 1.1; }
-      .subtitle { margin: 0; padding: 0; font-size: 12px; }
-      #query { font-size: 16px; min-height: 44px; padding: 10px 12px; }
-      #search { min-height: 44px; padding: 10px 14px; }
-      .gallery { gap: 9px; padding-bottom: 36px; }
-      .card-actions button { min-height: 40px; flex: 1; font-size: 12px; }
+      header { padding-top: 8px; }
+      .brand { font-size: 20px; line-height: 1.1; }
+      .subtitle { margin: 0; padding: 0; font-size: 11px; }
+      .gallery { gap: 3px; padding: 3px 0 28px; }
+      .gallery-col { gap: 3px; }
+      .card { border-radius: 12px; }
+      .card-body { padding: 8px; }
+      .card-actions { gap: 6px; }
+      .card-actions button { min-height: 40px; flex: 1; font-size: 12px; padding: 8px 6px; }
       .tree-row { min-height: 44px; }
       .tree-twist, .tree-remove, .tree-refresh { width: 32px; height: 32px; }
       .tree-check { padding: 8px 6px; }
       .tree-name { min-height: 32px; }
-      .viewer-nav { width: 40px; height: 56px; }
-      .viewer-nav.prev { left: 6px; }
-      .viewer-nav.next { right: 6px; }
+      .empty { padding: 48px 16px; }
+      .load-more { padding: 14px 8px 32px; }
+      .viewer-nav { width: 36px; height: 52px; font-size: 24px; }
+      .viewer-nav.prev { left: 4px; }
+      .viewer-nav.next { right: 4px; }
       .viewer-close { top: 8px; right: 8px; width: 44px; height: 44px; }
-      .viewer-stage img { max-width: 100%; max-height: 100%; }
-      .modal-bar button { min-height: 40px; }
+      .modal-bar {
+        padding: 6px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+        gap: 6px;
+      }
+      #viewer-title { display: none; }
+      .modal-bar button { min-height: 40px; padding: 8px 10px; font-size: 13px; }
+      .viewer-weight { width: 100%; }
     }
     @media (prefers-reduced-motion: reduce) {
       button, .upload-label { transition: none; }
@@ -621,10 +661,10 @@
       colHeights: [],
       mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
     };
-    const VIEW_MIN_SCALE = 0.2;
+    const VIEW_MIN_SCALE = 0.05;
     const VIEW_MAX_SCALE = 8;
     const view = {
-      scale: 1, x: 0, y: 0,
+      scale: 1, x: 0, y: 0, fitScale: 1,
       targetScale: 1, targetX: 0, targetY: 0,
       dragging: false, pinching: false, moved: false, animating: false, animToken: 0,
       pointerId: null, pointers: new Map(),
@@ -639,7 +679,27 @@
       return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     }
     function isViewFitted() {
-      return Math.abs(view.targetScale - 1) < 0.04;
+      const fit = view.fitScale || 1;
+      return Math.abs(view.targetScale - fit) < 0.04 * Math.max(fit, 0.08);
+    }
+    function isNativeScale() {
+      return Math.abs(view.targetScale - 1) < 0.05;
+    }
+    function computeContainScale() {
+      const image = $('viewer-image');
+      const stage = $('viewer-stage');
+      const width = image.naturalWidth;
+      const height = image.naturalHeight;
+      if (!width || !height) return 1;
+      const stageWidth = stage.clientWidth || window.innerWidth;
+      const stageHeight = stage.clientHeight || window.innerHeight;
+      if (stageWidth < 8 || stageHeight < 8) return 1;
+      return Math.min(stageWidth / width, stageHeight / height);
+    }
+    function updateFitScale() {
+      const contain = computeContainScale();
+      view.fitScale = Math.min(contain, 1);
+      return view.fitScale;
     }
     const treeState = {
       roots: [],
@@ -1027,6 +1087,7 @@
     }
 
     function galleryColumnCount() {
+      if (window.matchMedia('(max-width: 900px)').matches) return 2;
       const width = $('gallery').clientWidth || window.innerWidth;
       if (width < 520) return 2;
       if (width < 780) return 3;
@@ -1158,14 +1219,20 @@
     function applyViewTransform() {
       const image = $('viewer-image');
       const width = $('viewer-stage').clientWidth || 1;
-      image.style.transform = `translate(${view.x + view.slideX}px, ${view.y}px) scale(${view.scale})`;
+      const scale = view.scale;
+      const tx = view.x + view.slideX - (image.naturalWidth * scale) / 2;
+      const ty = view.y - (image.naturalHeight * scale) / 2;
+      image.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
       image.style.opacity = String(1 - Math.min(0.5, Math.abs(view.slideX) / width * 0.55));
       const stage = $('viewer-stage');
-      stage.classList.toggle('is-zoomed', Math.abs(view.scale - 1) > 0.04);
+      stage.classList.toggle('is-zoomed', !isViewFitted());
       stage.classList.toggle('is-dragging', view.dragging || view.swiping);
-      const shown = Math.abs(view.targetScale - 1) < 0.04 ? 1 : view.targetScale;
-      const label = shown >= 9.95 ? shown.toFixed(0) : (Math.abs(shown - 1) < 0.04 ? '1' : shown.toFixed(1));
-      $('viewer-zoom-reset').textContent = `${label}×`;
+      const shown = view.targetScale;
+      let label;
+      if (isViewFitted()) label = '适应';
+      else if (Math.abs(shown - 1) < 0.04) label = '1×';
+      else label = `${shown >= 9.95 ? shown.toFixed(0) : shown.toFixed(1)}×`;
+      $('viewer-zoom-reset').textContent = label;
     }
     function startViewAnim() {
       if (view.animating) return;
@@ -1221,7 +1288,8 @@
     function resetView(immediate = true) {
       view.animToken += 1;
       view.animating = false;
-      view.targetScale = 1; view.targetX = 0; view.targetY = 0;
+      const fit = view.fitScale || 1;
+      view.targetScale = fit; view.targetX = 0; view.targetY = 0;
       view.dragging = false; view.pinching = false; view.moved = false; view.swiping = false;
       view.vx = 0; view.vy = 0;
       view.pointers.clear();
@@ -1233,7 +1301,7 @@
         view.slideTarget = 0;
       }
       if (immediate || prefersReducedMotion()) {
-        view.scale = 1; view.x = 0; view.y = 0;
+        view.scale = fit; view.x = 0; view.y = 0;
         if (!view.preserveSlide) view.slideX = 0;
         applyViewTransform();
         return;
@@ -1247,12 +1315,9 @@
       const base = view.targetScale || 1;
       const clamped = Math.min(VIEW_MAX_SCALE, Math.max(VIEW_MIN_SCALE, nextScale));
       const ratio = clamped / base;
-      let x = cx - ratio * (cx - view.targetX);
-      let y = cy - ratio * (cy - view.targetY);
-      if (clamped <= 1 && !view.pinching) { x = 0; y = 0; }
       view.targetScale = clamped;
-      view.targetX = x;
-      view.targetY = y;
+      view.targetX = cx - ratio * (cx - view.targetX);
+      view.targetY = cy - ratio * (cy - view.targetY);
       startViewAnim();
     }
     function zoomBy(factor) {
@@ -1269,17 +1334,43 @@
       dialog.style.top = `${top}px`;
       dialog.style.width = '100%';
       dialog.style.left = '0';
+      const previousFit = view.fitScale || 1;
+      const wasFitted = Math.abs(view.targetScale - previousFit) < 0.04 * Math.max(previousFit, 0.08);
+      updateFitScale();
+      if (wasFitted) {
+        view.targetScale = view.fitScale;
+        view.scale = view.fitScale;
+        applyViewTransform();
+      }
+    }
+    function applyLoadedFit() {
+      const image = $('viewer-image');
+      if (!$('viewer').open) return;
+      if (!image.naturalWidth) return;
+      updateFitScale();
+      view.targetScale = view.fitScale;
+      view.scale = view.fitScale;
+      if (!view.preserveSlide) {
+        view.x = 0; view.y = 0;
+        view.targetX = 0; view.targetY = 0;
+      }
+      image.style.visibility = 'visible';
+      applyViewTransform();
     }
     function openViewer(item) {
       state.viewerSource = 'gallery';
       state.current = item;
       state.currentRefKey = null;
       resetView();
-      $('viewer-image').src = `/image/${item.id}`;
+      const image = $('viewer-image');
+      image.style.visibility = 'hidden';
+      image.src = `/image/${item.id}`;
+      if (image.complete && image.naturalWidth) applyLoadedFit();
       $('viewer-title').textContent = item.path;
       updateViewerNav();
       if (!$('viewer').open) $('viewer').showModal();
       fitViewerFrame();
+      if (image.complete && image.naturalWidth) applyLoadedFit();
     }
     function openReferenceViewer(key) {
       const ref = state.references.find((item) => item.key === key);
@@ -1288,11 +1379,15 @@
       state.currentRefKey = key;
       state.current = ref.id ? { id: ref.id, name: ref.name, path: ref.name } : null;
       resetView();
-      $('viewer-image').src = ref.src;
+      const image = $('viewer-image');
+      image.style.visibility = 'hidden';
+      image.src = ref.src;
+      if (image.complete && image.naturalWidth) applyLoadedFit();
       $('viewer-title').textContent = ref.name;
       updateViewerNav();
       if (!$('viewer').open) $('viewer').showModal();
       fitViewerFrame();
+      if (image.complete && image.naturalWidth) applyLoadedFit();
     }
     function canStepViewer(delta) {
       if (state.viewerSource === 'reference') {
@@ -1366,8 +1461,8 @@
       return true;
     }
     function toggleViewerZoom(clientX, clientY) {
-      if (Math.abs(view.targetScale - 1) > 0.05) resetView(false);
-      else zoomAt(clientX, clientY, 2.4);
+      if (!isNativeScale()) zoomAt(clientX, clientY, 1);
+      else resetView(false);
     }
     function bindViewerGestures() {
       const stage = $('viewer-stage');
@@ -1406,6 +1501,7 @@
         }
         view.dragging = !isViewFitted();
         view.swiping = isViewFitted() && !view.flipping;
+        view.hitImage = event.target.id === 'viewer-image';
         view.pointerId = event.pointerId;
         view.px = event.clientX; view.py = event.clientY;
         view.startX = event.clientX; view.startY = event.clientY;
@@ -1449,11 +1545,6 @@
         if (view.pinching) {
           if (view.pointers.size < 2) {
             view.pinching = false;
-            if (view.targetScale <= 1) {
-              view.targetX = 0;
-              view.targetY = 0;
-              startViewAnim();
-            }
           }
           if (view.pointers.size === 1) {
             const leftover = [...view.pointers.entries()][0];
@@ -1476,13 +1567,8 @@
         view.swiping = false;
         view.pointerId = null;
         if (wasDragging) {
-          if (view.targetScale > 1.02) {
-            view.targetX += view.vx * 6;
-            view.targetY += view.vy * 6;
-          } else {
-            view.targetX = 0;
-            view.targetY = 0;
-          }
+          view.targetX += view.vx * 6;
+          view.targetY += view.vy * 6;
           startViewAnim();
           return;
         }
@@ -1513,16 +1599,23 @@
         view.lastTapAt = now;
         view.lastTapX = event.clientX;
         view.lastTapY = event.clientY;
+        clearTimeout(view.clickTimer);
+        if (view.hitImage) {
+          view.clickTimer = setTimeout(() => {
+            view.clickTimer = 0;
+            $('viewer').close();
+          }, 400);
+          return;
+        }
         if (!isViewFitted()) return;
         const rect = stage.getBoundingClientRect();
         const ratio = (event.clientX - rect.left) / rect.width;
         if (ratio >= 0.3 && ratio <= 0.7) return;
         const delta = ratio < 0.3 ? -1 : 1;
-        clearTimeout(view.clickTimer);
         view.clickTimer = setTimeout(() => {
           view.clickTimer = 0;
           stepViewer(delta, { animate: true });
-        }, 340);
+        }, 400);
       };
       stage.addEventListener('pointerup', endPointer);
       stage.addEventListener('pointercancel', endPointer);
@@ -1542,6 +1635,7 @@
       });
     }
     bindViewerGestures();
+    $('viewer-image').addEventListener('load', applyLoadedFit);
     function bindViewerViewport() {
       const sync = () => fitViewerFrame();
       const viewport = window.visualViewport;
@@ -1935,6 +2029,16 @@
       if (entries.some((entry) => entry.isIntersecting)) loadMoreResults();
     }, { root: null, rootMargin: '720px 0px', threshold: 0 });
     scrollObserver.observe(loadMore);
+    let galleryResizeTimer = 0;
+    window.addEventListener('resize', () => {
+      clearTimeout(galleryResizeTimer);
+      galleryResizeTimer = setTimeout(() => {
+        const gallery = $('gallery');
+        if (!gallery || !state.results.length) return;
+        if (gallery.dataset.cols === String(galleryColumnCount())) return;
+        renderGallery(state.results, { append: false });
+      }, 120);
+    });
 
     $('time-preset').addEventListener('change', () => applyTimePreset($('time-preset').value));
     $('mtime-after').addEventListener('change', () => {

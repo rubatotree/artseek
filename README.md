@@ -50,7 +50,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ```powershell
 uv venv --python 3.11
-uv pip install --python .venv\Scripts\python.exe -e ".[all]"
+uv pip install --link-mode=copy --python .venv\Scripts\python.exe -e ".[all]"
 .\scripts\install_cuda_torch.ps1
 .\.venv\Scripts\Activate.ps1
 ```
