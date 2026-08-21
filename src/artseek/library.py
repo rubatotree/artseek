@@ -20,8 +20,9 @@ SORT_OPTIONS: tuple[tuple[str, str], ...] = (
     ("mtime_asc", "最早更新"),
 )
 DEFAULT_SORT = "name"
+SORT_KEYS = {key for key, _ in SORT_OPTIONS}
 SCOPE_VERSION = 2
-CATALOG_VERSION = 2
+CATALOG_VERSION = 3
 
 
 def folder_key_of(payload: dict[str, Any]) -> str:
@@ -80,6 +81,35 @@ def _natural_key(name: str) -> tuple[tuple[int, int | str], ...]:
     return tuple(key)
 
 
+def _sort_method(sort: str) -> str:
+    return sort if sort in SORT_KEYS else DEFAULT_SORT
+
+
+def _folder_image_refs(acc: _FolderAcc) -> list[tuple[str, str, int]]:
+    refs: list[tuple[str, str, int]] = []
+    for index, point_id in enumerate(acc.ids):
+        name = acc.id_names[index] if index < len(acc.id_names) else ""
+        stamp = acc.id_mtimes[index] if index < len(acc.id_mtimes) else 0
+        refs.append((point_id, name, stamp))
+    return refs
+
+
+def _sort_image_refs(refs: list[tuple[str, str, int]], method: str) -> list[tuple[str, str, int]]:
+    def name_key(item: tuple[str, str, int]) -> tuple[tuple[int, int | str], ...]:
+        return _natural_key(item[1] or item[0])
+
+    ordered = list(refs)
+    if method == "name_desc":
+        ordered.sort(key=name_key, reverse=True)
+    elif method == "mtime":
+        ordered.sort(key=lambda item: (-item[2], name_key(item)))
+    elif method == "mtime_asc":
+        ordered.sort(key=lambda item: (item[2], name_key(item)))
+    else:
+        ordered.sort(key=name_key)
+    return ordered
+
+
 @dataclass(slots=True)
 class FolderNode:
     key: str
@@ -100,6 +130,15 @@ class FolderNode:
             "mtime_ns": self.mtime_ns,
             "children": [child.to_dict() for child in self.children],
         }
+
+    def find(self, key: str) -> FolderNode | None:
+        if self.key == key:
+            return self
+        for child in self.children:
+            found = child.find(key)
+            if found is not None:
+                return found
+        return None
 
     def iter_keys(self) -> Iterable[str]:
         yield self.key
@@ -125,6 +164,7 @@ class _FolderAcc:
     count: int = 0
     mtime_ns: int = 0
     ids: list[str] = field(default_factory=list)
+    id_names: list[str] = field(default_factory=list)
     id_mtimes: list[int] = field(default_factory=list)
     child_keys: list[str] = field(default_factory=list)
 
@@ -206,7 +246,7 @@ class FolderCatalog:
         return min(stamps), max(stamps)
 
     def tree(self, sort: str) -> list[FolderNode]:
-        method = sort if sort in {item[0] for item in SORT_OPTIONS} else DEFAULT_SORT
+        method = _sort_method(sort)
         nodes = {key: self._to_node(acc) for key, acc in self.folders.items()}
         roots: list[FolderNode] = []
         for key, acc in self.folders.items():
@@ -219,6 +259,42 @@ class FolderCatalog:
             self._accumulate(root)
         self._sort_nodes(roots, method)
         return roots
+
+    def find_node(self, folder_key: str, sort: str) -> FolderNode | None:
+        key = canonical_path(folder_key)
+        for root in self.tree(sort):
+            found = root.find(key)
+            if found is not None:
+                return found
+        return None
+
+    def list_folder_images(self, folder_key: str, sort: str) -> list[tuple[str, str, int]]:
+        """Subtree images as (id, name, mtime_ns), ordered like the query-directory sort."""
+        key = canonical_path(folder_key)
+        if key not in self.folders:
+            return []
+        method = _sort_method(sort)
+        node = self.find_node(key, method)
+        if node is None:
+            return _sort_image_refs(_folder_image_refs(self.folders[key]), method)
+        if method in {"count", "count_asc"}:
+            return self._walk_image_refs(node)
+        refs: list[tuple[str, str, int]] = []
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            acc = self.folders.get(current.key)
+            if acc is not None:
+                refs.extend(_folder_image_refs(acc))
+            stack.extend(reversed(current.children))
+        return _sort_image_refs(refs, method)
+
+    def _walk_image_refs(self, node: FolderNode) -> list[tuple[str, str, int]]:
+        acc = self.folders.get(node.key)
+        refs = _sort_image_refs(_folder_image_refs(acc), "name") if acc is not None else []
+        for child in node.children:
+            refs.extend(self._walk_image_refs(child))
+        return refs
 
     def _accumulate(self, node: FolderNode) -> None:
         for child in node.children:
@@ -298,6 +374,7 @@ def build_catalog(payloads: Iterable[tuple[str, dict[str, Any]]]) -> FolderCatal
         leaf = folders[leaf_key]
         leaf.count += 1
         leaf.ids.append(point_id)
+        leaf.id_names.append(str(payload.get("name") or image_path.name))
         stamp = int(payload.get("mtime_ns", 0))
         leaf.id_mtimes.append(stamp)
         leaf.mtime_ns = max(leaf.mtime_ns, stamp)
@@ -331,7 +408,7 @@ def load_scope(config: AppConfig) -> FolderScope:
     except (OSError, json.JSONDecodeError):
         return FolderScope()
     sort = str(raw.get("sort") or DEFAULT_SORT)
-    if sort not in {item[0] for item in SORT_OPTIONS}:
+    if sort not in SORT_KEYS:
         sort = DEFAULT_SORT
     selected = [canonical_path(item) for item in raw.get("selected", []) if item]
     known = [canonical_path(item) for item in raw.get("known", []) if item]
@@ -352,7 +429,7 @@ def save_scope(config: AppConfig, scope: FolderScope) -> None:
     config.ensure_dirs()
     payload = {
         "version": SCOPE_VERSION,
-        "sort": scope.sort if scope.sort in {item[0] for item in SORT_OPTIONS} else DEFAULT_SORT,
+        "sort": scope.sort if scope.sort in SORT_KEYS else DEFAULT_SORT,
         "selected": list(dict.fromkeys(canonical_path(key) for key in scope.selected if key)),
         "known": list(dict.fromkeys(canonical_path(key) for key in scope.known if key)),
         "mtime_after": normalize_day(scope.mtime_after),
@@ -370,7 +447,7 @@ def apply_scope(catalog: FolderCatalog, scope: FolderScope) -> tuple[FolderScope
     new_keys = sorted(current - known, key=str) if known else []
     selected = [key for key in scope.selected if key in current]
     merged_known = sorted(known | current)
-    sort = scope.sort if scope.sort in {item[0] for item in SORT_OPTIONS} else DEFAULT_SORT
+    sort = scope.sort if scope.sort in SORT_KEYS else DEFAULT_SORT,
     after = normalize_day(scope.mtime_after)
     before = normalize_day(scope.mtime_before)
     if after and before and after > before:
@@ -405,7 +482,10 @@ def load_catalog(path: Path, expected_count: int) -> FolderCatalog | None:
             continue
         parent = item.get("parent_key")
         ids = [str(point_id) for point_id in item.get("ids", [])]
+        names = [str(name) for name in item.get("id_names", [])]
         mtimes = [int(stamp) for stamp in item.get("id_mtimes", [])]
+        if len(names) < len(ids):
+            names.extend([""] * (len(ids) - len(names)))
         if len(mtimes) < len(ids):
             mtimes.extend([0] * (len(ids) - len(mtimes)))
         folders[key] = _FolderAcc(
@@ -416,6 +496,7 @@ def load_catalog(path: Path, expected_count: int) -> FolderCatalog | None:
             count=int(item.get("count", 0)),
             mtime_ns=int(item.get("mtime_ns", 0)),
             ids=ids,
+            id_names=names[: len(ids)],
             id_mtimes=mtimes[: len(ids)],
         )
     return FolderCatalog(folders=folders, root_keys=[str(key) for key in raw.get("root_keys", [])])
@@ -436,6 +517,7 @@ def save_catalog(path: Path, catalog: FolderCatalog, count: int) -> None:
                 "count": acc.count,
                 "mtime_ns": acc.mtime_ns,
                 "ids": acc.ids,
+                "id_names": acc.id_names,
                 "id_mtimes": acc.id_mtimes,
             }
             for acc in catalog.folders.values()

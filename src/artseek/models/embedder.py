@@ -86,6 +86,14 @@ class SiglipEmbedder:
                 moved[key] = value.to(device=self.device, non_blocking=non_blocking)
         return moved
 
+    def warmup(self) -> None:
+        """Run a dummy forward pass so CUDA kernels compile before the first query."""
+        self.encode_texts(["warmup"])
+        dummy = Image.new("RGB", (256, 256), (128, 128, 128))
+        self.encode_images([dummy])
+        if self.device.type == "cuda":
+            torch.cuda.synchronize()
+
     def encode_images(self, images: Sequence[Path | Image.Image]) -> np.ndarray:
         opened = [load_rgb(item) if isinstance(item, (str, Path)) else item.convert("RGB") for item in images]
         inputs = self._move_inputs(self.processor(images=opened, return_tensors="pt"))
@@ -113,11 +121,13 @@ class SiglipEmbedder:
         self,
         image: Path | Image.Image,
         text: str,
-        image_weight: float = 0.65,
+        *,
+        text_weight: float = 1.0,
+        image_weight: float = 1.0,
     ) -> np.ndarray:
         image_vector = self.encode_images([image])[0]
         text_vector = self.encode_texts([text])[0]
-        vector = image_weight * image_vector + (1.0 - image_weight) * text_vector
+        vector = float(text_weight) * text_vector + float(image_weight) * image_vector
         vector /= max(float(np.linalg.norm(vector)), 1e-12)
         return vector.astype(np.float32, copy=False)
 

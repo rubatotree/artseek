@@ -193,8 +193,11 @@ def search_command(
     config: Annotated[Path | None, typer.Option("--config", "-c")] = None,
     limit: Annotated[int, typer.Option("--limit", "-n", min=1, max=500)] = 40,
     image: Annotated[
-        Path | None, typer.Option("--image", "-i", help="可同时提供参考图，进行图+文字检索")
+        list[Path] | None, typer.Option("--image", "-i", help="参考图，可重复传入多张")
     ] = None,
+    text_weight: Annotated[
+        float, typer.Option("--text-weight", min=0.0, max=8.0, help="文字在混合查询中的权重，默认 1")
+    ] = 1.0,
     no_llm: Annotated[
         bool, typer.Option("--no-llm", help="不调用 Ollama，仅用内置词典扩展")
     ] = False,
@@ -211,7 +214,8 @@ def search_command(
     try:
         response = engine.search(
             query,
-            image=image,
+            images=image or None,
+            text_weight=text_weight,
             limit=limit,
             expand=not no_llm,
             strict_tags=strict_tags,
@@ -246,22 +250,33 @@ def serve_command(
     host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port", min=1, max=65535)] = 7860,
     open_browser: Annotated[
-        bool, typer.Option("--open/--no-open", help="启动后打开浏览器")
-    ] = True,
+        bool, typer.Option("--open/--no-open", help="模型就绪并开始监听后再打开浏览器")
+    ] = False,
 ) -> None:
-    """启动只监听本机的可视化图库界面。"""
+    """启动只监听本机的可视化图库界面。先载入模型，再打开端口。"""
     try:
         import uvicorn
     except ImportError as exc:
         raise typer.BadParameter('缺少网页依赖，请执行：pip install -e ".[web]"') from exc
     from .web.app import create_app
 
+    cfg = _config(config)
+    mismatch = cuda_mismatch_hint()
+    if mismatch:
+        console.print(f"[yellow]{mismatch}[/yellow]")
+    console.print("正在载入图文向量模型……")
+    application = create_app(cfg)
+    console.print(f"推理设备：{describe_runtime(cfg.embedding.device)}")
+    application.state.engine.warmup(
+        status=lambda message: console.print(f"[cyan]→[/cyan] {message}")
+    )
+    console.print(f"[green]模型已就绪。[/green] 即将监听 http://{host}:{port}")
     if open_browser:
         import threading
         import webbrowser
 
         threading.Timer(1.5, lambda: webbrowser.open(f"http://{host}:{port}")).start()
-    uvicorn.run(create_app(_config(config)), host=host, port=port, log_level="info")
+    uvicorn.run(application, host=host, port=port, log_level="info")
 
 
 @app.command("stats")

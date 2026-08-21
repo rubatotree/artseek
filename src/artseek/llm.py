@@ -76,11 +76,47 @@ class OllamaClient:
 
     def is_available(self) -> bool:
         try:
-            request = urllib.request.Request(f"{self.config.base_url.rstrip('/')}/api/tags")
-            with urllib.request.urlopen(request, timeout=2):
-                return True
-        except (urllib.error.URLError, TimeoutError):
+            self.list_models()
+            return True
+        except OllamaUnavailable:
             return False
+
+    def list_models(self) -> list[str]:
+        try:
+            request = urllib.request.Request(f"{self.config.base_url.rstrip('/')}/api/tags")
+            with urllib.request.urlopen(request, timeout=2) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise OllamaUnavailable(f"无法连接本地 Ollama：{exc}") from exc
+        models = data.get("models", []) if isinstance(data, dict) else []
+        names: list[str] = []
+        for item in models:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("model") or "").strip()
+            if name:
+                names.append(name)
+        return names
+
+    @staticmethod
+    def model_installed(wanted: str, installed: list[str]) -> bool:
+        return any(item == wanted or item.startswith(wanted + "-") for item in installed)
+
+    def preload(self) -> None:
+        """Load the query model into Ollama so the first search does not pay that cost."""
+        if not self.config.enabled:
+            return
+        installed = self.list_models()
+        name = self.config.query_model
+        if not self.model_installed(name, installed):
+            raise OllamaUnavailable(f"未安装 {name}")
+        self._post(
+            "/api/generate",
+            {
+                "model": name,
+                "keep_alive": -1,
+            },
+        )
 
     def expand_query(self, query: str) -> QueryPlan:
         base = static_expand(query)
@@ -98,6 +134,7 @@ positive_tags 与 negative_tags 使用简短英语视觉标签，空格改下划
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
                 "think": False,
+                "keep_alive": -1,
                 "format": QUERY_SCHEMA,
                 "options": {"temperature": 0},
             },

@@ -17,11 +17,13 @@
       --blue: #7799bd;
       --blue-soft: #eaf2fa;
       --shadow: 0 16px 45px rgba(69, 51, 76, .09);
+      --page-gutter: 20px;
     }
     * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
     body {
       margin: 0;
-      min-height: 100vh;
+      min-height: 100dvh;
       color: var(--ink);
       background:
         radial-gradient(circle at 7% 0%, #f9e9f0 0, transparent 31rem),
@@ -29,7 +31,7 @@
         var(--paper);
       font-family: Inter, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
     }
-    .shell { width: min(1500px, calc(100% - 40px)); margin: 0 auto; }
+    .shell { width: min(1500px, 100%); margin: 0 auto; padding-inline: var(--page-gutter); }
     header { padding: 42px 0 23px; display: flex; align-items: end; gap: 22px; }
     .brand { font: 700 clamp(27px, 4vw, 42px)/1.05 Georgia, serif; letter-spacing: -.03em; }
     .subtitle { color: var(--muted); padding-bottom: 4px; }
@@ -39,7 +41,8 @@
       gap: 16px;
       align-items: start;
     }
-    .search-column { min-width: 0; }
+    .search-column, .results-column { min-width: 0; }
+    .fold-toggle { display: none; }
     .tree-panel {
       position: sticky; top: 12px; z-index: 9;
       max-height: calc(100dvh - 24px);
@@ -57,7 +60,7 @@
       color: var(--ink); background: #fff; font: 12px/1.2 inherit;
     }
     .tree-sort:focus-visible, .tree-row input:focus-visible, .tree-twist:focus-visible,
-    .time-preset:focus-visible, .time-custom input:focus-visible {
+    .tree-name:focus-visible, .time-preset:focus-visible, .time-custom input:focus-visible {
       outline: 2px solid #ddb2c2; outline-offset: 2px;
     }
     .tree-actions { display: flex; gap: 8px; margin-bottom: 8px; }
@@ -69,25 +72,35 @@
       min-height: 32px; margin: 1px 0; padding-right: 4px; border-radius: 8px;
     }
     .tree-row:hover { background: #f6f1f5; }
+    .tree-row.is-preview { background: var(--rose-soft); }
+    .tree-row.is-preview:hover { background: #f3d7e2; }
     .tree-twist {
       flex: 0 0 auto; width: 22px; height: 22px; padding: 0;
       border-radius: 6px; background: transparent; color: var(--muted); font-size: 10px;
     }
     .tree-twist:hover { transform: none; background: #efeaf0; }
     .tree-twist[hidden] { visibility: hidden; pointer-events: none; }
-    .tree-label {
-      display: flex; align-items: center; gap: 7px;
-      min-width: 0; flex: 1; cursor: pointer; font-size: 13px;
+    .tree-check {
+      display: flex; align-items: center; flex: 0 0 auto;
+      padding: 4px 2px; cursor: pointer;
     }
-    .tree-label input { accent-color: #c97a98; width: 15px; height: 15px; }
-    .tree-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .tree-check input { accent-color: #c97a98; width: 15px; height: 15px; }
+    .tree-name {
+      min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      padding: 4px 6px 4px 4px; border-radius: 6px;
+      background: transparent; color: inherit;
+      font: inherit; font-size: 13px; font-weight: 500; text-align: left;
+    }
+    .tree-name:hover { transform: none; background: rgba(48, 45, 56, .06); }
+    .tree-row.is-preview .tree-name { color: #8a5268; }
     .tree-new {
       flex: 0 0 auto; padding: 1px 6px; border-radius: 999px;
       background: var(--rose-soft); color: #8a5268; font-size: 10px; font-weight: 650;
     }
     .tree-count {
-      margin-left: auto; flex: 0 0 auto;
+      margin-left: auto; flex: 0 0 auto; padding: 4px 2px;
       color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
+      cursor: pointer;
     }
     .tree-remove {
       flex: 0 0 auto; width: 22px; height: 22px; padding: 0;
@@ -106,6 +119,16 @@
     }
     .index-add button { padding: 7px 10px; font-size: 12px; }
     .index-status { margin-bottom: 10px; color: #8a5268; font-size: 12px; line-height: 1.45; }
+    .side-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+    .side-tab {
+      padding: 8px 10px; border-radius: 10px; background: #f6f1f5; color: #665866; font-size: 13px;
+    }
+    .side-tab:hover { transform: none; }
+    .side-tab.is-active { background: var(--rose-soft); color: #8a5268; }
+    .advanced-options { display: grid; gap: 14px; color: var(--muted); font-size: 13px; }
+    .advanced-options label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .advanced-options input[type="range"] { flex: 1; min-width: 80px; }
+    #tab-scope[hidden], #tab-advanced[hidden] { display: none; }
     .time-filter { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
     .time-filter-label { margin-bottom: 8px; font-size: 14px; font-weight: 700; }
     .time-preset {
@@ -123,8 +146,89 @@
       position: sticky; top: 12px; z-index: 10;
       padding: 16px; border: 1px solid rgba(255,255,255,.9); border-radius: 22px;
       background: var(--panel); backdrop-filter: blur(18px); box-shadow: var(--shadow);
+      transition: box-shadow .15s ease, outline-color .15s ease, background .15s ease;
     }
-    .search-row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; }
+    body.file-drag .search-panel {
+      background: #fff8fb;
+      outline: 2px dashed #d7a3b6;
+      outline-offset: 3px;
+      box-shadow: 0 0 0 6px rgba(217, 127, 158, .08);
+    }
+    .search-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
+    .composer { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; margin-top: 10px; }
+    .text-weight-card, .ref-add {
+      width: 72px; height: 72px; padding: 0; border-radius: 12px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+      font-size: 11px; font-weight: 650;
+    }
+    .text-weight-card { background: var(--rose-soft); color: #8a5268; }
+    .text-weight-card input {
+      width: 52px; height: 26px; border: 0; border-radius: 8px; padding: 0;
+      text-align: center; background: rgba(255,255,255,.7); color: inherit;
+      font: 700 15px/26px inherit; font-variant-numeric: tabular-nums;
+      appearance: textfield; -moz-appearance: textfield;
+    }
+    .text-weight-card input::-webkit-outer-spin-button,
+    .text-weight-card input::-webkit-inner-spin-button {
+      -webkit-appearance: none; margin: 0;
+    }
+    .ref-strip { display: flex; flex-wrap: wrap; gap: 8px; }
+    .ref-card, .ref-add {
+      position: relative; flex: 0 0 auto;
+      outline: 1px solid transparent; outline-offset: 1px;
+      transition: transform .15s ease, box-shadow .15s ease, background .15s ease, border-color .15s ease, outline-color .15s ease, color .15s ease;
+    }
+    .ref-card {
+      width: 72px; height: 72px; padding: 0; border-radius: 12px;
+      overflow: hidden; cursor: zoom-in; background: #efeaf0;
+    }
+    .ref-card img {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+      transition: transform .18s ease;
+    }
+    .ref-card .ref-weight {
+      position: absolute; left: 4px; bottom: 4px; padding: 1px 5px; border-radius: 999px;
+      background: rgba(31,27,35,.72); color: #fff; font-size: 10px; font-variant-numeric: tabular-nums;
+    }
+    .ref-card .ref-remove {
+      position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; padding: 0;
+      border-radius: 999px; background: rgba(31,27,35,.62); color: #fff; font-size: 13px; line-height: 1;
+    }
+    .ref-card .ref-remove:hover { transform: none; background: rgba(31,27,35,.84); }
+    .ref-add {
+      cursor: pointer; background: #f6f1f5; color: #665866;
+      border: 1px dashed #d7c8d0;
+    }
+    .ref-add span:first-child { font-size: 20px; line-height: 1; }
+    @media (hover: hover) and (pointer: fine) {
+      .ref-add:hover {
+        transform: translateY(-2px);
+        background: var(--rose-soft); color: #8a5268; border-color: #d7a3b6;
+        box-shadow: 0 8px 18px rgba(69, 51, 76, .1);
+      }
+      .ref-card:hover {
+        transform: translateY(-2px);
+        outline-color: #ddb2c2;
+        box-shadow: 0 8px 18px rgba(69, 51, 76, .12);
+      }
+      .ref-card:hover img { transform: scale(1.06); }
+      .ref-card .ref-remove { opacity: 0; }
+      .ref-card:hover .ref-remove,
+      .ref-card.is-selected .ref-remove,
+      .ref-card:focus-visible .ref-remove { opacity: 1; }
+    }
+    .ref-add:active, .ref-card:active { transform: scale(.96); }
+    .ref-card.is-selected {
+      outline: 2px solid #c97a98; outline-offset: 2px;
+      box-shadow: 0 0 0 4px var(--rose-soft);
+    }
+    .ref-add:focus-visible, .ref-card:focus-visible {
+      outline: 2px solid #ddb2c2; outline-offset: 2px;
+    }
+    body.file-drag .ref-add {
+      background: #fff8fb; color: #8a5268; border-color: #d7a3b6;
+      box-shadow: 0 0 0 4px rgba(217, 127, 158, .12);
+    }
     input[type="text"] {
       width: 100%; border: 1px solid var(--line); border-radius: 14px; padding: 13px 15px;
       color: var(--ink); background: #fff; font: inherit; outline: none;
@@ -132,21 +236,21 @@
     input[type="text"]:focus { border-color: #ddb2c2; box-shadow: 0 0 0 4px var(--rose-soft); }
     button, .upload-label {
       border: 0; border-radius: 14px; padding: 12px 17px; cursor: pointer; font: 650 14px/1 inherit;
+      touch-action: manipulation;
       transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
     }
-    button:hover, .upload-label:hover { transform: translateY(-1px); }
+    @media (hover: hover) and (pointer: fine) {
+      button:hover, .upload-label:hover { transform: translateY(-1px); }
+    }
     .primary { color: white; background: linear-gradient(135deg, #cc7897, #b8759d); box-shadow: 0 8px 20px #e5bfd0; }
     .secondary, .upload-label { color: #665866; background: #f6f1f5; }
     input[type="file"] { display: none; }
-    .options { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; color: var(--muted); font-size: 13px; }
-    .options label { display: flex; align-items: center; gap: 7px; }
-    .reference {
-      display: none; align-items: center; gap: 8px; padding: 6px 9px; border-radius: 10px;
-      background: var(--blue-soft); color: #56718d;
+    .viewer-weight { display: flex; align-items: center; gap: 6px; color: #ddd6e0; font-size: 13px; }
+    .viewer-weight[hidden] { display: none; }
+    .viewer-weight input {
+      width: 64px; border: 1px solid #3d3742; border-radius: 8px; padding: 6px 7px;
+      background: #241f28; color: #eee8f0; font: inherit;
     }
-    .reference.visible { display: flex; }
-    .reference img { width: 34px; height: 34px; object-fit: cover; border-radius: 7px; }
-    .reference button { padding: 5px 8px; background: transparent; color: inherit; }
     .query-info { min-height: 24px; margin: 18px 2px 8px; color: var(--muted); font-size: 13px; }
     .chip { display: inline-block; margin: 3px 5px 3px 0; padding: 5px 9px; border-radius: 999px; background: var(--rose-soft); color: #8a5268; }
     .chip.negative { background: #eeeef2; color: #706d77; text-decoration: line-through; }
@@ -172,26 +276,206 @@
       padding: 18px 12px 48px; text-align: center; color: var(--muted); font-size: 13px;
     }
     .loading { opacity: .55; pointer-events: none; }
-    dialog { width: min(94vw, 1100px); max-height: 94vh; padding: 0; border: 0; border-radius: 18px; overflow: hidden; background: #17151a; box-shadow: 0 30px 80px #201b24aa; }
-    dialog::backdrop { background: rgba(25, 21, 27, .76); backdrop-filter: blur(8px); }
-    dialog img { display: block; width: 100%; max-height: 86vh; object-fit: contain; }
-    .modal-bar { padding: 10px; display: flex; gap: 10px; align-items: center; color: #ddd6e0; }
-    .modal-bar span { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    dialog {
+      position: fixed; inset: 0;
+      width: 100%; height: 100%; max-width: none; max-height: none;
+      margin: 0; padding: 0; border: 0; overflow: hidden;
+      background: rgba(16, 13, 18, .42);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+    }
+    dialog[open] { display: flex; flex-direction: column; }
+    dialog::backdrop { background: rgba(16, 13, 18, .22); }
+    .viewer-stage {
+      position: relative; flex: 1; min-height: 0;
+      display: grid; place-items: center;
+      overflow: hidden; touch-action: none; overscroll-behavior: none;
+      cursor: zoom-in; user-select: none; background: transparent;
+    }
+    .viewer-stage.is-zoomed { cursor: grab; }
+    .viewer-stage.is-dragging { cursor: grabbing; }
+    .viewer-stage img {
+      display: block; width: auto; height: auto;
+      max-width: min(100%, 1400px); max-height: 100%;
+      object-fit: contain; transform-origin: center center;
+      will-change: transform; -webkit-user-drag: none;
+    }
+    .viewer-nav {
+      position: absolute; top: 50%; z-index: 2;
+      width: 46px; height: 72px; padding: 0;
+      border-radius: 14px; background: rgba(48, 43, 52, .72); color: #eee8f0;
+      font-size: 28px; line-height: 1;
+      transform: translateY(-50%);
+    }
+    .viewer-nav:hover { transform: translateY(-50%); background: rgba(48, 43, 52, .94); }
+    .viewer-nav.prev { left: 12px; }
+    .viewer-nav.next { right: 12px; }
+    .viewer-nav[hidden] { display: none; }
+    .viewer-close {
+      position: absolute; top: 12px; right: 12px; z-index: 3;
+      width: 40px; height: 40px; padding: 0;
+      border-radius: 12px; background: rgba(48, 43, 52, .72); color: #eee8f0;
+      font-size: 22px; line-height: 1;
+    }
+    .viewer-close:hover { transform: none; background: rgba(48, 43, 52, .94); }
+    .modal-bar {
+      flex: 0 0 auto; padding: 8px 12px; display: flex; flex-wrap: wrap;
+      gap: 8px; align-items: center; color: #ddd6e0;
+      background: rgba(22, 18, 26, .58);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+    .modal-bar span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    #viewer-title { flex: 1 1 180px; }
+    .viewer-index { flex: 0 0 auto; color: #9a909e; font-size: 12px; font-variant-numeric: tabular-nums; }
     .modal-bar button { background: #302b34; color: #eee8f0; padding: 8px 11px; }
+    .modal-bar button:hover { transform: none; }
+    .modal-bar button:focus-visible, .viewer-nav:focus-visible, .viewer-close:focus-visible {
+      outline: 2px solid #ddb2c2; outline-offset: 2px;
+    }
+    .drop-mask {
+      display: none; position: fixed; inset: 0; z-index: 30;
+      place-items: center; pointer-events: none;
+      background: rgba(251, 250, 252, .42);
+    }
+    body.file-drag .drop-mask { display: grid; }
+    .drop-card {
+      padding: 18px 28px; border: 1px dashed #d7a3b6; border-radius: 18px;
+      background: rgba(255, 255, 255, .92); color: #8a5268;
+      box-shadow: var(--shadow); font-size: 16px; font-weight: 650;
+    }
     @media (max-width: 900px) {
-      .search-layout { grid-template-columns: 1fr; }
-      .tree-panel { position: relative; top: 0; max-height: 280px; }
+      :root { --page-gutter: 12px; }
+      .search-layout {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .search-column,
+      .search-panel,
+      #search-form { display: contents; }
+      .search-row {
+        order: -3;
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        flex-shrink: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        width: auto;
+        margin-inline: calc(-1 * var(--page-gutter));
+        padding: 8px var(--page-gutter) 10px;
+        background: var(--paper);
+        border: 0;
+        border-bottom: 1px solid var(--line);
+        border-radius: 0;
+        box-shadow: none;
+      }
+      .composer { order: -2; margin-top: 0; }
+      .tree-panel { order: -1; }
+      .results-column { order: 0; }
+      body.file-drag .search-panel {
+        background: transparent;
+        outline: none;
+        box-shadow: none;
+      }
+      body.file-drag .search-row,
+      body.file-drag .composer {
+        background: #fff8fb;
+        outline: 2px dashed #d7a3b6;
+        outline-offset: -2px;
+      }
+      .search-panel.loading .search-row,
+      .search-panel.loading .composer { opacity: .55; pointer-events: none; }
+      .fold-toggle { display: flex; }
+      .fold-toggle {
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        width: 100%;
+        min-height: 44px;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+        color: var(--ink);
+        font-size: 13px;
+        font-weight: 650;
+        box-shadow: none;
+      }
+      .fold-toggle-meta {
+        min-width: 0;
+        margin-left: auto;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 500;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+      .fold-toggle-chevron { flex: 0 0 auto; color: var(--muted); }
+      .tree-panel.is-open .fold-toggle-chevron { transform: rotate(180deg); }
+      .tree-panel {
+        position: relative;
+        top: auto;
+        z-index: auto;
+        max-height: none;
+        overflow: visible;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
+        backdrop-filter: none;
+      }
+      .tree-panel:not(.is-open) .tree-body { display: none; }
+      .tree-panel.is-open {
+        max-height: min(52dvh, 420px);
+        overflow: auto;
+        overscroll-behavior: contain;
+        padding: 8px 10px 12px;
+        border: 1px solid rgba(255,255,255,.9);
+        border-radius: 16px;
+        background: #fff;
+        box-shadow: var(--shadow);
+      }
+      .tree-panel.is-open .fold-toggle {
+        margin-bottom: 8px;
+        background: #f6f1f5;
+        border-color: transparent;
+      }
+      .query-info { margin: 10px 2px 6px; }
+      .composer { padding-bottom: 2px; }
+      .text-weight-card, .ref-add, .ref-card { width: 56px; height: 56px; border-radius: 10px; }
     }
     @media (max-width: 720px) {
-      .shell { width: min(100% - 20px, 1500px); }
-      header { padding-top: 25px; display: block; }
-      .subtitle { margin-top: 6px; }
-      .search-row { grid-template-columns: 1fr auto; }
-      .search-row .upload-label { grid-column: 1 / -1; text-align: center; }
-      .gallery { gap: 9px; }
+      header {
+        padding: 12px 0 8px;
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+      }
+      .brand { font-size: 22px; line-height: 1.1; }
+      .subtitle { margin: 0; padding: 0; font-size: 12px; }
+      #query { font-size: 16px; min-height: 44px; padding: 10px 12px; }
+      #search { min-height: 44px; padding: 10px 14px; }
+      .gallery { gap: 9px; padding-bottom: 36px; }
+      .card-actions button { min-height: 40px; flex: 1; font-size: 12px; }
+      .tree-row { min-height: 44px; }
+      .tree-twist, .tree-remove, .tree-refresh { width: 32px; height: 32px; }
+      .tree-check { padding: 8px 6px; }
+      .tree-name { min-height: 32px; }
+      .viewer-nav { width: 40px; height: 56px; }
+      .viewer-nav.prev { left: 6px; }
+      .viewer-nav.next { right: 6px; }
+      .viewer-close { top: 8px; right: 8px; width: 44px; height: 44px; }
+      .viewer-stage img { max-width: 100%; max-height: 100%; }
+      .modal-bar button { min-height: 40px; }
     }
     @media (prefers-reduced-motion: reduce) {
       button, .upload-label { transition: none; }
+      dialog, dialog::backdrop, .modal-bar { backdrop-filter: none; -webkit-backdrop-filter: none; }
     }
   </style>
 </head>
@@ -202,7 +486,18 @@
       <div class="subtitle">本地插画收藏 · 语义与相似图检索</div>
     </header>
     <div class="search-layout">
-      <aside class="tree-panel" aria-label="查询范围">
+      <aside class="tree-panel" id="tree-panel" aria-label="查询范围">
+        <button class="fold-toggle" id="scope-toggle" type="button" aria-expanded="false" aria-controls="tree-body">
+          <span>范围与设置</span>
+          <span class="fold-toggle-meta" id="scope-toggle-meta"></span>
+          <span class="fold-toggle-chevron" aria-hidden="true">▾</span>
+        </button>
+        <div class="tree-body" id="tree-body">
+        <div class="side-tabs" role="tablist">
+          <button class="side-tab is-active" id="tab-btn-scope" type="button" role="tab" aria-selected="true">范围</button>
+          <button class="side-tab" id="tab-btn-advanced" type="button" role="tab" aria-selected="false">高级</button>
+        </div>
+        <div id="tab-scope">
         <div class="time-filter">
           <div class="time-filter-label">时间范围</div>
           <select id="time-preset" class="time-preset" aria-label="时间范围">
@@ -234,39 +529,67 @@
         </div>
         <div id="tree-summary" class="tree-summary">正在读取索引目录……</div>
         <div id="tree" class="tree"></div>
+        </div>
+        <div id="tab-advanced" class="advanced-options" hidden>
+          <label><input id="use-llm" type="checkbox" checked> 本地大模型理解条件</label>
+          <label><input id="strict-tags" type="checkbox"> 细节标签至少命中一项</label>
+          <label title="完全相同的图片只保留最先检索到的"><input id="dedupe" type="checkbox" checked> 去除重复</label>
+          <label>每批 <input id="limit" type="range" min="12" max="80" step="4" value="40"> <span id="limit-value">40</span></label>
+        </div>
+        </div>
       </aside>
       <div class="search-column">
-        <section class="search-panel" id="panel">
-          <form id="search-form" autocomplete="off">
-          <div class="search-row">
-            <input id="query" type="text" name="artseek-query" placeholder="例如：水色梦幻、穿宽大姬袖和过膝袜、抱膝坐在床上的少女；不要室外" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" autofocus>
-            <label class="upload-label" for="upload">选择参考图</label>
-            <input id="upload" type="file" accept="image/*" autocomplete="off">
-            <button class="primary" id="search" type="submit">查询</button>
+      <section class="search-panel" id="panel">
+        <form id="search-form" autocomplete="off">
+        <div class="search-row">
+          <input id="query" type="text" name="artseek-query" placeholder="搜索图片..." autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" inputmode="search" enterkeyhint="search">
+          <button class="primary" id="search" type="submit">查询</button>
+        </div>
+        <div class="composer" id="composer">
+          <div class="text-weight-card" title="文字在混合查询中的权重">
+            <span>文字</span>
+            <input id="text-weight" type="number" min="0" max="8" step="0.1" value="1" inputmode="decimal">
           </div>
-          <div class="options">
-            <label><input id="use-llm" type="checkbox" checked> 本地大模型理解条件</label>
-            <label><input id="strict-tags" type="checkbox"> 细节标签至少命中一项</label>
-            <label title="完全相同的图片只保留最先检索到的"><input id="dedupe" type="checkbox"> 去除重复</label>
-            <label>每批 <input id="limit" type="range" min="12" max="80" step="4" value="40"> <span id="limit-value">40</span></label>
-            <div id="reference" class="reference">
-              <img id="reference-image" alt="参考图">
-              <span id="reference-name">参考图</span>
-              <button id="clear-reference" type="button" title="清除参考图">×</button>
-            </div>
-          </div>
-          </form>
-        </section>
-        <div id="query-info" class="query-info">勾选左侧目录后，输入描述或选择参考图片开始检索。新出现的文件夹默认不在查询范围内。</div>
+          <div id="ref-strip" class="ref-strip"></div>
+          <label class="ref-add" id="ref-add" for="upload" tabindex="0" title="也可从资源管理器拖入多张">
+            <span>+</span>
+            <span>参考图</span>
+          </label>
+          <input id="upload" type="file" accept="image/*" multiple autocomplete="off">
+        </div>
+        </form>
+      </section>
+      <div class="results-column">
+        <div id="query-info" class="query-info">勾选目录后检索，或点击目录名在右侧预览图片。新出现的文件夹默认不在查询范围内。</div>
         <main id="gallery" class="gallery"></main>
         <div id="load-more" class="load-more" hidden>正在载入更多相关图片…</div>
       </div>
+      </div>
     </div>
   </div>
-  <dialog id="viewer">
-    <img id="viewer-image" alt="原图预览">
-    <div class="modal-bar"><span id="viewer-title"></span><button id="viewer-reference">用作参考</button><button id="viewer-close">关闭</button></div>
+  <dialog id="viewer" aria-label="原图预览">
+    <div class="viewer-stage" id="viewer-stage">
+      <button class="viewer-close" id="viewer-close" type="button" aria-label="关闭">×</button>
+      <button class="viewer-nav prev" id="viewer-prev" type="button" tabindex="-1" aria-label="上一张">‹</button>
+      <img id="viewer-image" alt="原图预览" draggable="false">
+      <button class="viewer-nav next" id="viewer-next" type="button" tabindex="-1" aria-label="下一张">›</button>
+    </div>
+    <div class="modal-bar">
+      <span id="viewer-title"></span>
+      <span id="viewer-index" class="viewer-index"></span>
+      <button id="viewer-zoom-out" type="button" title="缩小">－</button>
+      <button id="viewer-zoom-reset" type="button" title="重置缩放">1×</button>
+      <button id="viewer-zoom-in" type="button" title="放大">＋</button>
+      <label class="viewer-weight" id="viewer-weight-wrap" hidden>权重
+        <input id="viewer-weight" type="number" min="0" max="8" step="0.1" value="1" inputmode="decimal">
+      </label>
+      <button id="viewer-remove-ref" type="button" hidden>从参考中移除</button>
+      <button id="viewer-reference" type="button">添加为参考</button>
+    </div>
   </dialog>
+  <div id="drop-mask" class="drop-mask" aria-hidden="true">
+    <div class="drop-card">松开以添加参考图</div>
+  </div>
   <script>
     const $ = (id) => document.getElementById(id);
     async function parseResponse(response) {
@@ -279,17 +602,45 @@
       if (!response.ok) {
         const detail = data && data.detail;
         const message = Array.isArray(detail)
-          ? detail.map((item) => item.msg || JSON.stringify(item)).join('；')
+          ? detail.map((item) => {
+              const loc = Array.isArray(item.loc)
+                ? item.loc.filter((part) => part !== 'body' && part !== 'query').join('.')
+                : '';
+              const msg = item.msg || JSON.stringify(item);
+              return loc ? `${loc}: ${msg}` : msg;
+            }).join('；')
           : (detail || text.trim().slice(0, 180) || `HTTP ${response.status}`);
         throw new Error(message);
       }
       return data;
     }
+    const MAX_REFS = 8;
     const state = {
-      upload: null, referenceId: null, current: null, results: [],
-      offset: 0, hasMore: false, loadingMore: false, searchSeq: 0,
+      references: [], refSeq: 0, current: null, currentRefKey: null, viewerSource: 'gallery',
+      results: [], offset: 0, hasMore: false, loadingMore: false, searchSeq: 0,
       colHeights: [],
+      mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
     };
+    const VIEW_MIN_SCALE = 0.2;
+    const VIEW_MAX_SCALE = 8;
+    const view = {
+      scale: 1, x: 0, y: 0,
+      targetScale: 1, targetX: 0, targetY: 0,
+      dragging: false, pinching: false, moved: false, animating: false, animToken: 0,
+      pointerId: null, pointers: new Map(),
+      px: 0, py: 0, startX: 0, startY: 0,
+      vx: 0, vy: 0,
+      pinchStartDist: 0, pinchStartScale: 1,
+      clickTimer: 0,
+      slideX: 0, slideTarget: 0, swiping: false, flipping: false, preserveSlide: false,
+      lastTapAt: 0, lastTapX: 0, lastTapY: 0, suppressClick: 0,
+    };
+    function prefersReducedMotion() {
+      return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+    function isViewFitted() {
+      return Math.abs(view.targetScale - 1) < 0.04;
+    }
     const treeState = {
       roots: [],
       selected: new Set(),
@@ -308,94 +659,215 @@
     $('limit').addEventListener('input', () => $('limit-value').textContent = $('limit').value);
     $('search-form').addEventListener('submit', (event) => { event.preventDefault(); runSearch(); });
     $('upload').addEventListener('change', (event) => {
-      state.upload = event.target.files[0] || null;
-      state.referenceId = null;
-      if (state.upload) showReference(URL.createObjectURL(state.upload), state.upload.name);
+      addReferenceFiles(event.target.files);
+      event.target.value = '';
     });
-    $('clear-reference').addEventListener('click', () => {
-      state.upload = null; state.referenceId = null; $('upload').value = '';
-      $('reference').classList.remove('visible');
+    $('ref-add').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        $('upload').click();
+      }
     });
     $('viewer-close').addEventListener('click', () => $('viewer').close());
-    $('viewer').addEventListener('click', (event) => { if (event.target === $('viewer')) $('viewer').close(); });
+    $('viewer').addEventListener('close', () => {
+      resetView();
+      state.currentRefKey = null;
+      state.viewerSource = 'gallery';
+      syncRefSelection();
+    });
     $('viewer-reference').addEventListener('click', () => {
       if (!state.current) return;
-      state.referenceId = state.current.id; state.upload = null; $('upload').value = '';
-      showReference(`/thumb/${state.current.id}`, state.current.name);
-      $('viewer').close(); window.scrollTo({ top: 0, behavior: 'smooth' });
+      addLibraryReference(state.current);
+      syncViewerChrome();
     });
+    $('viewer-remove-ref').addEventListener('click', () => {
+      if (!state.currentRefKey) return;
+      removeReference(state.currentRefKey);
+      if (!state.references.length) $('viewer').close();
+      else openReferenceViewer(state.references[Math.max(0, currentRefIndex())].key);
+    });
+    $('viewer-weight').addEventListener('input', () => {
+      const ref = currentReference();
+      if (!ref) return;
+      ref.weight = clampWeight($('viewer-weight').value);
+      renderReferences();
+    });
+    $('viewer-prev').addEventListener('click', (event) => { event.stopPropagation(); stepViewer(-1, { animate: true }); });
+    $('viewer-next').addEventListener('click', (event) => { event.stopPropagation(); stepViewer(1, { animate: true }); });
+    $('viewer-zoom-in').addEventListener('click', () => zoomBy(1.25));
+    $('viewer-zoom-out').addEventListener('click', () => zoomBy(1 / 1.25));
+    $('viewer-zoom-reset').addEventListener('click', () => resetView(false));
 
-    function showReference(src, name) {
-      $('reference-image').src = src; $('reference-name').textContent = name;
-      $('reference').classList.add('visible');
+    function clampWeight(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return 1;
+      return Math.min(8, Math.max(0, Math.round(number * 10) / 10));
+    }
+    function textWeight() {
+      return clampWeight($('text-weight').value);
+    }
+    function formatWeight(value) {
+      return Number(value).toFixed(Number.isInteger(Number(value)) ? 0 : 1);
+    }
+    function isImageFile(file) {
+      if (file.type && file.type.startsWith('image/')) return true;
+      return /\.(png|jpe?g|webp|gif|bmp|avif|tif{1,2})$/i.test(file.name || '');
+    }
+    function isFileDrag(event) {
+      return Array.from(event.dataTransfer?.types || []).includes('Files');
+    }
+    function addReferenceFiles(fileList) {
+      const files = [...fileList].filter(isImageFile);
+      if (!files.length) return false;
+      let added = 0;
+      for (const file of files) {
+        if (state.references.length >= MAX_REFS) break;
+        const url = URL.createObjectURL(file);
+        state.references.push({
+          key: `r${++state.refSeq}`,
+          id: null,
+          file,
+          name: file.name,
+          src: url,
+          preview: url,
+          objectUrl: url,
+          weight: 1,
+        });
+        added += 1;
+      }
+      renderReferences();
+      return added > 0;
+    }
+    function addLibraryReference(item) {
+      if (state.references.some((ref) => ref.id === item.id)) {
+        renderReferences();
+        return;
+      }
+      if (state.references.length >= MAX_REFS) {
+        $('query-info').textContent = `参考图最多 ${MAX_REFS} 张。`;
+        return;
+      }
+      state.references.push({
+        key: `r${++state.refSeq}`,
+        id: item.id,
+        file: null,
+        name: item.name,
+        src: `/image/${item.id}`,
+        preview: `/thumb/${item.id}`,
+        objectUrl: null,
+        weight: 1,
+      });
+      renderReferences();
+    }
+    function removeReference(key) {
+      const index = state.references.findIndex((ref) => ref.key === key);
+      if (index < 0) return;
+      const [removed] = state.references.splice(index, 1);
+      if (removed.objectUrl) URL.revokeObjectURL(removed.objectUrl);
+      if (state.currentRefKey === key) state.currentRefKey = null;
+      renderReferences();
+    }
+    function syncRefSelection() {
+      const strip = $('ref-strip');
+      if (!strip) return;
+      strip.querySelectorAll('.ref-card').forEach((card) => {
+        const on = state.viewerSource === 'reference' && card.dataset.key === state.currentRefKey;
+        card.classList.toggle('is-selected', on);
+        card.setAttribute('aria-pressed', String(on));
+      });
+    }
+    function renderReferences() {
+      const strip = $('ref-strip');
+      strip.replaceChildren();
+      state.references.forEach((ref) => {
+        const card = document.createElement('div');
+        const selected = state.viewerSource === 'reference' && ref.key === state.currentRefKey;
+        card.className = selected ? 'ref-card is-selected' : 'ref-card';
+        card.dataset.key = ref.key;
+        card.tabIndex = 0;
+        card.setAttribute('role', 'button');
+        card.setAttribute('aria-pressed', String(selected));
+        card.setAttribute('aria-label', `参考图 ${ref.name}`);
+        card.innerHTML = `<img src="${ref.preview}" alt=""><span class="ref-weight">${formatWeight(ref.weight)}</span><button class="ref-remove" type="button" title="移除" aria-label="移除参考图">×</button>`;
+        const open = () => openReferenceViewer(ref.key);
+        card.addEventListener('click', (event) => {
+          if (event.target.closest('.ref-remove')) {
+            event.preventDefault();
+            event.stopPropagation();
+            removeReference(ref.key);
+            if ($('viewer').open && state.viewerSource === 'reference' && !state.references.length) $('viewer').close();
+            return;
+          }
+          open();
+        });
+        card.addEventListener('keydown', (event) => {
+          if (event.target.closest('.ref-remove')) return;
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            open();
+          }
+        });
+        strip.appendChild(card);
+      });
+    }
+    function currentReference() {
+      return state.references.find((ref) => ref.key === state.currentRefKey) || null;
+    }
+    function currentRefIndex() {
+      if (!state.currentRefKey) return -1;
+      return state.references.findIndex((ref) => ref.key === state.currentRefKey);
     }
 
     async function runSearch() {
       await fetchResults({ reset: true });
     }
 
-    async function fetchResults({ reset }) {
-      const query = $('query').value.trim();
-      if (!query && !state.upload && !state.referenceId) {
-        if (reset) $('query-info').textContent = '请先输入描述或选择参考图片。';
-        return;
+    function loadMoreResults() {
+      if (state.mode === 'browse') return fetchFolderImages({ reset: false });
+      if (state.mode === 'search') return fetchResults({ reset: false });
+      return Promise.resolve();
+    }
+
+    function previewFolder(key, name) {
+      state.mode = 'browse';
+      state.browseKey = key;
+      state.browseName = name || key;
+      renderTree();
+      if (window.matchMedia('(max-width: 900px)').matches) {
+        $('tree-panel').classList.remove('is-open');
+        $('scope-toggle').setAttribute('aria-expanded', 'false');
       }
-      if (!treeState.selected.size) {
-        if (reset) $('query-info').textContent = '请先在左侧勾选要检索的文件夹。新添加的目录默认不在查询范围内。';
-        return;
-      }
+      fetchFolderImages({ reset: true });
+    }
+
+    async function fetchFolderImages({ reset }) {
+      const key = state.browseKey;
+      if (!key) return;
       if (!reset && (state.loadingMore || !state.hasMore)) return;
       const seq = reset ? ++state.searchSeq : state.searchSeq;
-      const offset = reset ? 0 : state.results.length;
       if (reset) {
-        state.offset = 0;
         state.hasMore = false;
         $('panel').classList.add('loading');
-        $('query-info').textContent = '正在本地检索……首次查询需要载入模型。';
+        $('query-info').textContent = `正在载入「${state.browseName}」中的图片……`;
         $('load-more').hidden = true;
       } else {
         state.loadingMore = true;
-        $('load-more').textContent = '正在载入更多相关图片…';
+        $('load-more').textContent = '正在载入更多图片…';
         $('load-more').hidden = false;
       }
       try {
-        let response;
-        const folderKeys = [...treeState.selected];
-        const timeRange = currentTimeRange();
-        const limit = Number($('limit').value);
-        if (state.upload) {
-          const form = new FormData();
-          form.append('file', state.upload); form.append('query', query);
-          form.append('limit', String(limit)); form.append('offset', String(offset));
-          form.append('expand', $('use-llm').checked);
-          form.append('strict_tags', $('strict-tags').checked);
-          form.append('dedupe', $('dedupe').checked);
-          form.append('folder_keys', JSON.stringify(folderKeys));
-          form.append('mtime_after', timeRange.after || '');
-          form.append('mtime_before', timeRange.before || '');
-          form.append('exclude_ids', JSON.stringify(reset ? [] : state.results.map((item) => item.id)));
-          response = await fetch('/api/search-upload', { method: 'POST', body: form });
-        } else {
-          response = await fetch('/api/search', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              query,
-              reference_id: state.referenceId,
-              limit,
-              offset: reset ? 0 : state.results.length,
-              expand: $('use-llm').checked,
-              strict_tags: $('strict-tags').checked,
-              dedupe: $('dedupe').checked,
-              folder_keys: folderKeys,
-              mtime_after: timeRange.after || null,
-              mtime_before: timeRange.before || null,
-              exclude_ids: reset ? [] : state.results.map((item) => item.id),
-            })
-          });
-        }
+        const params = new URLSearchParams({
+          folder_key: key,
+          sort: treeState.sort || 'name',
+          limit: String(Number($('limit').value) || 40),
+          offset: String(reset ? 0 : state.results.length),
+        });
+        const response = await fetch(`/api/folder-images?${params}`);
         const data = await parseResponse(response);
         if (seq !== state.searchSeq) return;
         const incoming = data.results || [];
+        state.browseName = data.folder_name || state.browseName;
+        state.browseTotal = data.total || 0;
         if (reset) {
           state.results = incoming;
           renderGallery(state.results, { append: false });
@@ -407,7 +879,129 @@
         }
         state.hasMore = Boolean(data.has_more) && incoming.length > 0;
         $('load-more').hidden = !state.hasMore;
+        renderBrowseInfo(data, state.results.length);
+        if ($('viewer').open) updateViewerNav();
+      } catch (error) {
+        if (seq !== state.searchSeq) return;
+        if (reset) $('query-info').textContent = `无法预览目录：${error.message}`;
+        else $('load-more').textContent = `继续载入失败：${error.message}`;
+        if (!reset) state.hasMore = false;
+      } finally {
+        if (seq === state.searchSeq) {
+          $('panel').classList.remove('loading');
+          state.loadingMore = false;
+          if (!state.hasMore && state.results.length) $('load-more').hidden = true;
+        }
+      }
+    }
+
+    function renderBrowseInfo(data, shown) {
+      const total = data.total || 0;
+      const sortLabel = $('tree-sort').selectedOptions[0]?.textContent || '';
+      if (!total) {
+        $('query-info').textContent = `「${data.folder_name || state.browseName}」及其子目录里没有已索引的图片。`;
+        return;
+      }
+      const more = state.hasMore ? ' · 下滑加载更多' : '';
+      const order = sortLabel ? ` · ${sortLabel}` : '';
+      $('query-info').textContent = `浏览「${data.folder_name || state.browseName}」· ${shown} / ${total} 张图${order}${more}`;
+    }
+
+    async function fetchResults({ reset }) {
+      const query = $('query').value.trim();
+      if (!query && !state.references.length) {
+        if (reset) $('query-info').textContent = '请先输入描述或添加参考图片。也可点击左侧目录名预览其中的图片。';
+        return;
+      }
+      if (!treeState.selected.size) {
+        if (reset) $('query-info').textContent = '请先勾选要检索的文件夹。新添加的目录默认不在查询范围内。';
+        return;
+      }
+      if (reset) {
+        state.mode = 'search';
+        state.browseKey = '';
+        state.browseName = '';
+        state.browseTotal = 0;
+        renderTree();
+      }
+      if (!reset && (state.loadingMore || !state.hasMore)) return;
+      const seq = reset ? ++state.searchSeq : state.searchSeq;
+      const offset = reset ? 0 : state.results.length;
+      if (reset) {
+        state.offset = 0;
+        state.hasMore = false;
+        $('panel').classList.add('loading');
+        $('query-info').textContent = '正在本地检索……';
+        $('load-more').hidden = true;
+      } else {
+        state.loadingMore = true;
+        $('load-more').textContent = '正在载入更多相关图片…';
+        $('load-more').hidden = false;
+      }
+      try {
+        let response;
+        const folderKeys = [...treeState.selected];
+        const timeRange = currentTimeRange();
+        const limit = Number($('limit').value);
+        const libraryRefs = state.references.filter((ref) => ref.id).map((ref) => ({ id: ref.id, weight: ref.weight }));
+        const fileRefs = state.references.filter((ref) => ref.file);
+        const common = {
+          query,
+          text_weight: textWeight(),
+          limit,
+          offset: reset ? 0 : state.results.length,
+          expand: $('use-llm').checked,
+          strict_tags: $('strict-tags').checked,
+          dedupe: $('dedupe').checked,
+          folder_keys: folderKeys,
+          mtime_after: timeRange.after || null,
+          mtime_before: timeRange.before || null,
+          exclude_ids: reset ? [] : state.results.map((item) => item.id),
+        };
+        if (fileRefs.length) {
+          const form = new FormData();
+          form.append('query', common.query);
+          form.append('text_weight', String(common.text_weight));
+          form.append('limit', String(common.limit));
+          form.append('offset', String(common.offset));
+          form.append('expand', String(common.expand));
+          form.append('strict_tags', String(common.strict_tags));
+          form.append('dedupe', String(common.dedupe));
+          form.append('folder_keys', JSON.stringify(common.folder_keys));
+          form.append('mtime_after', timeRange.after || '');
+          form.append('mtime_before', timeRange.before || '');
+          form.append('exclude_ids', JSON.stringify(common.exclude_ids));
+          form.append('references', JSON.stringify(libraryRefs));
+          fileRefs.forEach((ref) => form.append('files', ref.file, ref.file.name));
+          form.append('file_weights', JSON.stringify(fileRefs.map((ref) => ref.weight)));
+          response = await fetch('/api/search-upload', { method: 'POST', body: form });
+        } else {
+          response = await fetch('/api/search', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...common, references: libraryRefs }),
+          });
+        }
+        const data = await parseResponse(response);
+        if (seq !== state.searchSeq) return;
+        const incoming = data.results || [];
+        if (reset) {
+          state.results = incoming;
+          renderGallery(state.results, { append: false });
+          if (window.matchMedia('(max-width: 900px)').matches) {
+            $('tree-panel').classList.remove('is-open');
+            $('scope-toggle').setAttribute('aria-expanded', 'false');
+            $('query').closest('.search-row')?.scrollIntoView({ block: 'start' });
+          }
+        } else {
+          const seen = new Set(state.results.map((item) => item.id));
+          const fresh = incoming.filter((item) => !seen.has(item.id));
+          state.results = state.results.concat(fresh);
+          renderGallery(fresh, { append: true });
+        }
+        state.hasMore = Boolean(data.has_more) && incoming.length > 0;
+        $('load-more').hidden = !state.hasMore;
         renderInfo(data, state.results.length);
+        if ($('viewer').open) updateViewerNav();
       } catch (error) {
         if (seq !== state.searchSeq) return;
         if (reset) $('query-info').textContent = `查询失败：${error.message}`;
@@ -474,19 +1068,23 @@
     }
     function cardHTML(item, index) {
       const ratio = item.width > 0 && item.height > 0 ? ` style="aspect-ratio: ${item.width} / ${item.height}"` : '';
+      const score = Number.isFinite(item.score) ? `<span class="score">${item.score.toFixed(0)}</span>` : '';
       return `<article class="card" data-index="${index}">
-          <div class="image-wrap" data-action="view"${ratio}><img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}"><span class="score">${item.score.toFixed(0)}</span></div>
+          <div class="image-wrap" data-action="view"${ratio}><img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}">${score}</div>
           <div class="card-body">
             <div class="filename" title="${escapeHtml(item.path)}">${escapeHtml(item.name)}</div>
             <div class="meta">${item.width} × ${item.height}</div>
-            ${item.tag_hits.length ? `<div class="hits">命中：${item.tag_hits.map(t => escapeHtml(t.replaceAll('_',' '))).join(' · ')}</div>` : ''}
+            ${item.tag_hits && item.tag_hits.length ? `<div class="hits">命中：${item.tag_hits.map(t => escapeHtml(t.replaceAll('_',' '))).join(' · ')}</div>` : ''}
             <div class="card-actions"><button data-action="reference">作为参考图</button><button data-action="open">查看原图</button></div>
           </div>
         </article>`;
     }
     function renderGallery(results, { append } = { append: false }) {
       if (!append && !results.length) {
-        $('gallery').innerHTML = '<div class="empty">没有找到符合条件的图片。可以减少排除条件，或重新建立含详细描述的索引。</div>';
+        const empty = state.mode === 'browse'
+          ? '这个目录及其子目录里还没有已索引的图片。'
+          : '没有找到符合条件的图片。可以减少排除条件，或重新建立含详细描述的索引。';
+        $('gallery').innerHTML = `<div class="empty">${empty}</div>`;
         delete $('gallery').dataset.cols;
         state.colHeights = [];
         return;
@@ -514,23 +1112,458 @@
           const item = state.results[Number(card.dataset.index)];
           if (!item) return;
           const action = event.target.closest('[data-action]')?.dataset.action;
-          if (action === 'reference') {
-            state.referenceId = item.id; state.upload = null; $('upload').value = '';
-            showReference(`/thumb/${item.id}`, item.name);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          }
+          if (action === 'reference') addLibraryReference(item);
           if (action === 'view' || action === 'open') openViewer(item);
         });
       });
     }
 
-    function openViewer(item) {
-      state.current = item; $('viewer-image').src = `/image/${item.id}`; $('viewer-title').textContent = item.path; $('viewer').showModal();
+    function currentIndex() {
+      if (!state.current) return -1;
+      return state.results.findIndex((item) => item.id === state.current.id);
     }
+    function syncViewerChrome() {
+      syncRefSelection();
+      const viewingRef = state.viewerSource === 'reference';
+      const ref = currentReference();
+      $('viewer-weight-wrap').hidden = !viewingRef;
+      $('viewer-remove-ref').hidden = !viewingRef;
+      $('viewer-reference').hidden = viewingRef;
+      if (viewingRef && ref) {
+        $('viewer-weight').value = String(ref.weight);
+        $('viewer-prev').hidden = currentRefIndex() <= 0;
+        $('viewer-next').hidden = currentRefIndex() >= state.references.length - 1;
+        $('viewer-index').textContent = `${currentRefIndex() + 1} / ${state.references.length}`;
+        if (state.current && state.current.id) {
+          $('viewer-reference').hidden = true;
+        }
+      } else {
+        const index = currentIndex();
+        const total = state.results.length;
+        $('viewer-prev').hidden = index <= 0;
+        $('viewer-next').hidden = index < 0 || (index >= total - 1 && !state.hasMore);
+        $('viewer-index').textContent = index >= 0 && total ? `${index + 1} / ${total}${state.hasMore ? '+' : ''}` : '';
+        if (state.current && state.references.some((item) => item.id === state.current.id)) {
+          $('viewer-reference').textContent = '已在参考中';
+          $('viewer-reference').disabled = true;
+        } else {
+          $('viewer-reference').textContent = '添加为参考';
+          $('viewer-reference').disabled = false;
+        }
+      }
+    }
+    function updateViewerNav() {
+      syncViewerChrome();
+    }
+    function applyViewTransform() {
+      const image = $('viewer-image');
+      const width = $('viewer-stage').clientWidth || 1;
+      image.style.transform = `translate(${view.x + view.slideX}px, ${view.y}px) scale(${view.scale})`;
+      image.style.opacity = String(1 - Math.min(0.5, Math.abs(view.slideX) / width * 0.55));
+      const stage = $('viewer-stage');
+      stage.classList.toggle('is-zoomed', Math.abs(view.scale - 1) > 0.04);
+      stage.classList.toggle('is-dragging', view.dragging || view.swiping);
+      const shown = Math.abs(view.targetScale - 1) < 0.04 ? 1 : view.targetScale;
+      const label = shown >= 9.95 ? shown.toFixed(0) : (Math.abs(shown - 1) < 0.04 ? '1' : shown.toFixed(1));
+      $('viewer-zoom-reset').textContent = `${label}×`;
+    }
+    function startViewAnim() {
+      if (view.animating) return;
+      view.animating = true;
+      const token = ++view.animToken;
+      const step = () => {
+        if (token !== view.animToken) return;
+        const reduce = prefersReducedMotion();
+        const follow = view.dragging || view.pinching || view.swiping;
+        const k = reduce ? 1 : (follow ? 0.42 : 0.22);
+        view.scale += (view.targetScale - view.scale) * k;
+        view.x += (view.targetX - view.x) * k;
+        view.y += (view.targetY - view.y) * k;
+        view.slideX += (view.slideTarget - view.slideX) * k;
+        const settled = Math.abs(view.targetScale - view.scale) < 0.001
+          && Math.abs(view.targetX - view.x) < 0.35
+          && Math.abs(view.targetY - view.y) < 0.35
+          && Math.abs(view.slideTarget - view.slideX) < 0.8;
+        if (settled && !follow) {
+          view.scale = view.targetScale;
+          view.x = view.targetX;
+          view.y = view.targetY;
+          view.slideX = view.slideTarget;
+          view.animating = false;
+        }
+        applyViewTransform();
+        if (view.animating && token === view.animToken) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }
+    function waitSlide() {
+      return new Promise((resolve) => {
+        if (prefersReducedMotion()) {
+          view.slideX = view.slideTarget;
+          applyViewTransform();
+          resolve();
+          return;
+        }
+        startViewAnim();
+        const started = performance.now();
+        const tick = () => {
+          if (Math.abs(view.slideX - view.slideTarget) < 2.5 || performance.now() - started > 420) {
+            view.slideX = view.slideTarget;
+            applyViewTransform();
+            resolve();
+            return;
+          }
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+    }
+    function resetView(immediate = true) {
+      view.animToken += 1;
+      view.animating = false;
+      view.targetScale = 1; view.targetX = 0; view.targetY = 0;
+      view.dragging = false; view.pinching = false; view.moved = false; view.swiping = false;
+      view.vx = 0; view.vy = 0;
+      view.pointers.clear();
+      view.pointerId = null;
+      clearTimeout(view.clickTimer);
+      view.clickTimer = 0;
+      if (!view.preserveSlide) {
+        view.slideX = 0;
+        view.slideTarget = 0;
+      }
+      if (immediate || prefersReducedMotion()) {
+        view.scale = 1; view.x = 0; view.y = 0;
+        if (!view.preserveSlide) view.slideX = 0;
+        applyViewTransform();
+        return;
+      }
+      startViewAnim();
+    }
+    function zoomAt(clientX, clientY, nextScale) {
+      const rect = $('viewer-stage').getBoundingClientRect();
+      const cx = clientX - rect.left - rect.width / 2;
+      const cy = clientY - rect.top - rect.height / 2;
+      const base = view.targetScale || 1;
+      const clamped = Math.min(VIEW_MAX_SCALE, Math.max(VIEW_MIN_SCALE, nextScale));
+      const ratio = clamped / base;
+      let x = cx - ratio * (cx - view.targetX);
+      let y = cy - ratio * (cy - view.targetY);
+      if (clamped <= 1 && !view.pinching) { x = 0; y = 0; }
+      view.targetScale = clamped;
+      view.targetX = x;
+      view.targetY = y;
+      startViewAnim();
+    }
+    function zoomBy(factor) {
+      const rect = $('viewer-stage').getBoundingClientRect();
+      zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, view.targetScale * factor);
+    }
+    function fitViewerFrame() {
+      const dialog = $('viewer');
+      if (!dialog.open) return;
+      const viewport = window.visualViewport;
+      const height = Math.max(1, Math.round(viewport ? viewport.height : window.innerHeight));
+      const top = Math.round(viewport ? viewport.offsetTop : 0);
+      dialog.style.height = `${height}px`;
+      dialog.style.top = `${top}px`;
+      dialog.style.width = '100%';
+      dialog.style.left = '0';
+    }
+    function openViewer(item) {
+      state.viewerSource = 'gallery';
+      state.current = item;
+      state.currentRefKey = null;
+      resetView();
+      $('viewer-image').src = `/image/${item.id}`;
+      $('viewer-title').textContent = item.path;
+      updateViewerNav();
+      if (!$('viewer').open) $('viewer').showModal();
+      fitViewerFrame();
+    }
+    function openReferenceViewer(key) {
+      const ref = state.references.find((item) => item.key === key);
+      if (!ref) return;
+      state.viewerSource = 'reference';
+      state.currentRefKey = key;
+      state.current = ref.id ? { id: ref.id, name: ref.name, path: ref.name } : null;
+      resetView();
+      $('viewer-image').src = ref.src;
+      $('viewer-title').textContent = ref.name;
+      updateViewerNav();
+      if (!$('viewer').open) $('viewer').showModal();
+      fitViewerFrame();
+    }
+    function canStepViewer(delta) {
+      if (state.viewerSource === 'reference') {
+        const next = currentRefIndex() + delta;
+        return next >= 0 && next < state.references.length;
+      }
+      const next = currentIndex() + delta;
+      if (next < 0) return false;
+      if (next >= state.results.length) return Boolean(state.hasMore);
+      return true;
+    }
+    async function stepViewer(delta, { animate = false } = {}) {
+      if (view.flipping) return false;
+      if (!canStepViewer(delta)) {
+        view.slideTarget = 0;
+        startViewAnim();
+        return false;
+      }
+      const reduce = prefersReducedMotion();
+      const width = $('viewer-stage').clientWidth || window.innerWidth;
+      const outbound = (delta > 0 ? -1 : 1) * width;
+      if (animate && !reduce) {
+        view.flipping = true;
+        view.preserveSlide = true;
+        view.slideTarget = outbound;
+        await waitSlide();
+      }
+      if (state.viewerSource === 'reference') {
+        const next = currentRefIndex() + delta;
+        if (next < 0 || next >= state.references.length) {
+          view.flipping = false;
+          view.preserveSlide = false;
+          return false;
+        }
+        openReferenceViewer(state.references[next].key);
+      } else {
+        const index = currentIndex();
+        if (index < 0) {
+          view.flipping = false;
+          view.preserveSlide = false;
+          return false;
+        }
+        const next = index + delta;
+        if (next < 0) {
+          view.flipping = false;
+          view.preserveSlide = false;
+          return false;
+        }
+        if (next >= state.results.length) {
+          if (state.hasMore) await loadMoreResults();
+          if (!state.results[next]) {
+            view.flipping = false;
+            view.preserveSlide = false;
+            view.slideTarget = 0;
+            startViewAnim();
+            return false;
+          }
+        }
+        openViewer(state.results[next]);
+      }
+      if (animate && !reduce) {
+        view.slideX = -outbound * 0.22;
+        view.slideTarget = 0;
+        view.preserveSlide = false;
+        startViewAnim();
+        view.flipping = false;
+      } else {
+        view.preserveSlide = false;
+        view.flipping = false;
+      }
+      return true;
+    }
+    function toggleViewerZoom(clientX, clientY) {
+      if (Math.abs(view.targetScale - 1) > 0.05) resetView(false);
+      else zoomAt(clientX, clientY, 2.4);
+    }
+    function bindViewerGestures() {
+      const stage = $('viewer-stage');
+      const pointerList = () => [...view.pointers.values()];
+      const pinchDistance = () => {
+        const pts = pointerList();
+        if (pts.length < 2) return 0;
+        return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      };
+      const pinchMidpoint = () => {
+        const pts = pointerList();
+        return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      };
+      stage.addEventListener('wheel', (event) => {
+        if (!$('viewer').open) return;
+        event.preventDefault();
+        const intensity = event.ctrlKey ? 0.02 : 0.0032;
+        zoomAt(event.clientX, event.clientY, view.targetScale * Math.exp(-event.deltaY * intensity));
+      }, { passive: false });
+      stage.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        if (event.target.closest('.viewer-nav, .viewer-close')) return;
+        event.preventDefault();
+        view.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        stage.setPointerCapture(event.pointerId);
+        view.moved = false;
+        view.vx = 0; view.vy = 0;
+        if (view.pointers.size >= 2) {
+          view.pinching = true;
+          view.dragging = false;
+          view.swiping = false;
+          view.pointerId = null;
+          view.pinchStartDist = pinchDistance() || 1;
+          view.pinchStartScale = view.targetScale;
+          return;
+        }
+        view.dragging = !isViewFitted();
+        view.swiping = isViewFitted() && !view.flipping;
+        view.pointerId = event.pointerId;
+        view.px = event.clientX; view.py = event.clientY;
+        view.startX = event.clientX; view.startY = event.clientY;
+        startViewAnim();
+      });
+      stage.addEventListener('pointermove', (event) => {
+        if (!view.pointers.has(event.pointerId)) return;
+        view.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (view.pinching && view.pointers.size >= 2) {
+          const dist = pinchDistance();
+          if (dist > 0 && view.pinchStartDist > 0) {
+            const mid = pinchMidpoint();
+            zoomAt(mid.x, mid.y, view.pinchStartScale * (dist / view.pinchStartDist));
+          }
+          view.moved = true;
+          return;
+        }
+        if (view.pointerId !== event.pointerId) return;
+        const dx = event.clientX - view.px;
+        const dy = event.clientY - view.py;
+        if (Math.abs(event.clientX - view.startX) > 6 || Math.abs(event.clientY - view.startY) > 6) view.moved = true;
+        if (view.dragging) {
+          view.targetX += dx;
+          view.targetY += dy;
+          view.vx = dx;
+          view.vy = dy;
+          view.px = event.clientX; view.py = event.clientY;
+          startViewAnim();
+        } else if (view.swiping) {
+          let shift = event.clientX - view.startX;
+          const delta = shift < 0 ? 1 : -1;
+          if (!canStepViewer(delta)) shift *= 0.28;
+          view.slideX = shift;
+          view.slideTarget = shift;
+          applyViewTransform();
+        }
+      });
+      const endPointer = (event) => {
+        if (!view.pointers.has(event.pointerId)) return;
+        view.pointers.delete(event.pointerId);
+        if (view.pinching) {
+          if (view.pointers.size < 2) {
+            view.pinching = false;
+            if (view.targetScale <= 1) {
+              view.targetX = 0;
+              view.targetY = 0;
+              startViewAnim();
+            }
+          }
+          if (view.pointers.size === 1) {
+            const leftover = [...view.pointers.entries()][0];
+            view.pointerId = leftover[0];
+            view.px = leftover[1].x; view.py = leftover[1].y;
+            view.startX = leftover[1].x; view.startY = leftover[1].y;
+            view.dragging = !isViewFitted();
+            view.swiping = isViewFitted();
+          }
+          if (!view.pointers.size) view.pointerId = null;
+          applyViewTransform();
+          return;
+        }
+        if (view.pointerId !== event.pointerId) return;
+        const dx = event.clientX - view.startX;
+        const dy = event.clientY - view.startY;
+        const wasDragging = view.dragging;
+        const wasSwiping = view.swiping;
+        view.dragging = false;
+        view.swiping = false;
+        view.pointerId = null;
+        if (wasDragging) {
+          if (view.targetScale > 1.02) {
+            view.targetX += view.vx * 6;
+            view.targetY += view.vy * 6;
+          } else {
+            view.targetX = 0;
+            view.targetY = 0;
+          }
+          startViewAnim();
+          return;
+        }
+        const width = stage.clientWidth || window.innerWidth;
+        const isTap = Math.abs(dx) < 18 && Math.abs(dy) < 18;
+        if (wasSwiping && view.moved && Math.abs(dx) > Math.max(56, width * 0.16) && Math.abs(dx) > Math.abs(dy) * 1.15) {
+          const delta = dx < 0 ? 1 : -1;
+          if (canStepViewer(delta)) {
+            view.suppressClick = performance.now();
+            stepViewer(delta, { animate: true });
+            return;
+          }
+        }
+        if (wasSwiping) {
+          view.slideTarget = 0;
+          startViewAnim();
+        }
+        if (!isTap) return;
+        const now = performance.now();
+        if (now - view.lastTapAt < 350 && Math.hypot(event.clientX - view.lastTapX, event.clientY - view.lastTapY) < 56) {
+          view.lastTapAt = 0;
+          clearTimeout(view.clickTimer);
+          view.clickTimer = 0;
+          view.suppressClick = now;
+          toggleViewerZoom(event.clientX, event.clientY);
+          return;
+        }
+        view.lastTapAt = now;
+        view.lastTapX = event.clientX;
+        view.lastTapY = event.clientY;
+        if (!isViewFitted()) return;
+        const rect = stage.getBoundingClientRect();
+        const ratio = (event.clientX - rect.left) / rect.width;
+        if (ratio >= 0.3 && ratio <= 0.7) return;
+        const delta = ratio < 0.3 ? -1 : 1;
+        clearTimeout(view.clickTimer);
+        view.clickTimer = setTimeout(() => {
+          view.clickTimer = 0;
+          stepViewer(delta, { animate: true });
+        }, 340);
+      };
+      stage.addEventListener('pointerup', endPointer);
+      stage.addEventListener('pointercancel', endPointer);
+      stage.addEventListener('dblclick', (event) => {
+        event.preventDefault();
+        clearTimeout(view.clickTimer);
+        view.clickTimer = 0;
+        if (event.target.closest('.viewer-nav, .viewer-close')) return;
+        if (performance.now() - view.suppressClick < 450) return;
+        toggleViewerZoom(event.clientX, event.clientY);
+      });
+      stage.addEventListener('click', (event) => {
+        if (performance.now() - view.suppressClick < 450) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      });
+    }
+    bindViewerGestures();
+    function bindViewerViewport() {
+      const sync = () => fitViewerFrame();
+      const viewport = window.visualViewport;
+      if (viewport) {
+        viewport.addEventListener('resize', sync);
+        viewport.addEventListener('scroll', sync);
+      }
+      window.addEventListener('resize', sync);
+      $('viewer').addEventListener('close', () => {
+        const dialog = $('viewer');
+        dialog.style.height = '';
+        dialog.style.top = '';
+        dialog.style.width = '';
+        dialog.style.left = '';
+      });
+    }
+    bindViewerViewport();
     function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char])); }
 
     function descendantKeys(node) {
-      return [node.key, ...node.children.flatMap(descendantKeys)];
+      if (!node || typeof node.key !== 'string' || !node.key) return [];
+      return [node.key, ...(node.children || []).flatMap(descendantKeys)];
     }
     function allFolderKeys(nodes = treeState.roots) {
       return nodes.flatMap(descendantKeys);
@@ -586,9 +1619,12 @@
       const selectedImages = countSelectedImages(treeState.roots);
       const range = currentTimeRange();
       const timeHint = range.after || range.before ? ' · 已限制时间' : '';
-      $('tree-summary').textContent = folderCount
+      const summary = folderCount
         ? `已选 ${folderCount} 个目录 · ${selectedImages} 张图在查询范围内${timeHint}`
         : `尚未勾选目录 · 共 ${treeState.imageCount} 张图，新目录默认不选`;
+      $('tree-summary').textContent = summary;
+      const meta = $('scope-toggle-meta');
+      if (meta) meta.textContent = folderCount ? `${folderCount} 目录 · ${selectedImages} 图` : '未勾选';
     }
     function countSelectedImages(nodes) {
       let total = 0;
@@ -659,6 +1695,7 @@
             else treeState.expanded.add(key);
             renderTree();
           }
+          if (action === 'preview') previewFolder(key, element.dataset.name || key);
           if (action === 'remove') removeIndexedFolder(key, element.dataset.name || key);
           if (action === 'refresh') startIndexJob({ path: element.dataset.path, label: element.dataset.name || key });
         });
@@ -678,18 +1715,19 @@
       const expanded = treeState.expanded.has(node.key);
       const check = nodeCheckState(node);
       const isNew = treeState.newKeys.has(node.key);
+      const isPreview = state.browseKey === node.key;
       const children = hasChildren && expanded
         ? node.children.map((child) => renderTreeNode(child, depth + 1)).join('')
         : '';
       return `
-        <div class="tree-row" style="padding-left:${8 + depth * 14}px">
+        <div class="tree-row${isPreview ? ' is-preview' : ''}" style="padding-left:${8 + depth * 14}px">
           <button class="tree-twist" type="button" data-tree-action="twist" data-key="${escapeHtml(node.key)}" ${hasChildren ? '' : 'hidden'} aria-label="展开或折叠" aria-expanded="${expanded}">${expanded ? '▾' : '▸'}</button>
-          <label class="tree-label" title="${escapeHtml(node.path)}">
-            <input type="checkbox" data-key="${escapeHtml(node.key)}" ${check === 'all' ? 'checked' : ''}>
-            <span class="tree-name">${escapeHtml(node.name)}</span>
-            ${isNew ? '<span class="tree-new">新</span>' : ''}
-            <span class="tree-count">${node.total}</span>
+          <label class="tree-check" title="纳入查询范围">
+            <input type="checkbox" data-key="${escapeHtml(node.key)}" ${check === 'all' ? 'checked' : ''} aria-label="将 ${escapeHtml(node.name)} 纳入查询范围">
           </label>
+          <button class="tree-name" type="button" data-tree-action="preview" data-key="${escapeHtml(node.key)}" data-name="${escapeHtml(node.name)}" title="在右侧预览「${escapeHtml(node.name)}」" aria-pressed="${isPreview}">${escapeHtml(node.name)}</button>
+          ${isNew ? '<span class="tree-new">新</span>' : ''}
+          <span class="tree-count" data-tree-action="preview" data-key="${escapeHtml(node.key)}" data-name="${escapeHtml(node.name)}" title="在右侧预览">${node.total}</span>
           ${depth === 0 ? `<button class="tree-refresh" type="button" data-tree-action="refresh" data-key="${escapeHtml(node.key)}" data-path="${escapeHtml(node.path)}" data-name="${escapeHtml(node.name)}" title="增量更新该索引目录">↻</button>` : ''}
           <button class="tree-remove" type="button" data-tree-action="remove" data-key="${escapeHtml(node.key)}" data-name="${escapeHtml(node.name)}" title="从索引中移出，不删除原图">×</button>
         </div>
@@ -784,6 +1822,17 @@
         });
         const data = await parseResponse(response);
         applyLibraryPayload(data, { keepExpanded: true });
+        if (state.browseKey === key || (state.browseKey && !findNode(treeState.roots, state.browseKey))) {
+          state.mode = 'idle';
+          state.browseKey = '';
+          state.browseName = '';
+          state.browseTotal = 0;
+          state.results = [];
+          state.hasMore = false;
+          $('gallery').replaceChildren();
+          $('query-info').textContent = `已移出「${name}」。点击其他目录名可继续预览。`;
+          renderTree();
+        }
         showIndexStatus(`已移出「${name}」，原图仍在磁盘上。`);
       } catch (error) {
         showIndexStatus(`移出失败：${error.message}`);
@@ -804,8 +1853,8 @@
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            sort: treeState.sort,
-            selected: [...treeState.selected],
+            sort: treeState.sort || 'name',
+            selected: [...treeState.selected].filter((key) => typeof key === 'string' && key),
             mtime_after: treeState.mtimeAfter || null,
             mtime_before: treeState.mtimeBefore || null,
           }),
@@ -879,10 +1928,11 @@
       treeState.sort = $('tree-sort').value;
       renderTree();
       saveLibraryTree();
+      if (state.mode === 'browse' && state.browseKey) fetchFolderImages({ reset: true });
     });
     const loadMore = $('load-more');
     const scrollObserver = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) fetchResults({ reset: false });
+      if (entries.some((entry) => entry.isIntersecting)) loadMoreResults();
     }, { root: null, rootMargin: '720px 0px', threshold: 0 });
     scrollObserver.observe(loadMore);
 
@@ -901,6 +1951,56 @@
       updateTreeSummary();
       scheduleTreeSave();
     });
+
+    let fileDragClear = 0;
+    document.addEventListener('dragover', (event) => {
+      if (!isFileDrag(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+      document.body.classList.add('file-drag');
+      clearTimeout(fileDragClear);
+      fileDragClear = setTimeout(() => document.body.classList.remove('file-drag'), 140);
+    });
+    document.addEventListener('drop', (event) => {
+      if (!isFileDrag(event)) return;
+      event.preventDefault();
+      clearTimeout(fileDragClear);
+      document.body.classList.remove('file-drag');
+      addReferenceFiles(event.dataTransfer.files);
+    });
+    document.addEventListener('dragend', () => document.body.classList.remove('file-drag'));
+    document.addEventListener('keydown', (event) => {
+      if (!$('viewer').open) return;
+      if (event.key === 'ArrowLeft') { event.preventDefault(); stepViewer(-1, { animate: true }); }
+      else if (event.key === 'ArrowRight') { event.preventDefault(); stepViewer(1, { animate: true }); }
+      else if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomBy(1.25); }
+      else if (event.key === '-' || event.key === '_') { event.preventDefault(); zoomBy(1 / 1.25); }
+      else if (event.key === '0') { event.preventDefault(); resetView(false); }
+    });
+    document.addEventListener('wheel', (event) => {
+      if ($('viewer').open && event.ctrlKey) event.preventDefault();
+    }, { passive: false });
+    function setSideTab(name) {
+      const scope = name === 'scope';
+      $('tab-scope').hidden = !scope;
+      $('tab-advanced').hidden = scope;
+      $('tab-btn-scope').classList.toggle('is-active', scope);
+      $('tab-btn-advanced').classList.toggle('is-active', !scope);
+      $('tab-btn-scope').setAttribute('aria-selected', String(scope));
+      $('tab-btn-advanced').setAttribute('aria-selected', String(!scope));
+    }
+    $('tab-btn-scope').addEventListener('click', () => setSideTab('scope'));
+    $('tab-btn-advanced').addEventListener('click', () => setSideTab('advanced'));
+    $('scope-toggle').addEventListener('click', () => {
+      const panel = $('tree-panel');
+      const open = !panel.classList.contains('is-open');
+      panel.classList.toggle('is-open', open);
+      $('scope-toggle').setAttribute('aria-expanded', String(open));
+    });
+    $('text-weight').addEventListener('change', () => {
+      $('text-weight').value = String(textWeight());
+    });
+    if (window.matchMedia('(pointer: fine)').matches) $('query').focus();
     loadLibraryTree();
   </script>
 </body>

@@ -195,6 +195,66 @@ class LibraryTreeTests(unittest.TestCase):
             self.assertEqual(catalog.point_ids(keys, before_ns=20), ["old"])
             self.assertEqual(catalog.point_ids(keys, after_ns=40, before_ns=45), [])
 
+    def test_folder_images_follow_directory_sort(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            few = root / "few"
+            many = root / "many"
+            few.mkdir()
+            many.mkdir()
+            catalog = build_catalog(
+                [
+                    ("few-a", _payload(few / "a.png", root, mtime=10)),
+                    ("many-z", _payload(many / "z.png", root, mtime=30)),
+                    ("many-m", _payload(many / "m.png", root, mtime=20)),
+                ]
+            )
+            root_key = canonical_path(root)
+
+            def names(method: str) -> list[str]:
+                return [name for _, name, _ in catalog.list_folder_images(root_key, method)]
+
+            self.assertEqual(names("name"), ["a.png", "m.png", "z.png"])
+            self.assertEqual(names("name_desc"), ["z.png", "m.png", "a.png"])
+            self.assertEqual(names("mtime"), ["z.png", "m.png", "a.png"])
+            self.assertEqual(names("mtime_asc"), ["a.png", "m.png", "z.png"])
+            self.assertEqual(names("count"), ["m.png", "z.png", "a.png"])
+            self.assertEqual(names("count_asc"), ["a.png", "m.png", "z.png"])
+
+    def test_folder_images_stay_inside_clicked_subtree(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            clothes = root / "clothes"
+            other = root / "other"
+            clothes.mkdir()
+            other.mkdir()
+            catalog = build_catalog(
+                [
+                    ("c", _payload(clothes / "coat.png", root, mtime=5)),
+                    ("o", _payload(other / "sky.png", root, mtime=9)),
+                ]
+            )
+            names = [name for _, name, _ in catalog.list_folder_images(canonical_path(clothes), "name")]
+            self.assertEqual(names, ["coat.png"])
+
+    def test_folder_images_unknown_key_is_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = build_catalog([("a", _payload(root / "a.png", root))])
+            self.assertEqual(catalog.list_folder_images(str(root / "missing"), "name"), [])
+
+    def test_catalog_roundtrip_keeps_image_names(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = build_catalog([("a", _payload(root / "sky.png", root, mtime=11))])
+            path = root / "folder_catalog.json"
+            save_catalog(path, catalog, 1)
+            loaded = load_catalog(path, 1)
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            refs = loaded.list_folder_images(canonical_path(root), "name")
+            self.assertEqual(refs, [("a", "sky.png", 11)])
+
     def test_day_bounds_cover_full_local_day(self) -> None:
         start = day_start_ns("2024-05-01")
         end = day_end_ns("2024-05-01")

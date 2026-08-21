@@ -8,7 +8,7 @@ import numpy as np
 from artseek.config import AppConfig
 from artseek.image_io import canonical_path
 from artseek.library import day_start_ns
-from artseek.search import SearchEngine, duplicate_key, keep_first_unique
+from artseek.search import SearchEngine, compose_visual_vector, duplicate_key, keep_first_unique
 from artseek.store import Neighbor, query_mode
 
 LIB = Path("lib")
@@ -21,6 +21,15 @@ MTIME_NEW = day_start_ns("2024-06-01") or 0
 class FakeEmbedder:
     def encode_texts(self, texts: list[str]) -> np.ndarray:
         return np.array([[1.0, 0.0, 0.0] for _ in texts], dtype=np.float32)
+
+    def encode_images(self, images: list) -> np.ndarray:
+        rows = []
+        for index, _image in enumerate(images):
+            if index == 0:
+                rows.append([0.0, 1.0, 0.0])
+            else:
+                rows.append([0.0, 0.0, 1.0])
+        return np.array(rows, dtype=np.float32)
 
 
 class FakeStore:
@@ -255,6 +264,127 @@ class SearchFusionTests(unittest.TestCase):
         self.assertEqual(query_mode(24541, 24541), "all")
         self.assertEqual(query_mode(20000, 24541), "postfilter")
         self.assertEqual(query_mode(80, 24541), "subset")
+
+
+class ComposeVisualTests(unittest.TestCase):
+    def test_equal_weights_normalize(self) -> None:
+        text = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        images = [np.array([0.0, 1.0, 0.0], dtype=np.float32)]
+        out = compose_visual_vector(text, images, text_weight=1.0, image_weights=[1.0])
+        np.testing.assert_allclose(out, np.array([0.70710678, 0.70710678, 0.0], dtype=np.float32), atol=1e-5)
+
+    def test_image_weight_scales_contribution(self) -> None:
+        text = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        images = [
+            np.array([0.0, 1.0, 0.0], dtype=np.float32),
+            np.array([0.0, 0.0, 1.0], dtype=np.float32),
+        ]
+        out = compose_visual_vector(text, images, text_weight=1.0, image_weights=[1.0, 2.0])
+        expected = np.array([1.0, 1.0, 2.0], dtype=np.float32)
+        expected /= float(np.linalg.norm(expected))
+        np.testing.assert_allclose(out, expected, atol=1e-5)
+
+    def test_zero_text_weight_uses_images_only(self) -> None:
+        text = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        images = [np.array([0.0, 1.0, 0.0], dtype=np.float32)]
+        out = compose_visual_vector(text, images, text_weight=0.0, image_weights=[1.0])
+        np.testing.assert_allclose(out, np.array([0.0, 1.0, 0.0], dtype=np.float32), atol=1e-5)
+
+    def test_rejects_all_zero_weights(self) -> None:
+        with self.assertRaises(ValueError):
+            compose_visual_vector(
+                np.array([1.0, 0.0], dtype=np.float32),
+                [np.array([0.0, 1.0], dtype=np.float32)],
+                text_weight=0.0,
+                image_weights=[0.0],
+            )
+
+
+class MultiReferenceSearchTests(unittest.TestCase):
+    def test_search_accepts_multiple_images(self) -> None:
+        class RecordingStore(FakeStore):
+            def query(self, vector, using, limit, point_ids=None, universe=None):
+                if using == "visual":
+                    self.last_visual = vector
+                return super().query(vector, using, limit, point_ids, universe)
+
+        engine = object.__new__(SearchEngine)
+        engine.config = AppConfig()
+        engine.config.llm.enabled = False
+        engine.embedder = FakeEmbedder()
+        engine.store = RecordingStore()
+        engine.search(
+            "姬袖",
+            expand=False,
+            images=[WIDE / "a.png", WIDE / "b.png"],
+            image_weights=[1.0, 2.0],
+            text_weight=1.0,
+            limit=10,
+        )
+        expected = np.array([1.0, 1.0, 2.0], dtype=np.float32)
+        expected /= float(np.linalg.norm(expected))
+        np.testing.assert_allclose(engine.store.last_visual, expected, atol=1e-5)
+
+
+class WarmupTests(unittest.TestCase):
+    def test_warmup_uses_embedder_hook_when_llm_disabled(self) -> None:
+        engine = object.__new__(SearchEngine)
+        engine.config = AppConfig()
+        engine.config.llm.enabled = False
+
+        class WarmEmbedder:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def warmup(self) -> None:
+                self.calls += 1
+
+        engine.embedder = WarmEmbedder()
+        messages: list[str] = []
+        engine.warmup(status=messages.append)
+        self.assertEqual(engine.embedder.calls, 1)
+        self.assertTrue(any("预热" in item for item in messages))
+
+    def test_warmup_preloads_query_model(self) -> None:
+        engine = object.__new__(SearchEngine)
+        engine.config = AppConfig()
+        engine.config.llm.enabled = True
+
+        class WarmEmbedder:
+            def warmup(self) -> None:
+                return
+
+        class FakeLLM:
+            def __init__(self) -> None:
+                self.preloaded = False
+
+            def preload(self) -> None:
+                self.preloaded = True
+
+        engine.embedder = WarmEmbedder()
+        engine.llm = FakeLLM()
+        engine.warmup()
+        self.assertTrue(engine.llm.preloaded)
+
+    def test_warmup_continues_if_ollama_missing(self) -> None:
+        from artseek.llm import OllamaUnavailable
+
+        engine = object.__new__(SearchEngine)
+        engine.config = AppConfig()
+
+        class WarmEmbedder:
+            def warmup(self) -> None:
+                return
+
+        class FakeLLM:
+            def preload(self) -> None:
+                raise OllamaUnavailable("Ollama 未运行")
+
+        engine.embedder = WarmEmbedder()
+        engine.llm = FakeLLM()
+        messages: list[str] = []
+        engine.warmup(status=messages.append)
+        self.assertTrue(any("内置词典" in item for item in messages))
 
 
 if __name__ == "__main__":

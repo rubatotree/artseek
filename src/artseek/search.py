@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,6 +22,31 @@ from .query import QueryPlan, normalize_tag, static_expand
 from .store import Neighbor, VectorStore
 
 RankedRow = tuple[str, dict[str, Any], list[str]]
+MAX_REFERENCE_IMAGES = 8
+
+
+def compose_visual_vector(
+    text_vector: np.ndarray | None,
+    image_vectors: Sequence[np.ndarray],
+    *,
+    text_weight: float = 1.0,
+    image_weights: Sequence[float] | None = None,
+) -> np.ndarray:
+    """Weighted sum of text and reference-image vectors, then L2-normalized."""
+    parts: list[np.ndarray] = []
+    if text_vector is not None and text_weight > 0:
+        parts.append(np.asarray(text_vector, dtype=np.float32) * float(text_weight))
+    weights = list(image_weights) if image_weights is not None else [1.0] * len(image_vectors)
+    if len(weights) != len(image_vectors):
+        raise ValueError("image_weights 数量必须与参考图一致")
+    for vector, weight in zip(image_vectors, weights, strict=True):
+        if weight > 0:
+            parts.append(np.asarray(vector, dtype=np.float32) * float(weight))
+    if not parts:
+        raise ValueError("文字与参考图的权重不能全为 0")
+    combined = np.sum(np.stack(parts, axis=0), axis=0)
+    combined /= max(float(np.linalg.norm(combined)), 1e-12)
+    return combined.astype(np.float32, copy=False)
 
 
 def duplicate_key(payload: dict[str, Any]) -> tuple[Any, ...] | None:
@@ -94,6 +119,24 @@ class SearchEngine:
     def close(self) -> None:
         self.store.close()
 
+    def warmup(self, status: Callable[[str], None] | None = None) -> None:
+        """Compile inference kernels and preload the query LLM before serving."""
+        notify = status or (lambda _message: None)
+        notify("正在预热图文向量模型……")
+        warmup = getattr(self.embedder, "warmup", None)
+        if callable(warmup):
+            warmup()
+        else:
+            self.embedder.encode_texts(["warmup"])
+        if not self.config.llm.enabled:
+            return
+        notify(f"正在载入本地大模型 {self.config.llm.query_model}……")
+        try:
+            self.llm.preload()
+            notify(f"本地大模型 {self.config.llm.query_model} 已载入")
+        except OllamaUnavailable as exc:
+            notify(f"Ollama 未就绪，查询将使用内置词典：{exc}")
+
     def invalidate_folder_catalog(self) -> None:
         self._folder_catalog = None
         self._folder_catalog_count = None
@@ -154,10 +197,12 @@ class SearchEngine:
         text: str = "",
         *,
         image: Path | None = None,
+        images: Sequence[Path] | None = None,
+        text_weight: float = 1.0,
+        image_weights: Sequence[float] | None = None,
         limit: int | None = None,
         expand: bool = True,
         strict_tags: bool = False,
-        image_weight: float = 0.65,
         folder_keys: Sequence[str] | None = None,
         mtime_after: str | None = None,
         mtime_before: str | None = None,
@@ -165,8 +210,17 @@ class SearchEngine:
         exclude_ids: Sequence[str] | None = None,
         dedupe: bool = False,
     ) -> SearchResponse:
-        if not text.strip() and image is None:
+        refs: list[Path] = []
+        if images:
+            refs.extend(images)
+        if image is not None:
+            refs.append(image)
+        if len(refs) > MAX_REFERENCE_IMAGES:
+            raise ValueError(f"参考图最多 {MAX_REFERENCE_IMAGES} 张")
+        if not text.strip() and not refs:
             raise ValueError("请提供文字或参考图片")
+        if image_weights is not None and len(image_weights) != len(refs):
+            raise ValueError("image_weights 数量必须与参考图一致")
         limit = limit or self.config.search.default_limit
         offset = max(0, offset)
         excluded = {item_id for item_id in (exclude_ids or []) if item_id}
@@ -198,16 +252,23 @@ class SearchEngine:
         text_vector = None
         if text.strip():
             text_vector = self.embedder.encode_texts([plan.embedding_text])[0]
-        if image is not None:
-            image_vector = self.embedder.encode_images([image])[0]
-            if text_vector is not None:
-                visual_vector = image_weight * image_vector + (1.0 - image_weight) * text_vector
-                visual_vector = visual_vector / max(float(np.linalg.norm(visual_vector)), 1e-12)
-            else:
-                visual_vector = image_vector
-        else:
-            visual_vector = text_vector
-        assert visual_vector is not None
+        declared_weights = (
+            [float(weight) for weight in image_weights]
+            if image_weights is not None
+            else [1.0] * len(refs)
+        )
+        active_paths = [path for path, weight in zip(refs, declared_weights) if weight > 0]
+        active_weights = [weight for weight in declared_weights if weight > 0]
+        image_vectors: list[np.ndarray] = []
+        if active_paths:
+            encoded = self.embedder.encode_images(active_paths)
+            image_vectors = [encoded[index] for index in range(len(active_paths))]
+        visual_vector = compose_visual_vector(
+            text_vector,
+            image_vectors,
+            text_weight=text_weight,
+            image_weights=active_weights,
+        )
 
         visual = self.store.query(
             visual_vector.tolist(),
