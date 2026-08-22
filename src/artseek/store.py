@@ -299,6 +299,9 @@ class VectorStore:
         unique = [item_id for item_id in dict.fromkeys(ids) if item_id]
         if not unique:
             return {}
+        existing = {item.name for item in self.client.get_collections().collections}
+        if COLLECTION not in existing:
+            return {}
         fields = list(SEARCH_PAYLOAD_FIELDS)
         result: dict[str, dict[str, Any]] = {}
         for start in range(0, len(unique), 256):

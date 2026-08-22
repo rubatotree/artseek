@@ -121,7 +121,7 @@
     }
     .index-add button { padding: 7px 10px; font-size: 12px; }
     .index-status { margin-bottom: 10px; color: #8a5268; font-size: 12px; line-height: 1.45; }
-    .side-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+    .side-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 12px; }
     .side-tab {
       padding: 8px 10px; border-radius: 10px; background: #f6f1f5; color: #665866; font-size: 13px;
     }
@@ -141,7 +141,39 @@
       width: 64px; border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px;
       color: var(--ink); background: #fff; font: inherit; font-size: 13px;
     }
-    #tab-scope[hidden], #tab-advanced[hidden] { display: none; }
+    #tab-scope[hidden], #tab-advanced[hidden], #tab-collections[hidden] { display: none; }
+    .collections-panel { display: grid; gap: 10px; }
+    .collections-intro, .collection-status { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .collection-create { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+    .collection-create input, .collection-search input, .collection-rename input {
+      min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 7px 8px;
+      color: var(--ink); background: #fff; font: 12px/1.2 inherit;
+    }
+    .collection-create button, .collection-rename button { padding: 7px 10px; font-size: 12px; }
+    .collection-search { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+    .collection-list { display: grid; gap: 3px; }
+    .collection-empty { padding: 16px 8px; color: var(--muted); font-size: 13px; }
+    .collection-row {
+      display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px;
+      min-height: 36px; padding: 3px 4px 3px 7px; border: 1px solid transparent; border-radius: 10px;
+      transition: background .15s ease, border-color .15s ease;
+    }
+    .collection-row:hover { background: #f6f1f5; }
+    .collection-row.is-selected { background: var(--blue-soft); color: #496a8a; }
+    .collection-row.is-pinned { border-color: #ead0da; background: #fff8fb; }
+    .collection-name {
+      min-width: 0; overflow: hidden; padding: 6px 4px; border-radius: 7px; background: transparent;
+      color: inherit; font: 600 13px/1.2 inherit; text-align: left; white-space: nowrap; text-overflow: ellipsis;
+    }
+    .collection-name:hover { transform: none; background: rgba(119, 153, 189, .10); }
+    .collection-count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .collection-icon {
+      width: 26px; height: 26px; padding: 0; border-radius: 7px; background: transparent; color: #9b7483;
+      font-size: 14px; line-height: 1;
+    }
+    .collection-icon:hover { transform: none; background: #f3e4ea; color: #8a5268; }
+    .collection-icon[aria-pressed="true"] { color: #8a5268; background: var(--rose-soft); }
+    .collection-rename { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; grid-column: 1 / -1; }
     .time-filter { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
     .time-filter-label { margin-bottom: 8px; font-size: 14px; font-weight: 700; }
     .time-preset {
@@ -160,12 +192,6 @@
       padding: 16px; border: 1px solid rgba(255,255,255,.9); border-radius: 22px;
       background: var(--panel); backdrop-filter: blur(18px); box-shadow: var(--shadow);
       transition: box-shadow .15s ease, outline-color .15s ease, background .15s ease;
-    }
-    body.file-drag .search-panel {
-      background: #fff8fb;
-      outline: 2px dashed #d7a3b6;
-      outline-offset: 3px;
-      box-shadow: 0 0 0 6px rgba(217, 127, 158, .08);
     }
     .search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
     .search-actions { display: flex; gap: 8px; }
@@ -239,10 +265,11 @@
     .ref-add:focus-visible, .ref-card:focus-visible {
       outline: 2px solid #ddb2c2; outline-offset: 2px;
     }
-    body.file-drag .ref-add {
-      background: #fff8fb; color: #8a5268; border-color: #d7a3b6;
-      box-shadow: 0 0 0 4px rgba(217, 127, 158, .12);
+    .ref-drop-zone {
+      position: relative; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px;
+      min-height: 78px; padding: 3px;
     }
+    .ref-drop-zone .ref-strip { flex: 0 1 auto; }
     input[type="text"] {
       width: 100%; border: 1px solid var(--line); border-radius: 14px; padding: 13px 15px;
       color: var(--ink); background: #fff; font: inherit; outline: none;
@@ -275,18 +302,47 @@
     }
     .gallery-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
     .card {
-      overflow: hidden; border: 1px solid #eee9ef;
+      position: relative; overflow: hidden; border: 1px solid #eee9ef;
       border-radius: 16px; background: #fff; box-shadow: 0 7px 22px rgba(58, 47, 64, .055);
     }
-    .image-wrap { position: relative; background: #f1edf2; cursor: zoom-in; overflow: hidden; }
+    .image-wrap {
+      position: relative; overflow: hidden; border-radius: 15px 15px 0 0;
+      background: #f1edf2; cursor: zoom-in;
+    }
     .image-wrap img { display: block; width: 100%; height: 100%; object-fit: cover; }
     .score { position: absolute; top: 9px; right: 9px; padding: 5px 8px; border-radius: 999px; background: rgba(31,27,35,.72); color: #fff; font-size: 12px; backdrop-filter: blur(8px); }
     .card-body { padding: 10px 11px 11px; }
-    .filename { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; font-weight: 650; }
+    .card.has-collection-actions .card-body { padding-right: 68px; min-height: 52px; }
+    .card-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .filename { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; font-weight: 650; }
     .meta { margin-top: 4px; color: var(--muted); font-size: 11px; }
     .hits { margin-top: 7px; font-size: 11px; color: #965a71; line-height: 1.5; }
-    .card-actions { display: flex; gap: 7px; margin-top: 8px; }
-    .card-actions button { padding: 7px 9px; border-radius: 9px; font-size: 11px; background: #f7f4f7; color: #68616b; }
+    .collection-card-actions {
+      position: absolute; right: 8px; bottom: 8px; z-index: 2; display: flex; gap: 5px;
+    }
+    .collection-card-action {
+      min-height: 32px; padding: 7px 8px; border: 1px solid #eadce3; border-radius: 9px;
+      background: #fff; color: #665866; box-shadow: 0 3px 10px rgba(69, 51, 76, .08); font-size: 11px;
+    }
+    .collection-card-action:hover, .collection-card-action:focus-visible {
+      transform: none; background: var(--rose-soft); color: #8a5268;
+    }
+    .collection-card-action.remove { border-color: #c8d9e8; background: var(--blue-soft); color: #496a8a; }
+    .card-title-actions { flex: 0 0 auto; display: flex; }
+    .card-title-favorite {
+      width: 32px; height: 32px; padding: 0; border: 1px solid transparent; border-radius: 999px;
+      background: transparent; color: #9b7483; font-size: 21px; line-height: 1; touch-action: none;
+    }
+    .card-title-favorite:hover, .card-title-favorite:focus-visible {
+      transform: none; border-color: #eadce3; background: var(--rose-soft); color: #8a5268;
+    }
+    .card:focus-visible { outline: 2px solid #ddb2c2; outline-offset: 3px; }
+    @media (hover: none), (pointer: coarse) {
+      .card-title-favorite {
+        width: 44px; height: 44px; border-color: #eadce3; background: #fff; color: #8a5268;
+      }
+      .card-title-favorite:active { transform: scale(.97); }
+    }
     .empty { padding: 90px 20px; text-align: center; color: var(--muted); }
     .load-more {
       padding: 18px 12px 48px; text-align: center; color: var(--muted); font-size: 13px;
@@ -295,7 +351,7 @@
     dialog {
       position: fixed; inset: 0;
       width: 100%; height: 100%; max-width: none; max-height: none;
-      margin: 0; padding: 0; border: 0; overflow: hidden;
+      margin: 0; padding: 0; border: 0; overflow: visible;
       background: rgba(16, 13, 18, .42);
       backdrop-filter: blur(18px);
       -webkit-backdrop-filter: blur(18px);
@@ -356,17 +412,35 @@
     .modal-bar button:focus-visible, .viewer-nav:focus-visible, .viewer-close:focus-visible {
       outline: 2px solid #ddb2c2; outline-offset: 2px;
     }
-    .drop-mask {
-      display: none; position: fixed; inset: 0; z-index: 30;
-      place-items: center; pointer-events: none;
-      background: rgba(251, 250, 252, .42);
+    .viewer-collection-menu, .card-collection-menu {
+      max-height: min(52vh, calc(100dvh - 32px)); overflow: auto;
+      display: grid; gap: 7px; padding: 10px; border: 1px solid #514553; border-radius: 14px;
+      background: rgba(34, 29, 39, .98); color: #eee8f0; box-shadow: 0 16px 36px rgba(0, 0, 0, .34);
     }
-    body.file-drag .drop-mask { display: grid; }
-    .drop-card {
-      padding: 18px 28px; border: 1px dashed #d7a3b6; border-radius: 18px;
-      background: rgba(255, 255, 255, .92); color: #8a5268;
-      box-shadow: var(--shadow); font-size: 16px; font-weight: 650;
+    .viewer-collection-menu { position: fixed; z-index: 1300; width: min(288px, calc(100vw - 24px)); }
+    .card-collection-menu {
+      position: fixed; z-index: 1200; left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom, 0px));
+      width: min(440px, calc(100vw - 24px)); margin-inline: auto;
     }
+    .viewer-collection-menu[hidden], .card-collection-menu[hidden] { display: none; }
+    .viewer-collection-menu-title { color: #bdb4c1; font-size: 12px; font-weight: 650; }
+    .viewer-collection-menu-list { display: grid; gap: 5px; }
+    .viewer-collection-menu-item {
+      min-height: 38px; padding: 8px 9px; border: 1px solid #4b414f; border-radius: 9px;
+      background: #302b34; color: #eee8f0; text-align: left; font-size: 13px;
+    }
+    .viewer-collection-menu-item[aria-pressed="true"] { border-color: #a77b8d; background: #4a3d4d; }
+    .collection-menu-reference { min-height: 38px; padding: 8px 9px; border: 1px solid #a77b8d; border-radius: 9px; background: #4a3d4d; color: #fff; text-align: left; }
+    .card-collection-menu .is-quick-action-target {
+      border-color: #d8a8b9; background: #5b4658; color: #fff;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14);
+    }
+    .card-collection-menu .is-quick-action-target::after {
+      content: '松开'; float: right; color: #f1cdd9; font-size: 11px; font-weight: 700;
+    }
+    .viewer-collection-menu-create { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; padding-top: 7px; border-top: 1px solid #4b414f; }
+    .viewer-collection-menu-create input { min-width: 0; padding: 8px 9px; border: 1px solid #4b414f; border-radius: 9px; background: #241f28; color: #eee8f0; font-size: 13px; }
+    .viewer-collection-menu-create button { min-height: 38px; padding: 8px 10px; background: #4a3d4d; color: #fff; }
     @media (max-width: 900px) {
       :root { --page-gutter: 12px; }
       .shell { padding-inline: 0; width: 100%; }
@@ -413,15 +487,10 @@
       #query { font-size: 16px; min-height: 44px; padding: 10px 12px; min-width: 0; }
       .search-actions { gap: 6px; }
       #search, .random-browse { min-height: 44px; padding: 10px 12px; box-shadow: none; }
+      .collection-card-action { min-height: 40px; padding: 8px 9px; }
       .composer { margin-top: 8px; }
       .tree-panel { order: -1; }
       .results-column { order: 0; }
-      body.file-drag .search-panel {
-        background: #fff8fb;
-        outline: 2px dashed #d7a3b6;
-        outline-offset: -4px;
-        box-shadow: none;
-      }
       .search-panel.loading { opacity: .55; pointer-events: none; }
       .fold-toggle { display: flex; }
       .fold-toggle {
@@ -520,9 +589,13 @@
       .gallery { gap: 3px; padding: 3px 0 28px; }
       .gallery-col { gap: 3px; }
       .card { border-radius: 12px; }
+      .image-wrap { border-radius: 11px 11px 0 0; }
       .card-body { padding: 8px; }
-      .card-actions { gap: 6px; }
-      .card-actions button { min-height: 40px; flex: 1; font-size: 12px; padding: 8px 6px; }
+      .side-tab, .collection-create button, .collection-rename button,
+      .collection-icon, .collection-name { min-height: 40px; }
+      .collection-create input, .collection-search input, .collection-rename input {
+        min-height: 40px; font-size: 16px;
+      }
       .tree-row { min-height: 44px; }
       .tree-twist, .tree-remove, .tree-refresh { width: 32px; height: 32px; }
       .tree-check { padding: 8px 6px; }
@@ -540,6 +613,15 @@
       #viewer-title { display: none; }
       .modal-bar button { min-height: 40px; padding: 8px 10px; font-size: 13px; }
       .viewer-weight { width: 100%; }
+      .viewer-collection-menu, .card-collection-menu { max-height: min(56vh, calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 24px)); }
+      .card-collection-menu { left: 8px; right: 8px; bottom: max(8px, env(safe-area-inset-bottom, 0px)); width: min(440px, calc(100vw - 16px)); }
+      .collection-menu-reference, .viewer-collection-menu-item, .viewer-collection-menu-create button { min-height: 44px; }
+    }
+    @media (hover: hover) and (pointer: fine) {
+      .card-collection-menu {
+        left: 0; right: auto; top: 0; bottom: auto;
+        width: min(288px, calc(100vw - 24px)); margin: 0;
+      }
     }
     @media (prefers-reduced-motion: reduce) {
       button, .upload-label { transition: none; }
@@ -561,11 +643,12 @@
           <span class="fold-toggle-chevron" aria-hidden="true">▾</span>
         </button>
         <div class="tree-body" id="tree-body">
-        <div class="side-tabs" role="tablist">
-          <button class="side-tab is-active" id="tab-btn-scope" type="button" role="tab" aria-selected="true">范围</button>
-          <button class="side-tab" id="tab-btn-advanced" type="button" role="tab" aria-selected="false">高级</button>
+        <div class="side-tabs" role="tablist" aria-label="侧栏功能">
+          <button class="side-tab is-active" id="tab-btn-scope" type="button" role="tab" aria-selected="true" aria-controls="tab-scope">范围</button>
+          <button class="side-tab" id="tab-btn-collections" type="button" role="tab" aria-selected="false" aria-controls="tab-collections" tabindex="-1">收藏夹</button>
+          <button class="side-tab" id="tab-btn-advanced" type="button" role="tab" aria-selected="false" aria-controls="tab-advanced" tabindex="-1">高级</button>
         </div>
-        <div id="tab-scope">
+        <div id="tab-scope" role="tabpanel" aria-labelledby="tab-btn-scope">
         <div class="time-filter">
           <div class="time-filter-label">时间范围</div>
           <select id="time-preset" class="time-preset" aria-label="时间范围">
@@ -598,7 +681,19 @@
         <div id="tree-summary" class="tree-summary">正在读取索引目录……</div>
         <div id="tree" class="tree"></div>
         </div>
-        <div id="tab-advanced" class="advanced-options" hidden>
+        <div id="tab-collections" class="collections-panel" role="tabpanel" aria-labelledby="tab-btn-collections" hidden>
+          <div class="collections-intro">固定常用收藏夹后，桌面拖动图片时会显示快捷 Dock；触控设备可使用图片标题下方的收藏入口。</div>
+          <form id="collection-create" class="collection-create" autocomplete="off">
+            <input id="collection-name" type="text" maxlength="80" placeholder="新收藏夹名称" aria-label="新收藏夹名称">
+            <button class="secondary" type="submit">新建</button>
+          </form>
+          <label class="collection-search" for="collection-search">在收藏夹内搜索
+            <input id="collection-search" type="search" placeholder="名称、路径、标签或描述" autocomplete="off" spellcheck="false">
+          </label>
+          <div id="collection-status" class="collection-status" aria-live="polite"></div>
+          <div id="collection-list" class="collection-list" aria-label="收藏夹列表"></div>
+        </div>
+        <div id="tab-advanced" class="advanced-options" role="tabpanel" aria-labelledby="tab-btn-advanced" hidden>
           <label><input id="use-llm" type="checkbox" checked> 本地大模型理解条件</label>
           <label><input id="strict-tags" type="checkbox"> 细节标签至少命中一项</label>
           <label title="完全相同的图片只保留最先检索到的"><input id="dedupe" type="checkbox" checked> 去除重复</label>
@@ -629,11 +724,13 @@
             <span>文字</span>
             <input id="text-weight" type="number" min="0" max="8" step="0.1" value="1" inputmode="decimal">
           </div>
-          <div id="ref-strip" class="ref-strip"></div>
-          <label class="ref-add" id="ref-add" for="upload" tabindex="0" title="也可从资源管理器拖入多张">
-            <span>+</span>
-            <span>参考图</span>
-          </label>
+          <div id="ref-drop-zone" class="ref-drop-zone" aria-label="搜索参考图">
+            <div id="ref-strip" class="ref-strip"></div>
+            <label class="ref-add" id="ref-add" for="upload" tabindex="0" title="选择参考图片">
+              <span>+</span>
+              <span>参考图</span>
+            </label>
+          </div>
           <input id="upload" type="file" accept="image/*" multiple autocomplete="off">
         </div>
         </form>
@@ -666,11 +763,12 @@
       </label>
       <button id="viewer-remove-ref" type="button" hidden>从参考中移除</button>
       <button id="viewer-reference" type="button">添加为参考</button>
+      <button id="viewer-collection-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="viewer-collection-menu">收藏到…</button>
+      <button id="viewer-remove-collection" type="button" hidden>移出收藏夹</button>
     </div>
+    <div id="viewer-collection-menu" class="viewer-collection-menu" role="dialog" aria-labelledby="viewer-collection-menu-title" hidden></div>
   </dialog>
-  <div id="drop-mask" class="drop-mask" aria-hidden="true">
-    <div class="drop-card">松开以添加参考图</div>
-  </div>
+  <div id="card-collection-menu" class="card-collection-menu" role="dialog" aria-labelledby="card-collection-menu-title" hidden></div>
   <script>
     const $ = (id) => document.getElementById(id);
     async function parseResponse(response) {
@@ -702,6 +800,13 @@
       colHeights: [],
       mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
       randomSeed: null, randomTotal: 0,
+      collections: [], collectionId: '', collectionName: '', collectionTotal: null,
+      editingCollectionId: '', collectionSearchTimer: 0,
+      viewerMenuTrigger: null, viewerMenuSession: 0,
+      cardMenuItem: null, cardMenuTrigger: null, cardMenuSession: 0,
+    };
+    const cardMenuGesture = {
+      pointerId: null, item: null, trigger: null, hoverTarget: null, clickTrigger: null,
     };
     const VIEW_MIN_SCALE = 0.05;
     const VIEW_MAX_SCALE = 8;
@@ -877,6 +982,7 @@
     });
     $('viewer-close').addEventListener('click', () => $('viewer').close());
     $('viewer').addEventListener('close', () => {
+      closeViewerCollectionMenu({ restoreFocus: false });
       resetView();
       clearViewerSlots();
       state.currentRefKey = null;
@@ -885,7 +991,7 @@
     });
     $('viewer-reference').addEventListener('click', () => {
       if (!state.current) return;
-      addLibraryReference(state.current);
+      addLibraryReferenceWithStatus(state.current);
       syncViewerChrome();
     });
     $('viewer-remove-ref').addEventListener('click', () => {
@@ -905,6 +1011,13 @@
     $('viewer-zoom-in').addEventListener('click', () => zoomBy(1.25));
     $('viewer-zoom-out').addEventListener('click', () => zoomBy(1 / 1.25));
     $('viewer-zoom-reset').addEventListener('click', () => resetView(false));
+    $('viewer-collection-toggle').addEventListener('click', (event) => {
+      if ($('viewer-collection-menu').hidden) openViewerCollectionMenu(event.currentTarget);
+      else closeViewerCollectionMenu();
+    });
+    $('viewer-remove-collection').addEventListener('click', () => {
+      if (state.current) removeFromActiveCollection(state.current);
+    });
 
     function clampWeight(value) {
       const number = Number(value);
@@ -920,9 +1033,6 @@
     function isImageFile(file) {
       if (file.type && file.type.startsWith('image/')) return true;
       return /\.(png|jpe?g|webp|gif|bmp|avif|tif{1,2})$/i.test(file.name || '');
-    }
-    function isFileDrag(event) {
-      return Array.from(event.dataTransfer?.types || []).includes('Files');
     }
     function addReferenceFiles(fileList) {
       const files = [...fileList].filter(isImageFile);
@@ -949,11 +1059,11 @@
     function addLibraryReference(item) {
       if (state.references.some((ref) => ref.id === item.id)) {
         renderReferences();
-        return;
+        return false;
       }
       if (state.references.length >= MAX_REFS) {
         $('query-info').textContent = `参考图最多 ${MAX_REFS} 张。`;
-        return;
+        return false;
       }
       state.references.push({
         key: `r${++state.refSeq}`,
@@ -968,6 +1078,14 @@
         weight: 1,
       });
       renderReferences();
+      return true;
+    }
+    function addLibraryReferenceWithStatus(item) {
+      const alreadyReferenced = state.references.some((ref) => ref.id === item.id);
+      const added = addLibraryReference(item);
+      if (added) setCollectionStatus(`已将「${item.name}」添加至搜索参考。`);
+      else if (alreadyReferenced) setCollectionStatus(`「${item.name}」已在搜索参考中。`);
+      return added;
     }
     function removeReference(key) {
       const index = state.references.findIndex((ref) => ref.key === key);
@@ -1028,6 +1146,542 @@
       return state.references.findIndex((ref) => ref.key === state.currentRefKey);
     }
 
+    function setCollectionStatus(message) {
+      $('collection-status').textContent = message || '';
+    }
+    async function requestCollections(imageId = '') {
+      const suffix = imageId ? `?${new URLSearchParams({ image_id: imageId })}` : '';
+      return parseResponse(await fetch(`/api/collections${suffix}`));
+    }
+    async function loadCollections() {
+      const data = await requestCollections();
+      state.collections = data.collections || [];
+      renderCollectionList();
+      return state.collections;
+    }
+    async function changeCollectionMembership(collectionId, item, include) {
+      const encodedCollection = encodeURIComponent(collectionId);
+      const response = include
+        ? await fetch(`/api/collections/${encodedCollection}/items`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_id: item.id }),
+          })
+        : await fetch(`/api/collections/${encodedCollection}/items/${encodeURIComponent(item.id)}`, {
+            method: 'DELETE',
+          });
+      const data = await parseResponse(response);
+      await loadCollections();
+      return data;
+    }
+    function pinnedCollections() {
+      return state.collections.filter((collection) => collection.pinned);
+    }
+    function viewportBounds() {
+      const viewport = window.visualViewport;
+      return {
+        left: viewport ? viewport.offsetLeft : 0,
+        top: viewport ? viewport.offsetTop : 0,
+        width: viewport ? viewport.width : window.innerWidth,
+        height: viewport ? viewport.height : window.innerHeight,
+      };
+    }
+    function closeViewerCollectionMenu({ restoreFocus = true } = {}) {
+      const menu = $('viewer-collection-menu');
+      const trigger = state.viewerMenuTrigger;
+      state.viewerMenuSession += 1;
+      menu.hidden = true;
+      $('viewer-collection-toggle').setAttribute('aria-expanded', 'false');
+      state.viewerMenuTrigger = null;
+      if (restoreFocus && trigger?.isConnected && $('viewer').open) trigger.focus();
+    }
+    function positionViewerCollectionMenu() {
+      const menu = $('viewer-collection-menu');
+      const trigger = state.viewerMenuTrigger || $('viewer-collection-toggle');
+      const rect = trigger.getBoundingClientRect();
+      const gap = 12;
+      const width = menu.offsetWidth || 288;
+      const height = menu.offsetHeight || 180;
+      const viewport = viewportBounds();
+      const left = Math.max(viewport.left + gap, Math.min(rect.right - width, viewport.left + viewport.width - width - gap));
+      const top = Math.max(viewport.top + gap, Math.min(rect.top - height - 8, viewport.top + viewport.height - height - gap));
+      menu.style.left = `${Math.round(left)}px`;
+      menu.style.top = `${Math.round(top)}px`;
+    }
+    function focusViewerCollectionDialog() {
+      const menu = $('viewer-collection-menu');
+      if (menu.hidden) return;
+      menu.querySelector('[data-viewer-menu-reference], [data-viewer-menu-collection], #viewer-picker-create, [data-viewer-menu-create]')?.focus();
+    }
+    function captureViewerCollectionDialogFocus() {
+      const menu = $('viewer-collection-menu');
+      const active = document.activeElement;
+      if (!menu.contains(active)) return null;
+      if (active.matches('[data-viewer-menu-reference]')) return { kind: 'reference' };
+      if (active.matches('[data-viewer-menu-collection]')) {
+        return { kind: 'collection', id: active.dataset.viewerMenuCollection };
+      }
+      if (active.id === 'viewer-picker-create') {
+        return {
+          kind: 'create-input',
+          value: active.value,
+          selectionStart: active.selectionStart,
+          selectionEnd: active.selectionEnd,
+        };
+      }
+      if (active.matches('[data-viewer-menu-create]')) return { kind: 'create-action' };
+      return { kind: 'first-control' };
+    }
+    function restoreViewerCollectionDialogFocus(focusSnapshot, { preserveCreateDraft = true } = {}) {
+      if (!focusSnapshot || $('viewer-collection-menu').hidden) return;
+      const menu = $('viewer-collection-menu');
+      let target = null;
+      if (focusSnapshot.kind === 'collection') {
+        target = [...menu.querySelectorAll('[data-viewer-menu-collection]')]
+          .find((button) => button.dataset.viewerMenuCollection === focusSnapshot.id) || null;
+      } else if (focusSnapshot.kind === 'reference') {
+        target = menu.querySelector('[data-viewer-menu-reference]');
+      } else if (focusSnapshot.kind === 'create-input') {
+        target = menu.querySelector('#viewer-picker-create');
+      } else if (focusSnapshot.kind === 'create-action') {
+        target = menu.querySelector('[data-viewer-menu-create]');
+      }
+      target ||= menu.querySelector('[data-viewer-menu-reference], [data-viewer-menu-collection], #viewer-picker-create, [data-viewer-menu-create]');
+      if (!target) return;
+      target.focus();
+      if (focusSnapshot.kind === 'create-input' && preserveCreateDraft && target.id === 'viewer-picker-create') {
+        target.value = focusSnapshot.value;
+        const end = target.value.length;
+        target.setSelectionRange(
+          Math.min(focusSnapshot.selectionStart ?? end, end),
+          Math.min(focusSnapshot.selectionEnd ?? end, end),
+        );
+      }
+    }
+    function renderCollectionMenu(item, namespace, refreshMenu) {
+      const menu = $(`${namespace}-collection-menu`);
+      const entries = state.collections.length
+        ? state.collections.map((collection) => {
+            const included = Boolean(collection.contains);
+            return `<button class="viewer-collection-menu-item" type="button" aria-pressed="${included}" data-${namespace}-menu-collection="${escapeHtml(collection.id)}">${included ? '✓ ' : ''}${escapeHtml(collection.name)}</button>`;
+          }).join('')
+        : '<div class="viewer-collection-menu-title">还没有收藏夹，可直接新建。</div>';
+      const titleId = `${namespace}-collection-menu-title`;
+      const pickerId = `${namespace}-picker-create`;
+      menu.innerHTML = `<div id="${titleId}" class="viewer-collection-menu-title">收藏「${escapeHtml(item.name)}」</div><button class="collection-menu-reference" type="button" data-${namespace}-menu-reference>添加至参考图</button><div class="viewer-collection-menu-list">${entries}</div><form class="viewer-collection-menu-create" autocomplete="off"><input id="${pickerId}" type="text" maxlength="80" aria-label="新收藏夹名称" placeholder="新收藏夹名称"><button type="submit" data-${namespace}-menu-create>新建并收藏</button></form>`;
+      menu.querySelector(`[data-${namespace}-menu-reference]`)?.addEventListener('click', () => {
+        addLibraryReferenceWithStatus(item);
+      });
+      menu.querySelectorAll(`[data-${namespace}-menu-collection]`).forEach((button) => {
+        button.addEventListener('click', async () => {
+          const collection = state.collections.find((entry) => entry.id === button.dataset[`${namespace}MenuCollection`]);
+          if (!collection) return;
+          button.disabled = true;
+          try {
+            const data = await changeCollectionMembership(collection.id, item, !collection.contains);
+            const verb = collection.contains ? (data.removed ? '已移出' : '不在') : (data.added ? '已收藏到' : '已在');
+            setCollectionStatus(`${verb}「${collection.name}」。`);
+            await refreshMenu(item);
+          } catch (error) {
+            setCollectionStatus(`收藏失败：${error.message}`);
+          } finally {
+            button.disabled = false;
+          }
+        });
+      });
+      menu.querySelector('form')?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const input = event.currentTarget.querySelector('input');
+        const name = input?.value.trim() || '';
+        if (!name) { input?.focus(); return; }
+        try {
+          const collection = await createCollection(name);
+          await changeCollectionMembership(collection.id, item, true);
+          setCollectionStatus(`已新建并收藏到「${collection.name}」。`);
+          await refreshMenu(item, { preserveCreateDraft: false });
+        } catch (error) {
+          setCollectionStatus(`新建收藏夹失败：${error.message}`);
+        }
+      });
+    }
+    function renderViewerCollectionMenu(item) {
+      renderCollectionMenu(item, 'viewer', refreshViewerCollectionMenu);
+    }
+    function renderCardCollectionMenu(item) {
+      renderCollectionMenu(item, 'card', refreshCardCollectionMenu);
+    }
+    async function refreshViewerCollectionMenu(item, {
+      session = state.viewerMenuSession,
+      preserveCreateDraft = true,
+    } = {}) {
+      const data = await requestCollections(item.id);
+      if (session !== state.viewerMenuSession || $('viewer-collection-menu').hidden || state.current !== item) return;
+      const focusSnapshot = captureViewerCollectionDialogFocus();
+      state.collections = data.collections || [];
+      renderCollectionList();
+      renderViewerCollectionMenu(item);
+      positionViewerCollectionMenu();
+      restoreViewerCollectionDialogFocus(focusSnapshot, { preserveCreateDraft });
+    }
+    function openViewerCollectionMenu(trigger) {
+      const item = state.current;
+      if (!item?.id || state.viewerSource === 'reference') return;
+      const session = ++state.viewerMenuSession;
+      state.viewerMenuTrigger = trigger;
+      const menu = $('viewer-collection-menu');
+      menu.hidden = false;
+      trigger.setAttribute('aria-expanded', 'true');
+      renderViewerCollectionMenu(item);
+      positionViewerCollectionMenu();
+      requestAnimationFrame(focusViewerCollectionDialog);
+      refreshViewerCollectionMenu(item, { session }).catch((error) => {
+        if (session === state.viewerMenuSession) setCollectionStatus(`无法读取收藏夹：${error.message}`);
+      });
+    }
+    function closeCardCollectionMenu({ restoreFocus = true } = {}) {
+      const menu = $('card-collection-menu');
+      const trigger = state.cardMenuTrigger;
+      state.cardMenuSession += 1;
+      menu.hidden = true;
+      trigger?.setAttribute('aria-expanded', 'false');
+      state.cardMenuItem = null;
+      state.cardMenuTrigger = null;
+      if (restoreFocus && trigger?.isConnected) trigger.focus();
+    }
+    function shouldAnchorCardCollectionMenu() {
+      return window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+    }
+    function positionCardCollectionMenu() {
+      const menu = $('card-collection-menu');
+      const trigger = state.cardMenuTrigger;
+      if (!shouldAnchorCardCollectionMenu() || !trigger?.isConnected) {
+        menu.style.left = '';
+        menu.style.top = '';
+        return;
+      }
+      const rect = trigger.getBoundingClientRect();
+      const gap = 10;
+      const width = menu.offsetWidth || 288;
+      const height = menu.offsetHeight || 180;
+      const viewport = viewportBounds();
+      const rightEdge = viewport.left + viewport.width - gap;
+      const leftEdge = viewport.left + gap;
+      const preferredLeft = rect.right + gap + width <= rightEdge
+        ? rect.right + gap
+        : rect.left - width - gap;
+      const left = Math.max(leftEdge, Math.min(preferredLeft, rightEdge - width));
+      const top = Math.max(viewport.top + gap, Math.min(rect.top, viewport.top + viewport.height - height - gap));
+      menu.style.left = `${Math.round(left)}px`;
+      menu.style.top = `${Math.round(top)}px`;
+    }
+    function clearCardMenuQuickTarget() {
+      cardMenuGesture.hoverTarget?.classList.remove('is-quick-action-target');
+      cardMenuGesture.hoverTarget = null;
+    }
+    function cardMenuQuickTargetAt(clientX, clientY) {
+      const element = document.elementFromPoint(clientX, clientY);
+      const target = element?.closest('[data-card-menu-reference], [data-card-menu-collection]');
+      if (!target || !$('card-collection-menu').contains(target) || target.disabled) return null;
+      return target;
+    }
+    function updateCardMenuQuickTarget(clientX, clientY) {
+      const target = cardMenuQuickTargetAt(clientX, clientY);
+      if (target === cardMenuGesture.hoverTarget) return target;
+      clearCardMenuQuickTarget();
+      if (target) target.classList.add('is-quick-action-target');
+      cardMenuGesture.hoverTarget = target;
+      return target;
+    }
+    function startCardMenuGesture(item, trigger, event) {
+      if (!event.isPrimary || event.button !== 0) return;
+      openCardCollectionMenu(item, trigger, { toggle: false });
+      cardMenuGesture.pointerId = event.pointerId;
+      cardMenuGesture.item = item;
+      cardMenuGesture.trigger = trigger;
+      cardMenuGesture.clickTrigger = null;
+      trigger.setPointerCapture?.(event.pointerId);
+    }
+    function finishCardMenuGesture(event, { cancelled = false } = {}) {
+      if (cardMenuGesture.pointerId !== event.pointerId) return;
+      const trigger = cardMenuGesture.trigger;
+      const target = cancelled ? null : updateCardMenuQuickTarget(event.clientX, event.clientY);
+      cardMenuGesture.pointerId = null;
+      if (trigger?.hasPointerCapture?.(event.pointerId)) trigger.releasePointerCapture(event.pointerId);
+      clearCardMenuQuickTarget();
+      cardMenuGesture.item = null;
+      cardMenuGesture.trigger = null;
+      if (cancelled) return;
+      cardMenuGesture.clickTrigger = trigger;
+      if (!target) return;
+      target.click();
+      closeCardCollectionMenu({ restoreFocus: false });
+    }
+    function consumeCardMenuGestureClick(trigger) {
+      if (cardMenuGesture.clickTrigger !== trigger) return false;
+      cardMenuGesture.clickTrigger = null;
+      return true;
+    }
+    function focusCardCollectionDialog() {
+      const menu = $('card-collection-menu');
+      if (menu.hidden) return;
+      menu.querySelector('[data-card-menu-reference], [data-card-menu-collection], #card-picker-create, [data-card-menu-create]')?.focus();
+    }
+    async function refreshCardCollectionMenu(item, { session = state.cardMenuSession } = {}) {
+      const data = await requestCollections(item.id);
+      if (session !== state.cardMenuSession || $('card-collection-menu').hidden || state.cardMenuItem !== item) return;
+      state.collections = data.collections || [];
+      renderCollectionList();
+      renderCardCollectionMenu(item);
+      positionCardCollectionMenu();
+    }
+    function openCardCollectionMenu(item, trigger, { toggle = true } = {}) {
+      const menu = $('card-collection-menu');
+      if (!menu.hidden && state.cardMenuItem === item) {
+        if (toggle) closeCardCollectionMenu({ restoreFocus: false });
+        return;
+      }
+      closeCardCollectionMenu({ restoreFocus: false });
+      const session = ++state.cardMenuSession;
+      state.cardMenuItem = item;
+      state.cardMenuTrigger = trigger;
+      menu.hidden = false;
+      trigger.setAttribute('aria-expanded', 'true');
+      renderCardCollectionMenu(item);
+      positionCardCollectionMenu();
+      requestAnimationFrame(focusCardCollectionDialog);
+      refreshCardCollectionMenu(item, { session }).catch((error) => {
+        if (session === state.cardMenuSession) setCollectionStatus(`无法读取收藏夹：${error.message}`);
+      });
+    }
+    $('viewer-collection-menu').addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeViewerCollectionMenu();
+      }
+    });
+    $('card-collection-menu').addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeCardCollectionMenu();
+      }
+    });
+    document.addEventListener('pointerdown', (event) => {
+      const viewerMenu = $('viewer-collection-menu');
+      if (!viewerMenu.hidden && !viewerMenu.contains(event.target) && !state.viewerMenuTrigger?.contains(event.target)) {
+        closeViewerCollectionMenu({ restoreFocus: false });
+      }
+      const cardMenu = $('card-collection-menu');
+      if (!cardMenu.hidden && !cardMenu.contains(event.target) && !state.cardMenuTrigger?.contains(event.target)) {
+        closeCardCollectionMenu({ restoreFocus: false });
+      }
+    });
+    function renderCollectionList() {
+      const list = $('collection-list');
+      if (!state.collections.length) {
+        list.innerHTML = '<div class="collection-empty">还没有收藏夹。新建一个，把图片整理成自己的灵感板。</div>';
+        return;
+      }
+      list.innerHTML = state.collections.map((collection) => {
+        const selected = collection.id === state.collectionId;
+        const editing = collection.id === state.editingCollectionId;
+        const editor = editing ? `<form class="collection-rename" data-rename-id="${escapeHtml(collection.id)}" autocomplete="off">
+          <input type="text" value="${escapeHtml(collection.name)}" maxlength="80" aria-label="重命名 ${escapeHtml(collection.name)}">
+          <button class="secondary" type="submit">保存</button>
+        </form>` : '';
+        return `<div class="collection-row${selected ? ' is-selected' : ''}${collection.pinned ? ' is-pinned' : ''}">
+          <button class="collection-name" type="button" data-collection-action="browse" data-collection-id="${escapeHtml(collection.id)}" title="浏览「${escapeHtml(collection.name)}」" aria-pressed="${selected}">${escapeHtml(collection.name)}</button>
+          <span class="collection-count">${Number(collection.count) || 0}</span>
+          <span>
+            <button class="collection-icon" type="button" data-collection-action="pin" data-collection-id="${escapeHtml(collection.id)}" aria-label="${collection.pinned ? '取消固定' : '固定'} ${escapeHtml(collection.name)}" aria-pressed="${collection.pinned}" title="${collection.pinned ? '取消固定' : '固定到拖拽 Dock'}">⌖</button>
+            <button class="collection-icon" type="button" data-collection-action="rename" data-collection-id="${escapeHtml(collection.id)}" aria-label="重命名 ${escapeHtml(collection.name)}" title="重命名">✎</button>
+            <button class="collection-icon" type="button" data-collection-action="delete" data-collection-id="${escapeHtml(collection.id)}" aria-label="删除 ${escapeHtml(collection.name)}" title="删除">×</button>
+          </span>${editor}
+        </div>`;
+      }).join('');
+      list.querySelectorAll('[data-collection-action]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const collection = state.collections.find((item) => item.id === button.dataset.collectionId);
+          if (!collection) return;
+          if (button.dataset.collectionAction === 'browse') selectCollection(collection);
+          if (button.dataset.collectionAction === 'pin') toggleCollectionPin(collection);
+          if (button.dataset.collectionAction === 'rename') beginCollectionRename(collection.id);
+          if (button.dataset.collectionAction === 'delete') deleteCollection(collection);
+        });
+      });
+      list.querySelectorAll('[data-rename-id]').forEach((form) => {
+        form.addEventListener('submit', (event) => renameCollection(event, form));
+      });
+      const editing = list.querySelector('[data-rename-id] input');
+      if (editing) requestAnimationFrame(() => editing.focus());
+    }
+    async function createCollection(name, { select = false } = {}) {
+      const data = await parseResponse(await fetch('/api/collections', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+      }));
+      await loadCollections();
+      if (select) selectCollection(data.collection);
+      return data.collection;
+    }
+    async function selectCollection(collection) {
+      state.mode = 'collection';
+      state.collectionId = collection.id;
+      state.collectionName = collection.name;
+      state.collectionTotal = null;
+      state.browseKey = '';
+      state.browseName = '';
+      state.browseTotal = 0;
+      state.editingCollectionId = '';
+      renderTree();
+      renderCollectionList();
+      await fetchCollectionImages({ reset: true });
+    }
+    function beginCollectionRename(collectionId) {
+      state.editingCollectionId = collectionId;
+      renderCollectionList();
+    }
+    async function renameCollection(event, form) {
+      event.preventDefault();
+      const name = form.querySelector('input').value.trim();
+      if (!name) return;
+      try {
+        const data = await parseResponse(await fetch(`/api/collections/${encodeURIComponent(form.dataset.renameId)}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+        }));
+        state.editingCollectionId = '';
+        if (state.collectionId === data.collection.id) state.collectionName = data.collection.name;
+        await loadCollections();
+        setCollectionStatus('已重命名收藏夹。');
+      } catch (error) {
+        setCollectionStatus(`重命名失败：${error.message}`);
+      }
+    }
+    async function toggleCollectionPin(collection) {
+      try {
+        const data = await parseResponse(await fetch(`/api/collections/${encodeURIComponent(collection.id)}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pinned: !collection.pinned }),
+        }));
+        await loadCollections();
+        setCollectionStatus(data.collection.pinned ? `已固定「${data.collection.name}」到拖拽 Dock。` : `已取消固定「${data.collection.name}」。`);
+      } catch (error) {
+        setCollectionStatus(`更新固定状态失败：${error.message}`);
+      }
+    }
+    async function deleteCollection(collection) {
+      if (collection.count && !confirm(`删除「${collection.name}」及其中 ${collection.count} 张收藏？原图不会删除。`)) return;
+      const wasSelected = state.collectionId === collection.id;
+      try {
+        await parseResponse(await fetch(`/api/collections/${encodeURIComponent(collection.id)}`, { method: 'DELETE' }));
+        const activeCollectionWasDeleted = state.collectionId === collection.id;
+        if (activeCollectionWasDeleted) {
+          // Only a confirmed deletion invalidates an in-flight page request.
+          state.searchSeq += 1;
+          state.mode = 'idle'; state.collectionId = ''; state.collectionName = ''; state.collectionTotal = null;
+          state.results = []; state.hasMore = false;
+          state.loadingMore = false;
+          $('gallery').replaceChildren();
+          $('load-more').hidden = true;
+          $('load-more').textContent = '正在载入更多相关图片…';
+          $('query-info').textContent = `已删除「${collection.name}」。`;
+        }
+        await loadCollections();
+        setCollectionStatus(`已删除「${collection.name}」。`);
+      } catch (error) {
+        setCollectionStatus(`删除失败：${error.message}`);
+        if (wasSelected && state.collectionId === collection.id) {
+          // The collection still exists, so replace any interrupted page with
+          // a fresh request instead of leaving the gallery in a loading state.
+          await fetchCollectionImages({ reset: true });
+        }
+      } finally {
+        $('panel').classList.remove('loading');
+        state.loadingMore = false;
+      }
+    }
+    async function fetchCollectionImages({ reset }) {
+      const collectionId = state.collectionId;
+      if (!collectionId || (!reset && (state.loadingMore || !state.hasMore))) return;
+      const seq = reset ? ++state.searchSeq : state.searchSeq;
+      if (reset) {
+        state.hasMore = false;
+        $('panel').classList.add('loading');
+        $('query-info').textContent = `正在载入「${state.collectionName}」…`;
+        $('load-more').hidden = true;
+      } else {
+        state.loadingMore = true;
+        $('load-more').textContent = '正在载入更多收藏…';
+        $('load-more').hidden = false;
+      }
+      try {
+        const params = new URLSearchParams({
+          query: $('collection-search').value.trim(),
+          limit: String(Number($('limit').value) || 40),
+          offset: String(reset ? 0 : state.results.length),
+        });
+        const data = await parseResponse(await fetch(`/api/collections/${encodeURIComponent(collectionId)}/images?${params}`));
+        if (seq !== state.searchSeq) return;
+        const incoming = data.results || [];
+        state.collectionName = data.collection?.name || state.collectionName;
+        state.collectionTotal = Number.isInteger(data.total) ? data.total : null;
+        if (reset) {
+          state.results = incoming;
+          renderGallery(state.results, { append: false });
+        } else {
+          state.results = state.results.concat(incoming);
+          renderGallery(incoming, { append: true });
+        }
+        state.hasMore = Boolean(data.has_more) && incoming.length > 0;
+        $('load-more').hidden = !state.hasMore;
+        renderCollectionInfo(state.results.length);
+        if ($('viewer').open) { updateViewerNav(); syncNeighborImages(); prefetchViewerAhead(); }
+      } catch (error) {
+        if (seq !== state.searchSeq) return;
+        if (reset) $('query-info').textContent = `无法读取收藏夹：${error.message}`;
+        else $('load-more').textContent = `继续载入失败：${error.message}`;
+        if (!reset) state.hasMore = false;
+      } finally {
+        if (seq === state.searchSeq) {
+          $('panel').classList.remove('loading');
+          state.loadingMore = false;
+          if (!state.hasMore && state.results.length) $('load-more').hidden = true;
+        }
+      }
+    }
+    function renderCollectionInfo(shown) {
+      const query = $('collection-search').value.trim();
+      const queryHint = query ? ` · 搜索「${query}」` : '';
+      const more = state.hasMore ? ' · 下滑加载更多' : '';
+      const count = state.collectionTotal === null ? `已显示 ${shown} 张图` : `${shown} / ${state.collectionTotal} 张图`;
+      $('query-info').textContent = `收藏夹「${state.collectionName}」· ${count}${queryHint}${more}`;
+    }
+    function advanceViewerAfterCollectionRemoval(preferredId, previousIndex) {
+      if (!$('viewer').open || state.viewerSource !== 'gallery') return;
+      const next = state.results.find((entry) => entry.id === preferredId)
+        || state.results[Math.min(previousIndex, state.results.length - 1)];
+      if (!next) {
+        $('viewer').close();
+        return;
+      }
+      applyGalleryViewerState(next);
+      resetView();
+      syncNeighborImages();
+      if (viewerSlots.current.complete && viewerSlots.current.naturalWidth) applyLoadedFit();
+      prefetchViewerAhead();
+    }
+    async function removeFromActiveCollection(item) {
+      if (!state.collectionId) return;
+      const previousIndex = state.results.findIndex((entry) => entry.id === item.id);
+      const preferredId = state.results[previousIndex + 1]?.id
+        || state.results[previousIndex - 1]?.id
+        || '';
+      try {
+        await changeCollectionMembership(state.collectionId, item, false);
+        setCollectionStatus(`已从「${state.collectionName}」移出「${item.name}」。`);
+        await fetchCollectionImages({ reset: true });
+        advanceViewerAfterCollectionRemoval(preferredId, Math.max(0, previousIndex));
+      } catch (error) {
+        setCollectionStatus(`移出失败：${error.message}`);
+      }
+    }
+
     async function runSearch() {
       await fetchResults({ reset: true });
     }
@@ -1035,6 +1689,7 @@
     function loadMoreResults() {
       if (state.mode === 'browse') return fetchFolderImages({ reset: false });
       if (state.mode === 'random') return fetchRandomBrowse({ reset: false });
+      if (state.mode === 'collection') return fetchCollectionImages({ reset: false });
       if (state.mode === 'search') return fetchResults({ reset: false });
       return Promise.resolve();
     }
@@ -1056,9 +1711,13 @@
       state.browseKey = '';
       state.browseName = '';
       state.browseTotal = 0;
+      state.collectionId = '';
+      state.collectionName = '';
+      state.collectionTotal = null;
       state.randomTotal = 0;
       state.randomSeed = newRandomSeed();
       renderTree();
+      renderCollectionList();
       fetchRandomBrowse({ reset: true });
     }
 
@@ -1140,7 +1799,11 @@
       state.mode = 'browse';
       state.browseKey = key;
       state.browseName = name || key;
+      state.collectionId = '';
+      state.collectionName = '';
+      state.collectionTotal = null;
       renderTree();
+      renderCollectionList();
       if (window.matchMedia('(max-width: 900px)').matches) {
         $('tree-panel').classList.remove('is-open');
         $('scope-toggle').setAttribute('aria-expanded', 'false');
@@ -1234,7 +1897,11 @@
         state.browseKey = '';
         state.browseName = '';
         state.browseTotal = 0;
+        state.collectionId = '';
+        state.collectionName = '';
+        state.collectionTotal = null;
         renderTree();
+        renderCollectionList();
       }
       if (!reset && (state.loadingMore || !state.hasMore)) return;
       const seq = reset ? ++state.searchSeq : state.searchSeq;
@@ -1388,14 +2055,22 @@
     function cardHTML(item, index) {
       const ratio = item.width > 0 && item.height > 0 ? ` style="aspect-ratio: ${item.width} / ${item.height}"` : '';
       const score = Number.isFinite(item.score) ? `<span class="score">${item.score.toFixed(0)}</span>` : '';
-      return `<article class="card" data-index="${index}">
-          <div class="image-wrap" data-action="view"${ratio}><img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}">${score}</div>
+      const inCollection = state.mode === 'collection';
+      const cardAccess = inCollection ? '' : ` tabindex="0" role="button" aria-label="查看原图：${escapeHtml(item.name)}"`;
+      const imageAccess = inCollection ? ` tabindex="0" role="button" aria-label="查看原图：${escapeHtml(item.name)}" data-card-open` : '';
+      const collectionActions = inCollection
+        ? `<div class="collection-card-actions">
+            <button class="collection-card-action remove" type="button" data-card-action="remove">移除</button>
+          </div>`
+        : '';
+      return `<article class="card${inCollection ? ' has-collection-actions' : ''}" data-index="${index}"${cardAccess}>
+          <div class="image-wrap"${ratio}${imageAccess}><img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">${score}</div>
           <div class="card-body">
-            <div class="filename" title="${escapeHtml(item.path)}">${escapeHtml(item.name)}</div>
+            <div class="card-title-row"><div class="filename" title="${escapeHtml(item.path)}">${escapeHtml(item.name)}</div><div class="card-title-actions"><button class="card-title-favorite" type="button" data-card-action="favorite" aria-label="收藏：${escapeHtml(item.name)}" title="收藏到…" aria-haspopup="dialog" aria-expanded="false" aria-controls="card-collection-menu">♡</button></div></div>
             <div class="meta">${item.width} × ${item.height}</div>
             ${item.tag_hits && item.tag_hits.length ? `<div class="hits">命中：${item.tag_hits.map(t => escapeHtml(t.replaceAll('_',' '))).join(' · ')}</div>` : ''}
-            <div class="card-actions"><button data-action="reference">作为参考图</button><button data-action="open">查看原图</button></div>
           </div>
+          ${collectionActions}
         </article>`;
     }
     function renderGallery(results, { append } = { append: false }) {
@@ -1404,7 +2079,9 @@
           ? '这个目录及其子目录里还没有已索引的图片。'
           : state.mode === 'random'
             ? '选定范围内没有符合时间条件的已索引图片。'
-            : '没有找到符合条件的图片。可以减少排除条件，或重新建立含详细描述的索引。';
+            : state.mode === 'collection'
+              ? ($('collection-search').value.trim() ? '这个收藏夹中没有匹配搜索的图片。' : '这个收藏夹里还没有可用图片。')
+              : '没有找到符合条件的图片。可以减少排除条件，或重新建立含详细描述的索引。';
         $('gallery').innerHTML = `<div class="empty">${empty}</div>`;
         delete $('gallery').dataset.cols;
         state.colHeights = [];
@@ -1432,9 +2109,44 @@
         card.addEventListener('click', (event) => {
           const item = state.results[Number(card.dataset.index)];
           if (!item) return;
-          const action = event.target.closest('[data-action]')?.dataset.action;
-          if (action === 'reference') addLibraryReference(item);
-          if (action === 'view' || action === 'open') openViewer(item);
+          const actionTarget = event.target.closest('[data-card-action]');
+          const action = actionTarget?.dataset.cardAction;
+          if (action === 'favorite') {
+            if (consumeCardMenuGestureClick(actionTarget)) return;
+            openCardCollectionMenu(item, actionTarget);
+            return;
+          }
+          if (action === 'remove') {
+            void removeFromActiveCollection(item);
+            return;
+          }
+          openViewer(item);
+        });
+        card.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          if (event.target.closest('[data-card-action]')) return;
+          if (event.target !== card && !event.target.closest('[data-card-open]')) return;
+          const item = state.results[Number(card.dataset.index)];
+          if (!item) return;
+          event.preventDefault();
+          openViewer(item);
+        });
+        const favoriteButton = card.querySelector('[data-card-action="favorite"]');
+        favoriteButton?.addEventListener('pointerdown', (event) => {
+          const item = state.results[Number(card.dataset.index)];
+          if (item) startCardMenuGesture(item, favoriteButton, event);
+        });
+        favoriteButton?.addEventListener('pointermove', (event) => {
+          if (cardMenuGesture.pointerId !== event.pointerId) return;
+          event.preventDefault();
+          updateCardMenuQuickTarget(event.clientX, event.clientY);
+        });
+        favoriteButton?.addEventListener('pointerup', finishCardMenuGesture);
+        favoriteButton?.addEventListener('pointercancel', (event) => {
+          finishCardMenuGesture(event, { cancelled: true });
+        });
+        favoriteButton?.addEventListener('lostpointercapture', (event) => {
+          finishCardMenuGesture(event, { cancelled: true });
         });
       });
     }
@@ -1447,6 +2159,13 @@
       syncRefSelection();
       const viewingRef = state.viewerSource === 'reference';
       const ref = currentReference();
+      const viewingCollection = !viewingRef && state.mode === 'collection' && !!state.collectionId;
+      const collectionToggle = $('viewer-collection-toggle');
+      collectionToggle.hidden = viewingRef || !state.current?.id;
+      if (collectionToggle.hidden) closeViewerCollectionMenu({ restoreFocus: false });
+      const removeCollection = $('viewer-remove-collection');
+      removeCollection.hidden = !viewingCollection || !state.current?.id;
+      if (!removeCollection.hidden) removeCollection.textContent = `从「${state.collectionName}」移出`;
       $('viewer-weight-wrap').hidden = !viewingRef;
       $('viewer-remove-ref').hidden = !viewingRef;
       $('viewer-reference').hidden = viewingRef;
@@ -1771,6 +2490,7 @@
       viewerSlots.next.alt = '';
     }
     function applyGalleryViewerState(item) {
+      closeViewerCollectionMenu({ restoreFocus: false });
       state.viewerSource = 'gallery';
       state.current = item;
       state.currentRefKey = null;
@@ -1778,6 +2498,7 @@
       updateViewerNav();
     }
     function applyReferenceViewerState(ref) {
+      closeViewerCollectionMenu({ restoreFocus: false });
       state.viewerSource = 'reference';
       state.currentRefKey = ref.key;
       state.current = ref.id ? { id: ref.id, name: ref.name, path: ref.name } : null;
@@ -1829,6 +2550,7 @@
       return true;
     }
     async function stepViewer(delta, { animate = false } = {}) {
+      if (!$('viewer-collection-menu').hidden) closeViewerCollectionMenu({ restoreFocus: false });
       if (view.flipping) return false;
       if (!canStepViewer(delta)) {
         view.slideTarget = 0;
@@ -1924,6 +2646,10 @@
       stage.addEventListener('pointerdown', (event) => {
         if (event.button !== 0) return;
         if (event.target.closest('.viewer-nav, .viewer-close')) return;
+        if (!$('viewer-collection-menu').hidden) {
+          closeViewerCollectionMenu({ restoreFocus: false });
+          return;
+        }
         event.preventDefault();
         view.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
         stage.setPointerCapture(event.pointerId);
@@ -2085,13 +2811,21 @@
       image.addEventListener('load', onViewerImageLoad);
     }
     function bindViewerViewport() {
-      const sync = () => fitViewerFrame();
+      const sync = () => {
+        fitViewerFrame();
+        if (!$('viewer-collection-menu').hidden) positionViewerCollectionMenu();
+        if (!$('card-collection-menu').hidden) positionCardCollectionMenu();
+      };
       const viewport = window.visualViewport;
       if (viewport) {
         viewport.addEventListener('resize', sync);
         viewport.addEventListener('scroll', sync);
       }
       window.addEventListener('resize', sync);
+      window.addEventListener('orientationchange', sync);
+      window.addEventListener('scroll', () => {
+        if (!$('card-collection-menu').hidden) positionCardCollectionMenu();
+      }, { passive: true });
       $('viewer').addEventListener('close', () => {
         const dialog = $('viewer');
         dialog.style.height = '';
@@ -2505,24 +3239,29 @@
       scheduleTreeSave();
     });
 
-    let fileDragClear = 0;
-    document.addEventListener('dragover', (event) => {
-      if (!isFileDrag(event)) return;
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'copy';
-      document.body.classList.add('file-drag');
-      clearTimeout(fileDragClear);
-      fileDragClear = setTimeout(() => document.body.classList.remove('file-drag'), 140);
-    });
-    document.addEventListener('drop', (event) => {
-      if (!isFileDrag(event)) return;
-      event.preventDefault();
-      clearTimeout(fileDragClear);
-      document.body.classList.remove('file-drag');
-      addReferenceFiles(event.dataTransfer.files);
-    });
-    document.addEventListener('dragend', () => document.body.classList.remove('file-drag'));
     document.addEventListener('keydown', (event) => {
+      if (!$('card-collection-menu').hidden) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeCardCollectionMenu();
+        }
+        return;
+      }
+      if (!$('viewer-collection-menu').hidden) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeViewerCollectionMenu();
+        }
+        return;
+      }
+      if (event.key === 'Escape' && document.activeElement === $('collection-search')) {
+        if ($('collection-search').value) {
+          event.preventDefault();
+          $('collection-search').value = '';
+          if (state.collectionId) fetchCollectionImages({ reset: true });
+        }
+        return;
+      }
       if (!$('viewer').open) return;
       if (event.key === 'ArrowLeft') { event.preventDefault(); stepViewer(-1, { animate: true }); }
       else if (event.key === 'ArrowRight') { event.preventDefault(); stepViewer(1, { animate: true }); }
@@ -2535,17 +3274,47 @@
     }, { passive: false });
     function setSideTab(name) {
       const scope = name === 'scope';
+      const collections = name === 'collections';
+      const advanced = name === 'advanced';
       $('tab-scope').hidden = !scope;
-      $('tab-advanced').hidden = scope;
+      $('tab-collections').hidden = !collections;
+      $('tab-advanced').hidden = !advanced;
       $('tab-btn-scope').classList.toggle('is-active', scope);
-      $('tab-btn-advanced').classList.toggle('is-active', !scope);
+      $('tab-btn-collections').classList.toggle('is-active', collections);
+      $('tab-btn-advanced').classList.toggle('is-active', advanced);
       $('tab-btn-scope').setAttribute('aria-selected', String(scope));
-      $('tab-btn-advanced').setAttribute('aria-selected', String(!scope));
-      if (scope) stopModelPoll();
-      else startModelPoll();
+      $('tab-btn-collections').setAttribute('aria-selected', String(collections));
+      $('tab-btn-advanced').setAttribute('aria-selected', String(advanced));
+      $('tab-btn-scope').tabIndex = scope ? 0 : -1;
+      $('tab-btn-collections').tabIndex = collections ? 0 : -1;
+      $('tab-btn-advanced').tabIndex = advanced ? 0 : -1;
+      if (advanced) startModelPoll();
+      else stopModelPoll();
+      if (collections) loadCollections().catch((error) => setCollectionStatus(`收藏夹不可用：${error.message}`));
     }
-    $('tab-btn-scope').addEventListener('click', () => setSideTab('scope'));
-    $('tab-btn-advanced').addEventListener('click', () => setSideTab('advanced'));
+    const sideTabs = [
+      ['scope', $('tab-btn-scope')],
+      ['collections', $('tab-btn-collections')],
+      ['advanced', $('tab-btn-advanced')],
+    ];
+    function activateSideTab(index) {
+      const [name, button] = sideTabs[index];
+      setSideTab(name);
+      button.focus();
+    }
+    sideTabs.forEach(([name, button], index) => {
+      button.addEventListener('click', () => setSideTab(name));
+      button.addEventListener('keydown', (event) => {
+        let next = index;
+        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (index + 1) % sideTabs.length;
+        else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (index - 1 + sideTabs.length) % sideTabs.length;
+        else if (event.key === 'Home') next = 0;
+        else if (event.key === 'End') next = sideTabs.length - 1;
+        else return;
+        event.preventDefault();
+        activateSideTab(next);
+      });
+    });
     $('scope-toggle').addEventListener('click', () => {
       const panel = $('tree-panel');
       const open = !panel.classList.contains('is-open');
@@ -2555,8 +3324,27 @@
     $('text-weight').addEventListener('change', () => {
       $('text-weight').value = String(textWeight());
     });
+    $('collection-create').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const input = $('collection-name');
+      const name = input.value.trim();
+      if (!name) { input.focus(); return; }
+      try {
+        const collection = await createCollection(name, { select: true });
+        input.value = '';
+        setCollectionStatus(`已新建「${collection.name}」。`);
+      } catch (error) {
+        setCollectionStatus(`新建失败：${error.message}`);
+      }
+    });
+    $('collection-search').addEventListener('input', () => {
+      clearTimeout(state.collectionSearchTimer);
+      if (!state.collectionId) return;
+      state.collectionSearchTimer = setTimeout(() => fetchCollectionImages({ reset: true }), 180);
+    });
     if (window.matchMedia('(pointer: fine)').matches) $('query').focus();
     loadLibraryTree();
+    loadCollections().catch((error) => setCollectionStatus(`收藏夹不可用：${error.message}`));
     fetchModelStatus().catch((error) => {
       $('model-hint').textContent = modelApiErrorMessage(error);
     });

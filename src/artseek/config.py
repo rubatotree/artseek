@@ -96,6 +96,10 @@ class AppConfig:
     def runtime_path(self) -> Path:
         return self.data_dir / "runtime.json"
 
+    @property
+    def collections_path(self) -> Path:
+        return self.data_dir / "collections.json"
+
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.cache_dir.mkdir(parents=True, exist_ok=True)

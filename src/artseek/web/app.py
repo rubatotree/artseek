@@ -5,14 +5,16 @@ import json
 import random
 import tempfile
 import threading
-from dataclasses import dataclass
+from collections import OrderedDict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+from ..collections import Collection, CollectionStore
 from ..config import AppConfig
 from ..image_io import canonical_path, make_thumbnail
 from ..incremental_state import IncrementalIndexState
@@ -145,6 +147,55 @@ class ModelControlRequest(BaseModel):
     auto_unload_minutes: int | None = Field(default=None, ge=0, le=1440)
 
 
+class CollectionNameRequest(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise ValueError("收藏夹名称不能为空")
+        if len(name) > 80:
+            raise ValueError("收藏夹名称不能超过 80 个字符")
+        return name
+
+
+class CollectionUpdateRequest(BaseModel):
+    name: str | None = None
+    pinned: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        name = value.strip()
+        if not name:
+            raise ValueError("收藏夹名称不能为空")
+        if len(name) > 80:
+            raise ValueError("收藏夹名称不能超过 80 个字符")
+        return name
+
+    @model_validator(mode="after")
+    def validate_update(self) -> CollectionUpdateRequest:
+        if self.name is None and self.pinned is None:
+            raise ValueError("请至少修改名称或固定状态")
+        return self
+
+
+class CollectionItemRequest(BaseModel):
+    image_id: str
+
+    @field_validator("image_id")
+    @classmethod
+    def validate_image_id(cls, value: str) -> str:
+        point_id = value.strip()
+        if not point_id:
+            raise ValueError("请选择要收藏的图片")
+        return point_id
+
+
 @dataclass
 class IndexJob:
     running: bool = False
@@ -156,6 +207,30 @@ class IndexJob:
     summary: dict[str, Any] | None = None
 
 
+COLLECTION_SCAN_BATCH_SIZE = 256
+MAX_CACHED_COLLECTIONS = 4
+# The public offset cap (10,000) plus the largest page (200) and one lookahead
+# all fit here. Cache only IDs, never the comparatively large Qdrant payloads.
+MAX_CACHED_COLLECTION_IDS = 10_240
+
+
+@dataclass(slots=True)
+class CollectionIdCursor:
+    """Bounded, payload-free materialization state for sequential page reads."""
+
+    membership_token: int
+    index_generation: int
+    live_item_ids: list[str] = field(default_factory=list)
+    source_cursor: int = 0
+    scan_complete: bool = False
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+
+def _is_missing_qdrant_collection(error: ValueError) -> bool:
+    message = str(error).casefold()
+    return "collection" in message and ("not found" in message or "does not exist" in message)
+
+
 def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> FastAPI:
     app = FastAPI(title="ArtSeek", docs_url="/api/docs", redoc_url=None)
     app.state.config = config
@@ -163,6 +238,11 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     app.state.tagger = None
     app.state.index_job = IndexJob()
     app.state.index_lock = threading.Lock()
+    app.state.collections = CollectionStore(config.collections_path)
+    app.state.collection_index_empty = False
+    app.state.collection_index_generation = 0
+    app.state.collection_id_cursors: OrderedDict[str, CollectionIdCursor] = OrderedDict()
+    app.state.collection_id_cursors_lock = threading.RLock()
     static_path = Path(__file__).with_name("static") / "index.html"
 
     @app.on_event("shutdown")
@@ -180,6 +260,133 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         if explicit is not None:
             return explicit
         return load_scope(config).selected
+
+    def gallery_result(
+        point_id: str,
+        payload: dict[str, Any],
+        fallback_name: str = "",
+    ) -> dict[str, Any]:
+        """Project an indexed payload into the one gallery-card response shape."""
+        return {
+            "id": point_id,
+            "score": None,
+            "path": str(payload.get("path") or ""),
+            "name": str(payload.get("name") or fallback_name),
+            "width": int(payload.get("width") or 0),
+            "height": int(payload.get("height") or 0),
+            "tags": list(payload.get("tags") or []),
+            "tag_hits": [],
+            "caption": payload.get("caption"),
+        }
+
+    def collection_summary(collection: Collection) -> dict[str, Any]:
+        return collection.summary()
+
+    def require_collection(collection_id: str) -> Collection:
+        collection = app.state.collections.get(collection_id)
+        if collection is None:
+            raise HTTPException(404, "收藏夹不存在")
+        return collection
+
+    def reset_collection_index_state() -> None:
+        """Allow collections to retry materialization after an index lifecycle change."""
+        with app.state.collection_id_cursors_lock:
+            app.state.collection_index_empty = False
+            app.state.collection_index_generation += 1
+            app.state.collection_id_cursors.clear()
+
+    def invalidate_collection_id_cursor(collection_id: str) -> None:
+        with app.state.collection_id_cursors_lock:
+            app.state.collection_id_cursors.pop(collection_id, None)
+
+    def collection_id_cursor(collection: Collection) -> CollectionIdCursor:
+        """Return one LRU cursor whose data fits the public pagination window."""
+        membership_token = hash(collection.item_ids)
+        with app.state.collection_id_cursors_lock:
+            cursor = app.state.collection_id_cursors.get(collection.id)
+            generation = app.state.collection_index_generation
+            if (
+                cursor is None
+                or cursor.membership_token != membership_token
+                or cursor.index_generation != generation
+            ):
+                cursor = CollectionIdCursor(
+                    membership_token=membership_token,
+                    index_generation=generation,
+                )
+                app.state.collection_id_cursors[collection.id] = cursor
+            app.state.collection_id_cursors.move_to_end(collection.id)
+            while len(app.state.collection_id_cursors) > MAX_CACHED_COLLECTIONS:
+                app.state.collection_id_cursors.popitem(last=False)
+            return cursor
+
+    def retrieve_collection_payloads(point_ids: list[str]) -> dict[str, dict[str, Any]]:
+        if app.state.collection_index_empty:
+            return {}
+        try:
+            return app.state.engine.store.retrieve_payloads(point_ids)
+        except ValueError as exc:
+            if _is_missing_qdrant_collection(exc):
+                # A removed/cleared Qdrant collection has no materialized images;
+                # leave the user-owned ID list intact for a later re-index.
+                with app.state.collection_id_cursors_lock:
+                    app.state.collection_index_empty = True
+                    app.state.collection_id_cursors.clear()
+                return {}
+            raise
+
+    def materialize_unfiltered_collection_page(
+        collection: Collection,
+        start: int,
+        page_size: int,
+    ) -> tuple[list[tuple[str, dict[str, Any]]], int | None, bool]:
+        """Read an ordered page with a bounded ID cursor, never cached payloads."""
+        cursor = collection_id_cursor(collection)
+        item_ids = collection.item_ids
+        target_count = start + page_size + 1
+        page_payloads: dict[str, dict[str, Any]] = {}
+
+        # This is per collection, so a deep scan cannot block other collection
+        # requests or the global LRU lock. It also serializes cursor advancement.
+        with cursor.lock:
+            if app.state.collection_index_empty:
+                return [], 0, False
+            while len(cursor.live_item_ids) < target_count and not cursor.scan_complete:
+                end = min(cursor.source_cursor + COLLECTION_SCAN_BATCH_SIZE, len(item_ids))
+                batch = list(item_ids[cursor.source_cursor:end])
+                payloads = retrieve_collection_payloads(batch)
+                cursor.source_cursor = end
+                if app.state.collection_index_empty:
+                    return [], 0, False
+                for point_id in batch:
+                    payload = payloads.get(point_id)
+                    if not isinstance(payload, dict):
+                        continue
+                    if len(cursor.live_item_ids) >= MAX_CACHED_COLLECTION_IDS:
+                        break
+                    live_index = len(cursor.live_item_ids)
+                    cursor.live_item_ids.append(point_id)
+                    if start <= live_index < start + page_size:
+                        page_payloads[point_id] = payload
+                cursor.scan_complete = cursor.source_cursor >= len(item_ids)
+
+            page_ids = cursor.live_item_ids[start : start + page_size]
+            missing_payload_ids = [
+                point_id for point_id in page_ids if point_id not in page_payloads
+            ]
+            if missing_payload_ids:
+                page_payloads.update(retrieve_collection_payloads(missing_payload_ids))
+            if app.state.collection_index_empty:
+                return [], 0, False
+
+            page = [
+                (point_id, page_payloads[point_id])
+                for point_id in page_ids
+                if isinstance(page_payloads.get(point_id), dict)
+            ]
+            has_more = len(cursor.live_item_ids) > start + len(page_ids)
+            total = len(cursor.live_item_ids) if cursor.scan_complete else None
+            return page, total, has_more
 
     def current_library() -> dict:
         catalog = app.state.engine.folder_catalog()
@@ -218,19 +425,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         results: list[dict[str, Any]] = []
         for point_id, name, _mtime in page:
             payload = payloads.get(point_id) or {}
-            results.append(
-                {
-                    "id": point_id,
-                    "score": None,
-                    "path": str(payload.get("path") or ""),
-                    "name": str(payload.get("name") or name),
-                    "width": int(payload.get("width") or 0),
-                    "height": int(payload.get("height") or 0),
-                    "tags": list(payload.get("tags") or []),
-                    "tag_hits": [],
-                    "caption": payload.get("caption"),
-                }
-            )
+            results.append(gallery_result(point_id, payload, name))
         return {
             "folder_key": key,
             "folder_name": acc.name,
@@ -241,6 +436,120 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "total": total,
             "has_more": start + len(results) < total,
             "results": results,
+        }
+
+    @app.get("/api/collections")
+    def list_collections(image_id: str | None = None) -> dict[str, list[dict[str, Any]]]:
+        collections = app.state.collections.list()
+        summaries: list[dict[str, Any]] = []
+        for collection in collections:
+            summary = collection_summary(collection)
+            if image_id:
+                summary["contains"] = image_id in collection.item_ids
+            summaries.append(summary)
+        return {"collections": summaries}
+
+    @app.post("/api/collections", status_code=201)
+    def create_collection(request: CollectionNameRequest) -> dict[str, Any]:
+        collection = app.state.collections.create(request.name)
+        return {"collection": collection_summary(collection)}
+
+    @app.patch("/api/collections/{collection_id}")
+    def update_collection(collection_id: str, request: CollectionUpdateRequest) -> dict[str, Any]:
+        collection = app.state.collections.update(
+            collection_id,
+            name=request.name,
+            pinned=request.pinned,
+        )
+        if collection is None:
+            raise HTTPException(404, "收藏夹不存在")
+        return {"collection": collection_summary(collection)}
+
+    @app.delete("/api/collections/{collection_id}")
+    def delete_collection(collection_id: str) -> dict[str, Any]:
+        collection = app.state.collections.delete(collection_id)
+        if collection is None:
+            raise HTTPException(404, "收藏夹不存在")
+        invalidate_collection_id_cursor(collection_id)
+        return {"deleted": True, "collection": collection_summary(collection)}
+
+    @app.post("/api/collections/{collection_id}/items")
+    def add_collection_item(collection_id: str, request: CollectionItemRequest) -> dict[str, Any]:
+        require_collection(collection_id)
+        if not app.state.engine.store.get(request.image_id):
+            raise HTTPException(404, "图片不在索引中，无法收藏")
+        collection, added = app.state.collections.add_item(collection_id, request.image_id)
+        if collection is None:
+            raise HTTPException(404, "收藏夹不存在")
+        if added:
+            invalidate_collection_id_cursor(collection_id)
+        return {"collection": collection_summary(collection), "added": added}
+
+    @app.delete("/api/collections/{collection_id}/items/{point_id}")
+    def remove_collection_item(collection_id: str, point_id: str) -> dict[str, Any]:
+        collection, removed = app.state.collections.remove_item(collection_id, point_id)
+        if collection is None:
+            raise HTTPException(404, "收藏夹不存在")
+        if removed:
+            invalidate_collection_id_cursor(collection_id)
+        return {"collection": collection_summary(collection), "removed": removed}
+
+    @app.get("/api/collections/{collection_id}/images")
+    def collection_images(
+        collection_id: str,
+        query: str = "",
+        limit: int = 40,
+        offset: int = Query(default=0, ge=0, le=10_000),
+    ) -> dict[str, Any]:
+        collection = require_collection(collection_id)
+        needle = query.strip().casefold()
+        page_size = max(1, min(limit, 200))
+        start = offset
+
+        def matches(payload: dict[str, Any]) -> bool:
+            if not needle:
+                return True
+            tags = payload.get("tags") or []
+            searchable = [
+                str(payload.get("name") or ""),
+                str(payload.get("path") or ""),
+                str(payload.get("caption") or ""),
+                *(str(tag) for tag in tags),
+            ]
+            return needle in "\n".join(searchable).casefold()
+
+        if needle:
+            filtered: list[tuple[str, dict[str, Any]]] = []
+            for batch_start in range(0, len(collection.item_ids), 256):
+                batch = list(collection.item_ids[batch_start : batch_start + 256])
+                payloads = retrieve_collection_payloads(batch)
+                filtered.extend(
+                    (point_id, payloads[point_id])
+                    for point_id in batch
+                    if point_id in payloads
+                    and isinstance(payloads[point_id], dict)
+                    and matches(payloads[point_id])
+                )
+            page = filtered[start : start + page_size]
+            total = len(filtered)
+            has_more = start + len(page) < total
+            total_exact = True
+        else:
+            page, total, has_more = materialize_unfiltered_collection_page(
+                collection,
+                start,
+                page_size,
+            )
+            total_exact = total is not None
+        return {
+            "collection": collection_summary(collection),
+            "query": query.strip(),
+            "offset": start,
+            "limit": page_size,
+            "total": total,
+            "total_exact": total_exact,
+            "has_more": has_more,
+            "results": [gallery_result(point_id, payload) for point_id, payload in page],
         }
 
     @app.post("/api/random-browse")
@@ -277,19 +586,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         results: list[dict[str, Any]] = []
         for point_id in page_ids:
             payload = payloads.get(point_id) or {}
-            results.append(
-                {
-                    "id": point_id,
-                    "score": None,
-                    "path": str(payload.get("path") or ""),
-                    "name": str(payload.get("name") or ""),
-                    "width": int(payload.get("width") or 0),
-                    "height": int(payload.get("height") or 0),
-                    "tags": list(payload.get("tags") or []),
-                    "tag_hits": [],
-                    "caption": payload.get("caption"),
-                }
-            )
+            results.append(gallery_result(point_id, payload))
         return {
             "seed": seed,
             "offset": start,
@@ -486,6 +783,9 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
 
     def run_index_job(directories: list[Path], recursive: bool) -> None:
         job: IndexJob = app.state.index_job
+        # Reset before work starts and again in finally: an indexer may write
+        # a partial collection before raising, which must remain browseable.
+        reset_collection_index_state()
         job.path = "、".join(str(item) for item in directories)
         job.done = 0
         job.total = 0
@@ -527,6 +827,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             job.error = str(exc)
             job.message = "索引失败"
         finally:
+            reset_collection_index_state()
             close_tagger()
             job.running = False
 
@@ -571,6 +872,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             job.message = "正在排队…"
             job.error = None
             job.summary = None
+            reset_collection_index_state()
         thread = threading.Thread(
             target=run_index_job,
             args=(directories, request.recursive),
@@ -602,6 +904,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         if ids:
             catalog = rebuild_catalog(app.state.engine.store, config)
             app.state.engine.replace_folder_catalog(catalog)
+        reset_collection_index_state()
         scope = load_scope(config)
         scope.selected = [item for item in scope.selected if item not in drop_keys]
         scope.known = [item for item in scope.known if item not in drop_keys]
