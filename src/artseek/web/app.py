@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from ..config import AppConfig
 from ..image_io import canonical_path, make_thumbnail
+from ..incremental_state import IncrementalIndexState
 from ..indexer import ImageIndexer
 from ..library import (
     DEFAULT_SORT,
@@ -440,7 +441,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                     job.message = f"正在更新 {Path(root).name or root}（{done}/{max(total, 1)}）"
 
                 summary = indexer.index(directories, recursive=recursive, progress=progress)
-                app.state.engine.invalidate_folder_catalog()
+                if indexer.folder_catalog is not None:
+                    app.state.engine.replace_folder_catalog(indexer.folder_catalog)
                 job.summary = {
                     "discovered": summary.discovered,
                     "indexed": summary.indexed,
@@ -519,13 +521,17 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             raise HTTPException(404, "该目录不在索引中")
         drop_keys = catalog.subtree_keys(key)
         ids = catalog.subtree_ids(key)
+        state = IncrementalIndexState(config.index_state_path)
+        if ids:
+            state.mark_all_dirty()
         app.state.engine.store.delete_ids(ids)
+        state.invalidate_all()
         for point_id in ids:
             thumb = config.thumbnail_dir / f"{point_id}.webp"
             thumb.unlink(missing_ok=True)
         if ids:
-            rebuild_catalog(app.state.engine.store, config)
-        app.state.engine.invalidate_folder_catalog()
+            catalog = rebuild_catalog(app.state.engine.store, config)
+            app.state.engine.replace_folder_catalog(catalog)
         scope = load_scope(config)
         scope.selected = [item for item in scope.selected if item not in drop_keys]
         scope.known = [item for item in scope.known if item not in drop_keys]

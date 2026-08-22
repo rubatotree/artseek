@@ -11,6 +11,7 @@ from platformdirs import user_cache_dir, user_config_dir, user_data_dir
 
 APP_NAME = "ArtSeek"
 DEFAULT_AUTO_UNLOAD_SECONDS = 600
+DEFAULT_FULL_VERIFICATION_SECONDS = 24 * 60 * 60
 
 
 @dataclass(slots=True)
@@ -51,6 +52,13 @@ class SearchConfig:
 
 
 @dataclass(slots=True)
+class IndexingConfig:
+    """Safety settings for the local incremental-index cache."""
+
+    full_verification_interval_seconds: int = DEFAULT_FULL_VERIFICATION_SECONDS
+
+
+@dataclass(slots=True)
 class AppConfig:
     data_dir: Path = field(default_factory=lambda: Path(user_data_dir(APP_NAME)))
     cache_dir: Path = field(default_factory=lambda: Path(user_cache_dir(APP_NAME)))
@@ -58,6 +66,7 @@ class AppConfig:
     tagger: TaggerConfig = field(default_factory=TaggerConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
+    indexing: IndexingConfig = field(default_factory=IndexingConfig)
 
     @property
     def qdrant_path(self) -> Path:
@@ -66,6 +75,10 @@ class AppConfig:
     @property
     def manifest_path(self) -> Path:
         return self.data_dir / "manifest.json"
+
+    @property
+    def index_state_path(self) -> Path:
+        return self.data_dir / "index_state.sqlite3"
 
     @property
     def thumbnail_dir(self) -> Path:
@@ -135,6 +148,11 @@ descriptor_weight = 0.28
 keyword_bonus = 0.08
 candidate_multiplier = 8
 default_limit = 40
+
+[indexing]
+# 目录 mtime 无法可靠捕捉文件原地改写，故定期完整扫描；仍只比较文件 mtime/大小。
+# 同大小且人为恢复 mtime 的内容改写无法在不逐文件哈希的前提下被检测；0 表示每次校验。
+full_verification_interval_seconds = 86400
 '''
 
 
@@ -198,4 +216,3 @@ def save_auto_unload_seconds(config: AppConfig, seconds: int) -> None:
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-

@@ -10,6 +10,7 @@ import numpy as np
 from qdrant_client import QdrantClient, models
 
 from .config import AppConfig
+from .incremental_state import IncrementalIndexState
 
 COLLECTION = "artseek_images"
 FOLDER_PAYLOAD_FIELDS = ("path", "path_key", "root", "root_key", "folder_key", "mtime_ns")
@@ -153,10 +154,12 @@ class VectorStore:
     def clear(self) -> None:
         existing = {item.name for item in self.client.get_collections().collections}
         if COLLECTION in existing:
+            IncrementalIndexState(self.config.index_state_path).mark_all_dirty()
             self.client.delete_collection(COLLECTION)
         if self.config.manifest_path.exists():
             self.config.manifest_path.unlink()
         self.invalidate_folder_catalog()
+        IncrementalIndexState(self.config.index_state_path).invalidate_all()
 
     def invalidate_folder_catalog(self) -> None:
         path = self.config.folder_catalog_path

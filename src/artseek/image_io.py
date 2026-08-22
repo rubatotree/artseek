@@ -45,15 +45,29 @@ def scan_images(roots: Iterable[Path], recursive: bool = True) -> Iterator[tuple
         root = raw_root.expanduser().resolve()
         if not root.exists():
             raise FileNotFoundError(f"图片目录不存在：{root}")
-        iterator = root.rglob("*") if recursive else root.glob("*")
-        for path in iterator:
-            if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
-                continue
+        for path in _scan_root_images(root, recursive=recursive):
             key = canonical_path(path)
-            if key in seen:
-                continue
-            seen.add(key)
-            yield root, path
+            if key not in seen:
+                seen.add(key)
+                yield root, path
+
+
+def _scan_root_images(root: Path, *, recursive: bool) -> Iterator[Path]:
+    """Yield images with scandir, avoiding Path.rglob's per-entry Path/stat overhead."""
+    directories = [root]
+    while directories:
+        directory = directories.pop()
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    path = Path(entry.path)
+                    if entry.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
+                        yield path
+                    elif recursive and entry.is_dir(follow_symlinks=False):
+                        directories.append(path)
+        except OSError:
+            # Match glob/rglob's practical behavior for directories that disappear mid-scan.
+            continue
 
 
 def load_rgb(path: Path | str) -> Image.Image:
@@ -85,4 +99,3 @@ def make_thumbnail(source: Path, destination: Path, size: int = 512) -> Path:
     image.thumbnail((size, size), Image.Resampling.LANCZOS)
     image.save(destination, "WEBP", quality=88, method=6)
     return destination
-

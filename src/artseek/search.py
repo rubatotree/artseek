@@ -354,6 +354,13 @@ class SearchEngine:
         self._folder_catalog_count = None
         self.store.invalidate_folder_catalog()
 
+    def replace_folder_catalog(self, catalog: FolderCatalog) -> None:
+        """Adopt a catalog rebuilt by an index update without deleting its cache file."""
+        self._folder_catalog = catalog
+        self._folder_catalog_count = (
+            int(self.store.count()) if hasattr(self.store, "count") else None
+        )
+
     def folder_catalog(self) -> FolderCatalog:
         count = int(self.store.count()) if hasattr(self.store, "count") else None
         cached = getattr(self, "_folder_catalog", None)
