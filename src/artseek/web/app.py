@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import random
 import tempfile
 import threading
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ from ..library import (
     DEFAULT_SORT,
     SORT_KEYS,
     apply_scope,
+    day_end_ns,
+    day_start_ns,
     library_payload,
     load_scope,
     rebuild_catalog,
@@ -74,6 +77,17 @@ class TextSearchRequest(BaseModel):
     mtime_before: str | None = None
     exclude_ids: list[str] = Field(default_factory=list)
     dedupe: bool = False
+
+
+class RandomBrowseRequest(BaseModel):
+    """A stable random ordering for one paginated gallery session."""
+
+    folder_keys: list[str] | None = None
+    mtime_after: str | None = None
+    mtime_before: str | None = None
+    seed: int | None = None
+    limit: int = Field(default=40, ge=1, le=200)
+    offset: int = Field(default=0, ge=0, le=50_000)
 
 
 class FolderScopeRequest(BaseModel):
@@ -224,6 +238,62 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "sort": method,
             "offset": start,
             "limit": page_size,
+            "total": total,
+            "has_more": start + len(results) < total,
+            "results": results,
+        }
+
+    @app.post("/api/random-browse")
+    def random_browse(request: RandomBrowseRequest) -> dict:
+        """Return one deterministic page from a random ordering in the selected scope."""
+        if app.state.index_job.running:
+            raise HTTPException(409, "正在索引图片，请稍后再浏览")
+        folder_keys = resolve_folder_keys(request.folder_keys)
+        if not folder_keys:
+            raise HTTPException(400, "请先勾选要随机浏览的文件夹")
+
+        catalog = app.state.engine.folder_catalog()
+        point_ids = catalog.point_ids(
+            folder_keys,
+            after_ns=day_start_ns(request.mtime_after),
+            before_ns=day_end_ns(request.mtime_before),
+        )
+        if point_ids is None:
+            # `None` is an optimization for vector search meaning every point.
+            # Random browse needs concrete IDs but only retains the requested page.
+            point_ids = [point_id for acc in catalog.folders.values() for point_id in acc.ids]
+
+        total = len(point_ids)
+        start = min(request.offset, total)
+        page_size = min(request.limit, max(0, total - start))
+        seed = (
+            request.seed
+            if request.seed is not None
+            else random.SystemRandom().randrange(1 << 53)
+        )
+        sampled = random.Random(seed).sample(point_ids, start + page_size)
+        page_ids = sampled[start:]
+        payloads = app.state.engine.store.retrieve_payloads(page_ids)
+        results: list[dict[str, Any]] = []
+        for point_id in page_ids:
+            payload = payloads.get(point_id) or {}
+            results.append(
+                {
+                    "id": point_id,
+                    "score": None,
+                    "path": str(payload.get("path") or ""),
+                    "name": str(payload.get("name") or ""),
+                    "width": int(payload.get("width") or 0),
+                    "height": int(payload.get("height") or 0),
+                    "tags": list(payload.get("tags") or []),
+                    "tag_hits": [],
+                    "caption": payload.get("caption"),
+                }
+            )
+        return {
+            "seed": seed,
+            "offset": start,
+            "limit": request.limit,
             "total": total,
             "has_more": start + len(results) < total,
             "results": results,

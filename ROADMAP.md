@@ -32,3 +32,14 @@ corrupt, dirty, or incomplete sidecar state falls back to a full scan.
 2. Complete: implement scandir scans and root delta calculation.
 3. Complete: wire catalog handoff to Web and retain API compatibility.
 4. Complete: add stub-backed tests and run lint/test verification.
+
+## Random waterfall browsing
+
+Add a lightweight browse mode for serendipitous review of the currently
+selected folders. A seeded server-side page returns only metadata for a
+random, non-repeating ordering; the existing masonry renderer and infinite
+scroll remain responsible for presentation.
+
+1. Complete: add a range-aware random page endpoint with time-filter support.
+2. Complete: add an accessible secondary action beside search and reuse gallery paging.
+3. Complete: cover pagination, scope boundaries, and empty selection with API tests.

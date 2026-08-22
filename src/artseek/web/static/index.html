@@ -167,7 +167,8 @@
       outline-offset: 3px;
       box-shadow: 0 0 0 6px rgba(217, 127, 158, .08);
     }
-    .search-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
+    .search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+    .search-actions { display: flex; gap: 8px; }
     .composer { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; margin-top: 10px; }
     .text-weight-card, .ref-add {
       width: 72px; height: 72px; padding: 0; border-radius: 12px;
@@ -257,6 +258,8 @@
     }
     .primary { color: white; background: linear-gradient(135deg, #cc7897, #b8759d); box-shadow: 0 8px 20px #e5bfd0; }
     .secondary, .upload-label { color: #665866; background: #f6f1f5; }
+    .random-browse { white-space: nowrap; }
+    button:focus-visible { outline: 2px solid #ddb2c2; outline-offset: 2px; }
     input[type="file"] { display: none; }
     .viewer-weight { display: flex; align-items: center; gap: 6px; color: #ddd6e0; font-size: 13px; }
     .viewer-weight[hidden] { display: none; }
@@ -408,7 +411,8 @@
         box-shadow: none;
       }
       #query { font-size: 16px; min-height: 44px; padding: 10px 12px; min-width: 0; }
-      #search { min-height: 44px; padding: 10px 14px; box-shadow: none; }
+      .search-actions { gap: 6px; }
+      #search, .random-browse { min-height: 44px; padding: 10px 12px; box-shadow: none; }
       .composer { margin-top: 8px; }
       .tree-panel { order: -1; }
       .results-column { order: 0; }
@@ -615,7 +619,10 @@
         <form id="search-form" autocomplete="off">
         <div class="search-row">
           <input id="query" type="text" name="artseek-query" placeholder="搜索图片..." autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" inputmode="search" enterkeyhint="search">
-          <button class="primary" id="search" type="submit">查询</button>
+          <div class="search-actions">
+            <button class="primary" id="search" type="submit">查询</button>
+            <button class="secondary random-browse" id="random-browse" type="button" title="在当前选定范围内随机翻阅">随机瀑布</button>
+          </div>
         </div>
         <div class="composer" id="composer">
           <div class="text-weight-card" title="文字在混合查询中的权重">
@@ -694,6 +701,7 @@
       results: [], offset: 0, hasMore: false, loadingMore: false, searchSeq: 0,
       colHeights: [],
       mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
+      randomSeed: null, randomTotal: 0,
     };
     const VIEW_MIN_SCALE = 0.05;
     const VIEW_MAX_SCALE = 8;
@@ -1026,8 +1034,106 @@
 
     function loadMoreResults() {
       if (state.mode === 'browse') return fetchFolderImages({ reset: false });
+      if (state.mode === 'random') return fetchRandomBrowse({ reset: false });
       if (state.mode === 'search') return fetchResults({ reset: false });
       return Promise.resolve();
+    }
+
+    function newRandomSeed() {
+      const values = new Uint32Array(2);
+      crypto.getRandomValues(values);
+      // Keep the seed below Number.MAX_SAFE_INTEGER so pagination sends the
+      // exact same value back to the server after JSON round trips.
+      return (values[0] & 0x1fffff) * 0x100000000 + values[1];
+    }
+
+    function startRandomBrowse() {
+      if (!treeState.selected.size) {
+        $('query-info').textContent = '请先勾选要随机浏览的文件夹。';
+        return;
+      }
+      state.mode = 'random';
+      state.browseKey = '';
+      state.browseName = '';
+      state.browseTotal = 0;
+      state.randomTotal = 0;
+      state.randomSeed = newRandomSeed();
+      renderTree();
+      fetchRandomBrowse({ reset: true });
+    }
+
+    async function fetchRandomBrowse({ reset }) {
+      if (!reset && (state.loadingMore || !state.hasMore)) return;
+      const seq = reset ? ++state.searchSeq : state.searchSeq;
+      if (reset) {
+        state.hasMore = false;
+        $('panel').classList.add('loading');
+        $('query-info').textContent = '正在随机挑选收藏……';
+        $('load-more').hidden = true;
+      } else {
+        state.loadingMore = true;
+        $('load-more').textContent = '正在载入更多随机图片…';
+        $('load-more').hidden = false;
+      }
+      try {
+        const timeRange = currentTimeRange();
+        const response = await fetch('/api/random-browse', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            folder_keys: [...treeState.selected],
+            mtime_after: timeRange.after || null,
+            mtime_before: timeRange.before || null,
+            seed: state.randomSeed,
+            limit: Number($('limit').value) || 40,
+            offset: reset ? 0 : state.results.length,
+          }),
+        });
+        const data = await parseResponse(response);
+        if (seq !== state.searchSeq) return;
+        const incoming = data.results || [];
+        state.randomSeed = data.seed;
+        state.randomTotal = data.total || 0;
+        if (reset) {
+          state.results = incoming;
+          renderGallery(state.results, { append: false });
+          if (window.matchMedia('(max-width: 900px)').matches) {
+            $('tree-panel').classList.remove('is-open');
+            $('scope-toggle').setAttribute('aria-expanded', 'false');
+          }
+        } else {
+          state.results = state.results.concat(incoming);
+          renderGallery(incoming, { append: true });
+        }
+        state.hasMore = Boolean(data.has_more) && incoming.length > 0;
+        $('load-more').hidden = !state.hasMore;
+        renderRandomInfo(state.results.length);
+        if ($('viewer').open) {
+          updateViewerNav();
+          syncNeighborImages();
+          prefetchViewerAhead();
+        }
+      } catch (error) {
+        if (seq !== state.searchSeq) return;
+        if (reset) $('query-info').textContent = `随机浏览失败：${error.message}`;
+        else $('load-more').textContent = `继续载入失败：${error.message}`;
+        if (!reset) state.hasMore = false;
+      } finally {
+        if (seq === state.searchSeq) {
+          $('panel').classList.remove('loading');
+          state.loadingMore = false;
+          if (!state.hasMore && state.results.length) $('load-more').hidden = true;
+        }
+      }
+    }
+
+    function renderRandomInfo(shown) {
+      if (!state.randomTotal) {
+        $('query-info').textContent = '选定范围内没有符合时间条件的已索引图片。';
+        return;
+      }
+      const more = state.hasMore ? ' · 下滑继续随机翻阅' : '';
+      $('query-info').textContent = `随机浏览当前范围 · ${shown} / ${state.randomTotal} 张图${more}`;
     }
 
     function previewFolder(key, name) {
@@ -1296,7 +1402,9 @@
       if (!append && !results.length) {
         const empty = state.mode === 'browse'
           ? '这个目录及其子目录里还没有已索引的图片。'
-          : '没有找到符合条件的图片。可以减少排除条件，或重新建立含详细描述的索引。';
+          : state.mode === 'random'
+            ? '选定范围内没有符合时间条件的已索引图片。'
+            : '没有找到符合条件的图片。可以减少排除条件，或重新建立含详细描述的索引。';
         $('gallery').innerHTML = `<div class="empty">${empty}</div>`;
         delete $('gallery').dataset.cols;
         state.colHeights = [];
@@ -2353,6 +2461,7 @@
 
     $('index-add').addEventListener('click', addIndexDirectory);
     $('index-refresh-all').addEventListener('click', refreshAllIndexed);
+    $('random-browse').addEventListener('click', startRandomBrowse);
     $('index-path').addEventListener('keydown', (event) => {
       if (event.key === 'Enter') { event.preventDefault(); addIndexDirectory(); }
     });
