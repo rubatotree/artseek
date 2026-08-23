@@ -29,7 +29,6 @@ class Collection:
     id: str
     name: str
     item_ids: tuple[str, ...]
-    pinned: bool = False
 
     @property
     def count(self) -> int:
@@ -40,7 +39,6 @@ class Collection:
             "id": self.id,
             "name": self.name,
             "count": self.count,
-            "pinned": self.pinned,
         }
 
 
@@ -58,11 +56,7 @@ class CollectionStore:
 
     def list(self) -> list[Collection]:
         with self._lock:
-            collections = self._load()
-            return [
-                *[collection for collection in collections if collection.pinned],
-                *[collection for collection in collections if not collection.pinned],
-            ]
+            return self._load()
 
     def get(self, collection_id: str) -> Collection | None:
         with self._lock:
@@ -71,7 +65,7 @@ class CollectionStore:
     def create(self, name: str) -> Collection:
         with self._lock:
             collections = self._load()
-            collection = Collection(id=uuid.uuid4().hex, name=name, item_ids=(), pinned=False)
+            collection = Collection(id=uuid.uuid4().hex, name=name, item_ids=())
             collections.append(collection)
             self._save(collections)
             return collection
@@ -79,17 +73,7 @@ class CollectionStore:
     def rename(self, collection_id: str, name: str) -> Collection | None:
         return self.update(collection_id, name=name)
 
-    def set_pinned(self, collection_id: str, pinned: bool) -> Collection | None:
-        """Set one collection's dock visibility without changing its order."""
-        return self.update(collection_id, pinned=pinned)
-
-    def update(
-        self,
-        collection_id: str,
-        *,
-        name: str | None = None,
-        pinned: bool | None = None,
-    ) -> Collection | None:
+    def update(self, collection_id: str, *, name: str) -> Collection | None:
         with self._lock:
             collections = self._load()
             index = self._index_of(collections, collection_id)
@@ -98,13 +82,24 @@ class CollectionStore:
             current = collections[index]
             updated = Collection(
                 id=current.id,
-                name=current.name if name is None else name,
+                name=name,
                 item_ids=current.item_ids,
-                pinned=current.pinned if pinned is None else pinned,
             )
             collections[index] = updated
             self._save(collections)
             return updated
+
+    def reorder(self, collection_ids: list[str]) -> list[Collection] | None:
+        """Persist a complete collection ordering without dropping concurrent rows."""
+        with self._lock:
+            collections = self._load()
+            current_ids = [collection.id for collection in collections]
+            if len(collection_ids) != len(current_ids) or set(collection_ids) != set(current_ids):
+                return None
+            by_id = {collection.id: collection for collection in collections}
+            ordered = [by_id[collection_id] for collection_id in collection_ids]
+            self._save(ordered)
+            return ordered
 
     def delete(self, collection_id: str) -> Collection | None:
         with self._lock:
@@ -130,7 +125,6 @@ class CollectionStore:
                 id=current.id,
                 name=current.name,
                 item_ids=(*current.item_ids, point_id),
-                pinned=current.pinned,
             )
             collections[index] = updated
             self._save(collections)
@@ -150,7 +144,6 @@ class CollectionStore:
                 id=current.id,
                 name=current.name,
                 item_ids=tuple(item for item in current.item_ids if item != point_id),
-                pinned=current.pinned,
             )
             collections[index] = updated
             self._save(collections)
@@ -181,7 +174,6 @@ class CollectionStore:
         collection_id = value.get("id")
         name = value.get("name")
         raw_items = value.get("item_ids")
-        pinned = value.get("pinned", False)
         if (
             not isinstance(collection_id, str)
             or not collection_id
@@ -202,7 +194,6 @@ class CollectionStore:
             id=collection_id,
             name=name.strip(),
             item_ids=tuple(item_ids),
-            pinned=pinned if isinstance(pinned, bool) else False,
         )
 
     def _save(self, collections: list[Collection]) -> None:
@@ -214,7 +205,6 @@ class CollectionStore:
                     "id": item.id,
                     "name": item.name,
                     "item_ids": list(item.item_ids),
-                    "pinned": item.pinned,
                 }
                 for item in collections
             ],

@@ -152,28 +152,35 @@
     .collection-create button, .collection-rename button { padding: 7px 10px; font-size: 12px; }
     .collection-search { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
     .collection-list { display: grid; gap: 3px; }
+    .collection-list.is-reordering { user-select: none; }
     .collection-empty { padding: 16px 8px; color: var(--muted); font-size: 13px; }
     .collection-row {
-      display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px;
+      display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 4px;
       min-height: 36px; padding: 3px 4px 3px 7px; border: 1px solid transparent; border-radius: 10px;
       transition: background .15s ease, border-color .15s ease;
     }
     .collection-row:hover { background: #f6f1f5; }
     .collection-row.is-selected { background: var(--blue-soft); color: #496a8a; }
-    .collection-row.is-pinned { border-color: #ead0da; background: #fff8fb; }
+    .collection-row.is-reordering { border-color: #d7aab9; background: #fff8fb; box-shadow: 0 5px 14px rgba(86, 54, 68, .14); opacity: .82; }
     .collection-name {
       min-width: 0; overflow: hidden; padding: 6px 4px; border-radius: 7px; background: transparent;
       color: inherit; font: 600 13px/1.2 inherit; text-align: left; white-space: nowrap; text-overflow: ellipsis;
     }
     .collection-name:hover { transform: none; background: rgba(119, 153, 189, .10); }
     .collection-count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .collection-drag-handle {
+      width: 28px; min-height: 30px; padding: 0; border-radius: 7px; background: transparent; color: #9b7483;
+      cursor: grab; font-size: 16px; line-height: 1; touch-action: none;
+    }
+    .collection-drag-handle:hover, .collection-drag-handle:focus-visible { transform: none; background: #f3e4ea; color: #8a5268; }
+    .collection-drag-handle:active { cursor: grabbing; }
     .collection-icon {
       width: 26px; height: 26px; padding: 0; border-radius: 7px; background: transparent; color: #9b7483;
       font-size: 14px; line-height: 1;
     }
     .collection-icon:hover { transform: none; background: #f3e4ea; color: #8a5268; }
     .collection-icon[aria-pressed="true"] { color: #8a5268; background: var(--rose-soft); }
-    .collection-rename { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; grid-column: 1 / -1; }
+    .collection-rename { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; grid-column: 2 / -1; }
     .time-filter { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
     .time-filter-label { margin-bottom: 8px; font-size: 14px; font-weight: 700; }
     .time-preset {
@@ -682,7 +689,7 @@
         <div id="tree" class="tree"></div>
         </div>
         <div id="tab-collections" class="collections-panel" role="tabpanel" aria-labelledby="tab-btn-collections" hidden>
-          <div class="collections-intro">固定常用收藏夹后，桌面拖动图片时会显示快捷 Dock；触控设备可使用图片标题下方的收藏入口。</div>
+          <div class="collections-intro">拖动左侧把手可调整收藏夹顺序；在触控设备上也可直接拖动。图片可通过标题下方的收藏入口加入收藏夹。</div>
           <form id="collection-create" class="collection-create" autocomplete="off">
             <input id="collection-name" type="text" maxlength="80" placeholder="新收藏夹名称" aria-label="新收藏夹名称">
             <button class="secondary" type="submit">新建</button>
@@ -802,6 +809,7 @@
       randomSeed: null, randomTotal: 0,
       collections: [], collectionId: '', collectionName: '', collectionTotal: null,
       editingCollectionId: '', collectionSearchTimer: 0,
+      collectionDrag: null, collectionOrderSave: 0,
       viewerMenuTrigger: null, viewerMenuSession: 0,
       cardMenuItem: null, cardMenuTrigger: null, cardMenuSession: 0,
     };
@@ -1155,6 +1163,7 @@
     }
     async function loadCollections() {
       const data = await requestCollections();
+      if (state.collectionDrag) return state.collections;
       state.collections = data.collections || [];
       renderCollectionList();
       return state.collections;
@@ -1172,9 +1181,6 @@
       const data = await parseResponse(response);
       await loadCollections();
       return data;
-    }
-    function pinnedCollections() {
-      return state.collections.filter((collection) => collection.pinned);
     }
     function viewportBounds() {
       const viewport = window.visualViewport;
@@ -1487,11 +1493,11 @@
           <input type="text" value="${escapeHtml(collection.name)}" maxlength="80" aria-label="重命名 ${escapeHtml(collection.name)}">
           <button class="secondary" type="submit">保存</button>
         </form>` : '';
-        return `<div class="collection-row${selected ? ' is-selected' : ''}${collection.pinned ? ' is-pinned' : ''}">
+        return `<div class="collection-row${selected ? ' is-selected' : ''}" data-collection-id="${escapeHtml(collection.id)}">
+          <button class="collection-drag-handle" type="button" data-collection-drag-handle data-collection-id="${escapeHtml(collection.id)}" aria-label="拖动调整「${escapeHtml(collection.name)}」的顺序" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="拖动调整顺序；Alt + 上下方向键也可调整">⠿</button>
           <button class="collection-name" type="button" data-collection-action="browse" data-collection-id="${escapeHtml(collection.id)}" title="浏览「${escapeHtml(collection.name)}」" aria-pressed="${selected}">${escapeHtml(collection.name)}</button>
           <span class="collection-count">${Number(collection.count) || 0}</span>
           <span>
-            <button class="collection-icon" type="button" data-collection-action="pin" data-collection-id="${escapeHtml(collection.id)}" aria-label="${collection.pinned ? '取消固定' : '固定'} ${escapeHtml(collection.name)}" aria-pressed="${collection.pinned}" title="${collection.pinned ? '取消固定' : '固定到拖拽 Dock'}">⌖</button>
             <button class="collection-icon" type="button" data-collection-action="rename" data-collection-id="${escapeHtml(collection.id)}" aria-label="重命名 ${escapeHtml(collection.name)}" title="重命名">✎</button>
             <button class="collection-icon" type="button" data-collection-action="delete" data-collection-id="${escapeHtml(collection.id)}" aria-label="删除 ${escapeHtml(collection.name)}" title="删除">×</button>
           </span>${editor}
@@ -1502,13 +1508,22 @@
           const collection = state.collections.find((item) => item.id === button.dataset.collectionId);
           if (!collection) return;
           if (button.dataset.collectionAction === 'browse') selectCollection(collection);
-          if (button.dataset.collectionAction === 'pin') toggleCollectionPin(collection);
           if (button.dataset.collectionAction === 'rename') beginCollectionRename(collection.id);
           if (button.dataset.collectionAction === 'delete') deleteCollection(collection);
         });
       });
       list.querySelectorAll('[data-rename-id]').forEach((form) => {
         form.addEventListener('submit', (event) => renameCollection(event, form));
+      });
+      list.querySelectorAll('[data-collection-drag-handle]').forEach((handle) => {
+        const collection = state.collections.find((item) => item.id === handle.dataset.collectionId);
+        const row = handle.closest('.collection-row');
+        if (!collection || !row) return;
+        handle.addEventListener('pointerdown', (event) => startCollectionReorder(event, collection, row));
+        handle.addEventListener('pointermove', updateCollectionReorder);
+        handle.addEventListener('pointerup', finishCollectionReorder);
+        handle.addEventListener('pointercancel', (event) => finishCollectionReorder(event, { cancelled: true }));
+        handle.addEventListener('keydown', (event) => moveCollectionWithKeyboard(event, collection.id));
       });
       const editing = list.querySelector('[data-rename-id] input');
       if (editing) requestAnimationFrame(() => editing.focus());
@@ -1554,16 +1569,101 @@
         setCollectionStatus(`重命名失败：${error.message}`);
       }
     }
-    async function toggleCollectionPin(collection) {
+    function collectionIdsInList() {
+      return [...$('collection-list').querySelectorAll('.collection-row')]
+        .map((row) => row.dataset.collectionId)
+        .filter(Boolean);
+    }
+    function reorderStateCollections(collectionIds) {
+      const collectionsById = new Map(state.collections.map((collection) => [collection.id, collection]));
+      state.collections = collectionIds.map((collectionId) => collectionsById.get(collectionId)).filter(Boolean);
+    }
+    function restoreCollectionRows(collectionIds) {
+      const list = $('collection-list');
+      const rowsById = new Map(
+        [...list.querySelectorAll('.collection-row')].map((row) => [row.dataset.collectionId, row]),
+      );
+      collectionIds.forEach((collectionId) => {
+        const row = rowsById.get(collectionId);
+        if (row) list.append(row);
+      });
+    }
+    async function saveCollectionOrder(collectionIds) {
+      const saveId = ++state.collectionOrderSave;
       try {
-        const data = await parseResponse(await fetch(`/api/collections/${encodeURIComponent(collection.id)}`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pinned: !collection.pinned }),
+        const data = await parseResponse(await fetch('/api/collections/order', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ collection_ids: collectionIds }),
         }));
-        await loadCollections();
-        setCollectionStatus(data.collection.pinned ? `已固定「${data.collection.name}」到拖拽 Dock。` : `已取消固定「${data.collection.name}」。`);
+        if (saveId !== state.collectionOrderSave) return;
+        state.collections = data.collections || [];
+        renderCollectionList();
+        setCollectionStatus('已更新收藏夹顺序。');
       } catch (error) {
-        setCollectionStatus(`更新固定状态失败：${error.message}`);
+        if (saveId !== state.collectionOrderSave) return;
+        setCollectionStatus(`排序未保存：${error.message}`);
+        try { await loadCollections(); }
+        catch (refreshError) { setCollectionStatus(`排序未保存，且无法刷新：${refreshError.message}`); }
       }
+    }
+    function startCollectionReorder(event, collection, row) {
+      if (!event.isPrimary || event.button !== 0 || state.collectionDrag) return;
+      const handle = event.currentTarget;
+      state.collectionDrag = {
+        pointerId: event.pointerId, handle, row, collectionId: collection.id,
+        startX: event.clientX, startY: event.clientY, started: false,
+        initialIds: collectionIdsInList(),
+      };
+      handle.setPointerCapture?.(event.pointerId);
+    }
+    function updateCollectionReorder(event) {
+      const drag = state.collectionDrag;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      if (!drag.started) {
+        if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 4) return;
+        drag.started = true;
+        drag.row.classList.add('is-reordering');
+        $('collection-list').classList.add('is-reordering');
+      }
+      event.preventDefault();
+      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('.collection-row');
+      if (!target || target === drag.row || !$('collection-list').contains(target)) return;
+      const targetBounds = target.getBoundingClientRect();
+      const insertBefore = event.clientY < targetBounds.top + targetBounds.height / 2
+        ? target
+        : target.nextElementSibling;
+      if (insertBefore !== drag.row && insertBefore !== drag.row.nextElementSibling) {
+        $('collection-list').insertBefore(drag.row, insertBefore);
+      }
+    }
+    function finishCollectionReorder(event, { cancelled = false } = {}) {
+      const drag = state.collectionDrag;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      state.collectionDrag = null;
+      if (drag.handle.hasPointerCapture?.(event.pointerId)) drag.handle.releasePointerCapture(event.pointerId);
+      drag.row.classList.remove('is-reordering');
+      $('collection-list').classList.remove('is-reordering');
+      if (!drag.started || cancelled) {
+        restoreCollectionRows(drag.initialIds);
+        return;
+      }
+      const collectionIds = collectionIdsInList();
+      if (collectionIds.every((collectionId, index) => collectionId === drag.initialIds[index])) return;
+      reorderStateCollections(collectionIds);
+      saveCollectionOrder(collectionIds);
+    }
+    function moveCollectionWithKeyboard(event, collectionId) {
+      if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key) || state.collectionDrag) return;
+      const index = state.collections.findIndex((collection) => collection.id === collectionId);
+      const nextIndex = index + (event.key === 'ArrowUp' ? -1 : 1);
+      if (index < 0 || nextIndex < 0 || nextIndex >= state.collections.length) return;
+      event.preventDefault();
+      const collections = [...state.collections];
+      [collections[index], collections[nextIndex]] = [collections[nextIndex], collections[index]];
+      state.collections = collections;
+      renderCollectionList();
+      requestAnimationFrame(() => $('collection-list').querySelector(`[data-collection-drag-handle][data-collection-id="${CSS.escape(collectionId)}"]`)?.focus());
+      saveCollectionOrder(collections.map((collection) => collection.id));
     }
     async function deleteCollection(collection) {
       if (collection.count && !confirm(`删除「${collection.name}」及其中 ${collection.count} 张收藏？原图不会删除。`)) return;

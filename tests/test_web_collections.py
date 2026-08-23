@@ -133,26 +133,32 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertTrue(deleted.json()["deleted"])
         self.assertEqual(len(self.client.get("/api/collections").json()["collections"]), 1)
 
-    def test_collection_pin_update_orders_lists_and_rejects_empty_patch(self) -> None:
+    def test_collection_reordering_replaces_pinning_and_rejects_stale_order(self) -> None:
         first = self.create_collection("先创建")
         second = self.create_collection("后创建")
         third = self.create_collection("第三个")
 
-        pinned = self.client.patch(
-            f"/api/collections/{third['id']}", json={"pinned": True}
+        reordered = self.client.put(
+            "/api/collections/order",
+            json={"collection_ids": [third["id"], first["id"], second["id"]]},
         )
-        self.assertEqual(pinned.status_code, 200)
-        self.assertTrue(pinned.json()["collection"]["pinned"])
-        renamed_and_pinned = self.client.patch(
-            f"/api/collections/{first['id']}",
-            json={"name": "先创建并固定", "pinned": True},
+        self.assertEqual(reordered.status_code, 200)
+        self.assertEqual(
+            [item["id"] for item in reordered.json()["collections"]],
+            [third["id"], first["id"], second["id"]],
         )
-        self.assertEqual(renamed_and_pinned.status_code, 200)
-        self.assertEqual(renamed_and_pinned.json()["collection"]["name"], "先创建并固定")
         listed = self.client.get("/api/collections").json()["collections"]
-        self.assertEqual([item["id"] for item in listed], [first["id"], third["id"], second["id"]])
+        self.assertEqual([item["id"] for item in listed], [third["id"], first["id"], second["id"]])
+        stale_order = self.client.put(
+            "/api/collections/order", json={"collection_ids": [first["id"], second["id"]]}
+        )
+        self.assertEqual(stale_order.status_code, 409)
         empty_update = self.client.patch(f"/api/collections/{second['id']}", json={})
         self.assertEqual(empty_update.status_code, 422)
+        pinned_update = self.client.patch(
+            f"/api/collections/{second['id']}", json={"name": "不再置顶", "pinned": True}
+        )
+        self.assertEqual(pinned_update.status_code, 422)
 
     def test_items_are_validated_idempotent_and_return_ordered_filtered_pages(self) -> None:
         collection = self.create_collection()
@@ -205,7 +211,7 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn('id="tab-btn-collections"', html)
         self.assertIn('id="collection-search"', html)
         self.assertIn('aria-labelledby="tab-btn-collections"', html)
-        self.assertIn("pinnedCollections()", html)
+        self.assertNotIn("pinnedCollections()", html)
         self.assertIn('id="ref-drop-zone"', html)
         self.assertNotIn('id="drag-dock"', html)
         self.assertNotIn("addEventListener('dragenter'", html)
@@ -214,8 +220,11 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertNotIn('search-drop-feedback', html)
         self.assertIn("event.key === 'Home'", html)
         self.assertIn('/api/collections', html)
-        self.assertIn('data-collection-action="pin"', html)
-        self.assertIn("aria-pressed=\"${collection.pinned}\"", html)
+        self.assertNotIn('data-collection-action="pin"', html)
+        self.assertIn('data-collection-drag-handle', html)
+        self.assertIn("function startCollectionReorder", html)
+        self.assertIn("function moveCollectionWithKeyboard", html)
+        self.assertIn("/api/collections/order", html)
 
         card_start = html.index("function cardHTML")
         card_end = html.index("function renderGallery", card_start)

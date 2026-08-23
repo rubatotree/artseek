@@ -88,27 +88,21 @@ later re-index.
 4. Complete: run lint, targeted API tests, static JavaScript syntax validation,
    and the complete test suite.
 
-### Pinned drag interaction milestone
+### Manual collection ordering milestone
 
-Pinned state is stored beside collection metadata and remains independent from
-the image index. The collection API sorts pinned collections ahead of the
-stable creation-order remainder, while a partial PATCH can rename and/or pin
-in a single atomic sidecar update. Desktop drag uses one fixed dock with a
-reference target and pinned collection targets; touch and keyboard operations
-stay in the fullscreen viewer. The viewer collection chooser is a top-layer,
-direct dialog child rather than a card-local popup, so it cannot be clipped by
-the image stage.
+Collection order is an explicit part of the local sidecar's array order; there
+is no pinned state or pinned-first sort. A drag operation submits the complete
+ordered ID list to a single atomic endpoint. The store rejects incomplete or
+stale lists, preventing a delayed UI from dropping a concurrently created or
+deleted collection. Legacy `pinned` fields are ignored while reading and are
+removed during the next write.
 
-Risks: stale list refreshes must not invalidate an active drag, and dialogs
-must not leave focus stranded under the modal. The dock therefore renders the
-last known pinned list immediately, refreshes asynchronously behind a drag
-session token, and keeps its initial clamped position fixed for the drop. The
-viewer chooser is a non-modal dialog that clamps again on viewport/soft-keyboard
-changes, restores its trigger on Escape, and closes before the active image
-changes or on outside interaction/dialog close. Its asynchronous list refresh
-captures only focus already inside the chooser and restores a matching control;
-typed creation drafts and their cursor positions survive a delayed refresh.
+The sidebar uses a dedicated pointer drag handle so rename, browse, and delete
+controls remain ordinary buttons. It also supports `Alt` + up/down arrows on
+the handle. A refresh is deferred during an active drag; the saved response is
+then used as the canonical UI order.
 
-5. Complete: persist compatible pinned collections and partial PATCH updates.
-6. Complete: replace waterfall actions with the drag dock and accessible
-   fullscreen viewer collection menu.
+5. Complete: replace pinned metadata and pinned-first sorting with explicit,
+   validated persistent ordering.
+6. Complete: add pointer and keyboard ordering controls in the sidebar and
+   regression coverage for legacy migration and stale order conflicts.

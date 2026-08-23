@@ -12,7 +12,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..collections import Collection, CollectionStore
 from ..config import AppConfig
@@ -162,8 +162,9 @@ class CollectionNameRequest(BaseModel):
 
 
 class CollectionUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = None
-    pinned: bool | None = None
 
     @field_validator("name")
     @classmethod
@@ -179,9 +180,22 @@ class CollectionUpdateRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_update(self) -> CollectionUpdateRequest:
-        if self.name is None and self.pinned is None:
-            raise ValueError("请至少修改名称或固定状态")
+        if self.name is None:
+            raise ValueError("请提供新的收藏夹名称")
         return self
+
+
+class CollectionOrderRequest(BaseModel):
+    collection_ids: list[str]
+
+    @field_validator("collection_ids")
+    @classmethod
+    def validate_collection_ids(cls, value: list[str]) -> list[str]:
+        if any(not collection_id.strip() for collection_id in value):
+            raise ValueError("收藏夹 ID 不能为空")
+        if len(set(value)) != len(value):
+            raise ValueError("收藏夹 ID 不能重复")
+        return value
 
 
 class CollectionItemRequest(BaseModel):
@@ -454,12 +468,18 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         collection = app.state.collections.create(request.name)
         return {"collection": collection_summary(collection)}
 
+    @app.put("/api/collections/order")
+    def reorder_collections(request: CollectionOrderRequest) -> dict[str, list[dict[str, Any]]]:
+        collections = app.state.collections.reorder(request.collection_ids)
+        if collections is None:
+            raise HTTPException(409, "收藏夹已更新，请刷新后重试")
+        return {"collections": [collection_summary(collection) for collection in collections]}
+
     @app.patch("/api/collections/{collection_id}")
     def update_collection(collection_id: str, request: CollectionUpdateRequest) -> dict[str, Any]:
         collection = app.state.collections.update(
             collection_id,
             name=request.name,
-            pinned=request.pinned,
         )
         if collection is None:
             raise HTTPException(404, "收藏夹不存在")

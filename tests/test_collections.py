@@ -70,13 +70,13 @@ class CollectionStoreTests(unittest.TestCase):
         self.assertEqual(updated.item_ids if updated else (), ("a", "c"))
         self.assertEqual(repeated.item_ids if repeated else (), ("a", "c"))
 
-    def test_pinned_state_is_backward_compatible_and_survives_updates(self) -> None:
+    def test_legacy_pinned_state_is_ignored_and_removed_on_next_write(self) -> None:
         self.path.write_text(
             json.dumps(
                 {
                     "collections": [
                         {"id": "older", "name": "旧格式", "item_ids": []},
-                        {"id": "pinned", "name": "固定", "item_ids": [], "pinned": True},
+                        {"id": "legacy", "name": "旧置顶", "item_ids": [], "pinned": True},
                         {"id": "newer", "name": "新建", "item_ids": []},
                     ]
                 },
@@ -85,19 +85,15 @@ class CollectionStoreTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        self.assertEqual([item.id for item in self.store.list()], ["pinned", "older", "newer"])
-        self.assertFalse(self.store.get("older").pinned)
-        self.assertTrue(self.store.set_pinned("older", True).pinned)
-        self.store.rename("older", "已重命名")
-        self.store.add_item("older", "image")
-        self.store.remove_item("older", "image")
+        self.assertEqual([item.id for item in self.store.list()], ["older", "legacy", "newer"])
+        self.assertIsNone(self.store.reorder(["older", "legacy"]))
+        reordered = self.store.reorder(["newer", "older", "legacy"])
 
-        restored = CollectionStore(self.path).get("older")
-        self.assertEqual(restored.name if restored else "", "已重命名")
-        self.assertTrue(restored.pinned if restored else False)
+        self.assertEqual([item.id for item in reordered or []], ["newer", "older", "legacy"])
+        restored = CollectionStore(self.path).list()
+        self.assertEqual([item.id for item in restored], ["newer", "older", "legacy"])
         raw = json.loads(self.path.read_text(encoding="utf-8"))
-        older = next(item for item in raw["collections"] if item["id"] == "older")
-        self.assertTrue(older["pinned"])
+        self.assertTrue(all("pinned" not in item for item in raw["collections"]))
 
     def test_stores_for_the_same_path_share_one_read_modify_write_lock(self) -> None:
         first = CollectionStore(self.path)
