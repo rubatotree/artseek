@@ -122,7 +122,7 @@ artseek index "D:\Pictures\Illustrations" --captions --force
 artseek serve
 ```
 
-启动后立即监听 `http://127.0.0.1:7860`，图文向量模型默认不占显存；第一次检索时再载入，闲置 10 分钟无搜图后自动卸载。可在网页「高级」设置中手动加载/卸载，或改自动卸载时间。默认不打开浏览器。若要自动打开，使用 `artseek serve --open`。服务默认只监听本机。
+启动后立即监听 `http://127.0.0.1:7860`，图文向量模型默认不占显存；第一次检索时再载入，闲置 10 分钟无搜图后自动卸载。网页「高级」中的本地大模型理解条件、严格标签、去重、每批数量与自动卸载时间都会保存到本地数据目录；模型当前载入状态仍为即时控制。默认不打开浏览器。若要自动打开，使用 `artseek serve --open`。服务默认只监听本机。
 
 ## 查询示例
 
@@ -242,4 +242,3 @@ ruff check src tests
 - [Qdrant Python Client](https://github.com/qdrant/qdrant-client)：Apache-2.0，本项目使用其持久化本地模式。
 
 ArtSeek 自身使用 MIT 许可证。模型权重仍受各自模型许可证约束。
-

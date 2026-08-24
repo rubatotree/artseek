@@ -922,6 +922,42 @@
     };
 
     const modelUi = { poll: null, applying: false, loaded: false };
+    let webSettingsSaveTimer = 0;
+    function currentWebSearchSettings() {
+      return {
+        use_llm: $('use-llm').checked,
+        strict_tags: $('strict-tags').checked,
+        dedupe: $('dedupe').checked,
+        limit: Number($('limit').value),
+      };
+    }
+    function applyWebSearchSettings(settings) {
+      $('use-llm').checked = Boolean(settings.use_llm);
+      $('strict-tags').checked = Boolean(settings.strict_tags);
+      $('dedupe').checked = Boolean(settings.dedupe);
+      const limit = Number(settings.limit);
+      if (Number.isInteger(limit) && limit >= 12 && limit <= 80) $('limit').value = String(limit);
+      $('limit-value').textContent = $('limit').value;
+    }
+    async function loadWebSearchSettings() {
+      const settings = await parseResponse(await fetch('/api/web-settings'));
+      applyWebSearchSettings(settings);
+    }
+    async function saveWebSearchSettings() {
+      const settings = await parseResponse(await fetch('/api/web-settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(currentWebSearchSettings()),
+      }));
+      applyWebSearchSettings(settings);
+    }
+    function scheduleWebSearchSettingsSave() {
+      clearTimeout(webSettingsSaveTimer);
+      webSettingsSaveTimer = setTimeout(() => {
+        saveWebSearchSettings().catch((error) => {
+          $('model-hint').textContent = `查询设置未能保存：${error.message}`;
+        });
+      }, 180);
+    }
     function modelHint(data) {
       if (data.loading) return '正在载入图文向量模型…';
       if (!data.loaded) return '启动时不占用显存；检索时自动载入。';
@@ -971,7 +1007,13 @@
       clearInterval(modelUi.poll);
       modelUi.poll = null;
     }
-    $('limit').addEventListener('input', () => $('limit-value').textContent = $('limit').value);
+    $('limit').addEventListener('input', () => {
+      $('limit-value').textContent = $('limit').value;
+      scheduleWebSearchSettingsSave();
+    });
+    ['use-llm', 'strict-tags', 'dedupe'].forEach((id) => {
+      $(id).addEventListener('change', scheduleWebSearchSettingsSave);
+    });
     $('model-loaded').addEventListener('change', async () => {
       if (modelUi.applying) return;
       const want = $('model-loaded').checked;
@@ -3557,6 +3599,9 @@
     bindGalleryReferenceDropTarget();
     loadLibraryTree();
     loadCollections().catch((error) => setCollectionStatus(`收藏夹不可用：${error.message}`));
+    loadWebSearchSettings().catch((error) => {
+      $('model-hint').textContent = `查询设置未能读取：${error.message}`;
+    });
     fetchModelStatus().catch((error) => {
       $('model-hint').textContent = modelApiErrorMessage(error);
     });

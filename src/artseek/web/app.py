@@ -15,7 +15,16 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..collections import Collection, CollectionStore
-from ..config import AppConfig
+from ..config import (
+    DEFAULT_WEB_SEARCH_LIMIT,
+    MAX_WEB_SEARCH_LIMIT,
+    MIN_WEB_SEARCH_LIMIT,
+    WEB_SEARCH_LIMIT_STEP,
+    AppConfig,
+    WebSearchSettings,
+    load_web_search_settings,
+    save_web_search_settings,
+)
 from ..image_io import canonical_path, make_thumbnail
 from ..incremental_state import IncrementalIndexState
 from ..indexer import ImageIndexer
@@ -145,6 +154,26 @@ class IndexRemoveRequest(BaseModel):
 class ModelControlRequest(BaseModel):
     loaded: bool | None = None
     auto_unload_minutes: int | None = Field(default=None, ge=0, le=1440)
+
+
+class WebSearchSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    use_llm: bool = True
+    strict_tags: bool = False
+    dedupe: bool = True
+    limit: int = Field(
+        default=DEFAULT_WEB_SEARCH_LIMIT,
+        ge=MIN_WEB_SEARCH_LIMIT,
+        le=MAX_WEB_SEARCH_LIMIT,
+    )
+
+    @field_validator("limit")
+    @classmethod
+    def validate_limit_step(cls, value: int) -> int:
+        if (value - MIN_WEB_SEARCH_LIMIT) % WEB_SEARCH_LIMIT_STEP:
+            raise ValueError(f"每批数量必须以 {WEB_SEARCH_LIMIT_STEP} 为步长")
+        return value
 
 
 class CollectionNameRequest(BaseModel):
@@ -951,5 +980,20 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 status["message"] = "正在检索或索引，稍后再卸载"
                 return status
         return engine.model_status()
+
+    @app.get("/api/web-settings")
+    def web_settings() -> dict:
+        return dataclasses.asdict(load_web_search_settings(config))
+
+    @app.put("/api/web-settings")
+    def update_web_settings(request: WebSearchSettingsRequest) -> dict:
+        settings = WebSearchSettings(
+            use_llm=request.use_llm,
+            strict_tags=request.strict_tags,
+            dedupe=request.dedupe,
+            limit=request.limit,
+        )
+        save_web_search_settings(config, settings)
+        return dataclasses.asdict(settings)
 
     return app

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +13,11 @@ from platformdirs import user_cache_dir, user_config_dir, user_data_dir
 APP_NAME = "ArtSeek"
 DEFAULT_AUTO_UNLOAD_SECONDS = 600
 DEFAULT_FULL_VERIFICATION_SECONDS = 24 * 60 * 60
+DEFAULT_WEB_SEARCH_LIMIT = 40
+MIN_WEB_SEARCH_LIMIT = 12
+MAX_WEB_SEARCH_LIMIT = 80
+WEB_SEARCH_LIMIT_STEP = 4
+_RUNTIME_SETTINGS_LOCK = threading.RLock()
 
 
 @dataclass(slots=True)
@@ -104,6 +110,16 @@ class AppConfig:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+
+
+@dataclass(slots=True)
+class WebSearchSettings:
+    """User-owned query defaults shared by every local web client."""
+
+    use_llm: bool = True
+    strict_tags: bool = False
+    dedupe: bool = True
+    limit: int = DEFAULT_WEB_SEARCH_LIMIT
 
 
 def default_config_path() -> Path:
@@ -200,23 +216,68 @@ def clamp_auto_unload_seconds(value: Any, default: int = DEFAULT_AUTO_UNLOAD_SEC
     return max(0, min(seconds, 86400))
 
 
-def load_auto_unload_seconds(config: AppConfig) -> int:
+def clamp_web_search_limit(value: Any, default: int = DEFAULT_WEB_SEARCH_LIMIT) -> int:
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        limit = default
+    limit = max(MIN_WEB_SEARCH_LIMIT, min(limit, MAX_WEB_SEARCH_LIMIT))
+    return (
+        MIN_WEB_SEARCH_LIMIT
+        + round((limit - MIN_WEB_SEARCH_LIMIT) / WEB_SEARCH_LIMIT_STEP) * WEB_SEARCH_LIMIT_STEP
+    )
+
+
+def _load_runtime_data(config: AppConfig) -> dict[str, Any]:
     path = config.runtime_path
     if not path.exists():
-        return DEFAULT_AUTO_UNLOAD_SECONDS
+        return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return DEFAULT_AUTO_UNLOAD_SECONDS
-    if not isinstance(data, dict):
-        return DEFAULT_AUTO_UNLOAD_SECONDS
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_runtime_data(config: AppConfig, payload: dict[str, Any]) -> None:
+    config.ensure_dirs()
+    path = config.runtime_path
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def load_auto_unload_seconds(config: AppConfig) -> int:
+    data = _load_runtime_data(config)
     return clamp_auto_unload_seconds(data.get("auto_unload_seconds", DEFAULT_AUTO_UNLOAD_SECONDS))
 
 
 def save_auto_unload_seconds(config: AppConfig, seconds: int) -> None:
-    config.ensure_dirs()
-    payload = {"auto_unload_seconds": clamp_auto_unload_seconds(seconds)}
-    config.runtime_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    with _RUNTIME_SETTINGS_LOCK:
+        payload = _load_runtime_data(config)
+        payload["auto_unload_seconds"] = clamp_auto_unload_seconds(seconds)
+        _save_runtime_data(config, payload)
+
+
+def load_web_search_settings(config: AppConfig) -> WebSearchSettings:
+    raw = _load_runtime_data(config).get("web_search_settings")
+    if not isinstance(raw, dict):
+        return WebSearchSettings()
+    return WebSearchSettings(
+        use_llm=raw["use_llm"] if isinstance(raw.get("use_llm"), bool) else True,
+        strict_tags=raw["strict_tags"] if isinstance(raw.get("strict_tags"), bool) else False,
+        dedupe=raw["dedupe"] if isinstance(raw.get("dedupe"), bool) else True,
+        limit=clamp_web_search_limit(raw.get("limit")),
     )
+
+
+def save_web_search_settings(config: AppConfig, settings: WebSearchSettings) -> None:
+    with _RUNTIME_SETTINGS_LOCK:
+        payload = _load_runtime_data(config)
+        payload["web_search_settings"] = {
+            "use_llm": bool(settings.use_llm),
+            "strict_tags": bool(settings.strict_tags),
+            "dedupe": bool(settings.dedupe),
+            "limit": clamp_web_search_limit(settings.limit),
+        }
+        _save_runtime_data(config, payload)

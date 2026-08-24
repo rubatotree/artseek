@@ -10,9 +10,12 @@ import numpy as np
 from artseek.config import (
     DEFAULT_AUTO_UNLOAD_SECONDS,
     AppConfig,
+    WebSearchSettings,
     clamp_auto_unload_seconds,
     load_auto_unload_seconds,
+    load_web_search_settings,
     save_auto_unload_seconds,
+    save_web_search_settings,
 )
 from artseek.image_io import canonical_path
 from artseek.query import static_expand
@@ -128,6 +131,11 @@ class RuntimeSettingsTests(unittest.TestCase):
             self.assertEqual(load_auto_unload_seconds(cfg), DEFAULT_AUTO_UNLOAD_SECONDS)
             save_auto_unload_seconds(cfg, 120)
             self.assertEqual(load_auto_unload_seconds(cfg), 120)
+
+            settings = WebSearchSettings(use_llm=False, strict_tags=True, dedupe=False, limit=52)
+            save_web_search_settings(cfg, settings)
+            self.assertEqual(load_auto_unload_seconds(cfg), 120)
+            self.assertEqual(load_web_search_settings(cfg), settings)
 
 
 class LazySearchEngineTests(unittest.TestCase):
