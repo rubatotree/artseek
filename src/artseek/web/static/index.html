@@ -499,7 +499,7 @@
     }
     .collection-picker-tile-count {
       position: absolute; right: 6px; bottom: 5px; color: #bdb4c1; font-size: 9px;
-      font-variant-numeric: tabular-nums; pointer-events: none;
+      font-variant-numeric: tabular-nums; line-height: 1; pointer-events: none;
     }
     .collection-menu-reference { position: relative; min-height: 38px; padding: 8px 9px; border: 1px solid #a77b8d; border-radius: 9px; background: #4a3d4d; color: #fff; text-align: left; }
     .collection-picker-footer { display: grid; gap: 6px; min-width: 0; }
@@ -609,9 +609,8 @@
       }
       .tree-panel:not(.is-open) .tree-body { display: none; }
       .tree-panel.is-open {
-        max-height: min(46dvh, 360px);
-        overflow: auto;
-        overscroll-behavior: contain;
+        max-height: none;
+        overflow: visible;
         padding: 0 0 10px;
         border: 0;
         border-bottom: 1px solid var(--line);
@@ -658,11 +657,7 @@
       header { padding-top: 8px; }
       .brand { font-size: 20px; line-height: 1.1; }
       .subtitle { margin: 0; padding: 0; font-size: 11px; }
-      .fold-toggle { cursor: default; }
-      .fold-toggle-meta, .fold-toggle-chevron { display: none; }
-      .tree-panel,
-      .tree-panel.is-open { max-height: none; overflow: visible; }
-      .tree-panel:not(.is-open) .tree-body { display: block; }
+      .fold-toggle { min-height: 44px; }
       .gallery { gap: 3px; padding: 3px 0 28px; }
       .gallery-col { gap: 3px; }
       .card { border-radius: 12px; }
@@ -672,7 +667,12 @@
       .collection-page-button { min-height: 40px; }
       .collection-footer-actions button { flex-basis: 40px; width: 40px; height: 40px; }
       .collection-page-grid { grid-template-rows: repeat(6, 44px); }
-      .collection-name { min-height: 0; font-size: 13px; }
+      .collection-list { gap: 12px; }
+      .collection-name { min-height: 0; font-size: 13px; padding: 6px 4px 12px; }
+      .collection-count, .collection-picker-tile-count {
+        right: 5px; bottom: 3px; font-size: 8px; line-height: 1;
+      }
+      .collection-picker-tile-label { padding: 5px 6px 12px; }
       .collection-search input, .collection-rename input {
         min-height: 40px; font-size: 16px;
       }
@@ -697,8 +697,12 @@
       #viewer-title { display: none; }
       .modal-bar button { min-height: 40px; padding: 8px 10px; font-size: 13px; }
       .viewer-weight { width: 100%; }
-      .viewer-collection-menu, .card-collection-menu { --collection-picker-height: min(474px, calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 16px)); }
+      .viewer-collection-menu, .card-collection-menu {
+        --collection-picker-height: min(520px, calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 16px));
+        gap: 10px;
+      }
       .card-collection-menu { left: 8px; right: 8px; bottom: max(8px, env(safe-area-inset-bottom, 0px)); }
+      .collection-picker-footer { gap: 8px; padding-top: 6px; }
       .collection-menu-reference, .viewer-collection-menu-item, .viewer-collection-menu-create button { min-height: 44px; }
     }
     @media (hover: hover) and (pointer: fine) {
@@ -4097,7 +4101,6 @@
       });
     });
     $('scope-toggle').addEventListener('click', () => {
-      if (window.matchMedia('(max-width: 720px)').matches) return;
       const panel = $('tree-panel');
       const open = !panel.classList.contains('is-open');
       panel.classList.toggle('is-open', open);
@@ -4163,9 +4166,6 @@
       if (!state.collectionId) return;
       state.collectionSearchTimer = setTimeout(() => fetchCollectionImages({ reset: true }), 180);
     });
-    if (window.matchMedia('(max-width: 720px)').matches) {
-      $('scope-toggle').setAttribute('aria-expanded', 'true');
-    }
     if (window.matchMedia('(pointer: fine)').matches) $('query').focus();
     bindGalleryReferenceDropTarget();
     loadLibraryTree();

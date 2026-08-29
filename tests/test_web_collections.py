@@ -271,8 +271,19 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn('viewport-fit=cover', html)
         self.assertIn('inline-size: 100dvw; block-size: 100dvh;', html)
         self.assertIn('id="tab-btn-collections"', html)
-        self.assertIn(".tree-panel:not(.is-open) .tree-body { display: block; }", html)
-        self.assertIn("window.matchMedia('(max-width: 720px)').matches", html)
+        self.assertIn(".tree-panel:not(.is-open) .tree-body { display: none; }", html)
+        self.assertNotIn("max-height: min(46dvh, 360px)", html)
+        self.assertIn(
+            ".tree-panel.is-open {\n        max-height: none;\n        overflow: visible;",
+            html,
+        )
+        self.assertNotIn(
+            ".tree-panel:not(.is-open) .tree-body { display: block; }", html
+        )
+        self.assertNotIn(
+            "if (window.matchMedia('(max-width: 720px)').matches) return;", html
+        )
+        self.assertIn("panel.classList.toggle('is-open', open)", html)
         self.assertIn('id="collection-search"', html)
         self.assertIn('id="collection-undo"', html)
         self.assertIn('id="collection-redo"', html)
@@ -365,6 +376,16 @@ class CollectionsApiTests(unittest.TestCase):
             html,
         )
         self.assertIn(
+            ".collection-count, .collection-picker-tile-count {\n"
+            "        right: 5px; bottom: 3px; font-size: 8px; line-height: 1;",
+            html,
+        )
+        self.assertIn(".collection-list { gap: 12px; }", html)
+        self.assertIn(
+            ".collection-name { min-height: 0; font-size: 13px; padding: 6px 4px 12px; }",
+            html,
+        )
+        self.assertIn(
             'id="collection-rename-tool" type="button" aria-pressed="false"'
             ' aria-label="重命名收藏夹"',
             html,
@@ -441,6 +462,9 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn('openCardCollectionMenu(item, actionTarget);', html)
         self.assertIn("position: fixed; z-index: 1300", html)
         self.assertIn("--collection-picker-height: min(474px", html)
+        self.assertIn("--collection-picker-height: min(520px", html)
+        self.assertIn(".collection-picker-footer { gap: 8px; padding-top: 6px; }", html)
+        self.assertIn(".collection-picker-tile-label { padding: 5px 6px 12px; }", html)
         self.assertIn('class="collection-picker-tile-label"', html)
         self.assertIn(
             ".collection-picker-tile-label {\n      position: absolute; inset: 0;"
