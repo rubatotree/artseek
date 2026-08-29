@@ -7,7 +7,6 @@ from typing import Any
 import numpy as np
 import torch
 from PIL import Image
-from transformers import AutoModel, AutoProcessor
 
 from ..compute import configure_inference, release_accelerator, resolve_device, resolve_dtype
 from ..config import EmbeddingConfig
@@ -29,6 +28,8 @@ def pooled_features(output: Any) -> torch.Tensor:
 
 
 def _load_auto_model(name: str, dtype: torch.dtype) -> Any:
+    from transformers import AutoModel
+
     load_kwargs: dict[str, Any] = {"attn_implementation": "sdpa"}
     try:
         model = AutoModel.from_pretrained(name, dtype=dtype, **load_kwargs)
@@ -39,6 +40,8 @@ def _load_auto_model(name: str, dtype: torch.dtype) -> Any:
 
 class SiglipEmbedder:
     def __init__(self, config: EmbeddingConfig):
+        from transformers import AutoProcessor
+
         self.config = config
         self.device = resolve_device(config.device)
         self.dtype = resolve_dtype(config.dtype, self.device)
