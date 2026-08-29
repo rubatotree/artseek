@@ -308,7 +308,10 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn("function startCollectionReorder", html)
         self.assertIn("function moveCollectionWithKeyboard", html)
         self.assertIn("/api/collections/order", html)
-        self.assertIn("const COLLECTIONS_PER_PAGE = COLLECTION_GRID_COLUMNS * COLLECTION_GRID_ROWS;", html)
+        self.assertIn(
+            "const COLLECTIONS_PER_PAGE = COLLECTION_GRID_COLUMNS * COLLECTION_GRID_ROWS;",
+            html,
+        )
         self.assertIn("grid-template-rows: repeat(6, 44px);", html)
         self.assertIn("grid-template-rows: repeat(6, 44px);", html)
         self.assertIn("function collectionPaginationMarkup", html)
@@ -329,7 +332,10 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn("event.button !== 2", html)
         self.assertIn("document.addEventListener('contextmenu'", html)
         self.assertIn("function exitCollectionEditMode()", html)
-        self.assertIn(".collection-list.is-editing.is-editing-visible .collection-row.collection-tile", html)
+        self.assertIn(
+            ".collection-list.is-editing.is-editing-visible .collection-row.collection-tile",
+            html,
+        )
         self.assertIn("transform: translateY(-2px) scale(1.01);", html)
         self.assertIn("function queueCollectionListAfterEditExit()", html)
         self.assertIn("}, 190);", html)
@@ -340,9 +346,20 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn('M12 3v18M3 12h18', html)
         self.assertIn('M4 7h16M10 11v6M14 11v6', html)
         self.assertIn("${collectionPaginationMarkup('sidebar')}", html)
-        self.assertIn(".collection-name {\n      position: absolute; inset: 0; display: grid; place-items: center;", html)
-        self.assertIn("position: absolute; right: 6px; bottom: 5px; color: var(--muted); font-size: 9px;", html)
-        self.assertIn('id="collection-rename-tool" type="button" aria-pressed="false" aria-label="重命名收藏夹"', html)
+        self.assertIn(
+            ".collection-name {\n      position: absolute; inset: 0;"
+            " display: grid; place-items: center;",
+            html,
+        )
+        self.assertIn(
+            "position: absolute; right: 6px; bottom: 5px; color: var(--muted); font-size: 9px;",
+            html,
+        )
+        self.assertIn(
+            'id="collection-rename-tool" type="button" aria-pressed="false"'
+            ' aria-label="重命名收藏夹"',
+            html,
+        )
         self.assertIn('>↶</button>', html)
         self.assertIn('>↷</button>', html)
 
@@ -375,7 +392,7 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn("pageHoverLock: ''", html)
         self.assertIn("cardMenuGesture.pageHoverLock === direction", html)
         self.assertIn("drag.pageHoverLock === direction", html)
-        self.assertIn("collectionReorderCancelUntil", html)
+        self.assertIn("collectionEditModeCancelUntil", html)
         self.assertIn("cancelCollectionReorder();", html)
         self.assertIn('data-card-menu-page', html)
         self.assertIn("favoriteButton?.addEventListener('pointermove'", html)
@@ -416,8 +433,15 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn("position: fixed; z-index: 1300", html)
         self.assertIn("--collection-picker-height: min(474px", html)
         self.assertIn('class="collection-picker-tile-label"', html)
-        self.assertIn(".collection-picker-tile-label {\n      position: absolute; inset: 0; display: grid; place-items: center;", html)
-        self.assertIn("position: absolute; right: 6px; bottom: 5px; color: #bdb4c1; font-size: 9px;", html)
+        self.assertIn(
+            ".collection-picker-tile-label {\n      position: absolute; inset: 0;"
+            " display: grid; place-items: center;",
+            html,
+        )
+        self.assertIn(
+            "position: absolute; right: 6px; bottom: 5px; color: #bdb4c1; font-size: 9px;",
+            html,
+        )
         self.assertIn("if (!$('viewer-collection-menu').hidden) {", html)
         self.assertIn("window.addEventListener('orientationchange', sync);", html)
         self.assertIn(
@@ -470,7 +494,11 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn("$('panel').classList.remove('loading');", delete_source)
         self.assertIn("border-radius: 15px 15px 0 0", html)
         self.assertIn(".image-wrap { border-radius: 11px 11px 0 0; }", html)
-        self.assertIn(".filename { flex: 1 1 auto; min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;", html)
+        self.assertIn(
+            ".filename { flex: 1 1 auto; min-width: 0; max-width: 100%;"
+            " overflow: hidden; white-space: nowrap; text-overflow: ellipsis;",
+            html,
+        )
 
     def test_missing_qdrant_collection_returns_an_empty_page_without_pruning_membership(
         self,

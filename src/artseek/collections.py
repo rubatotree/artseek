@@ -671,7 +671,9 @@ class CollectionStore:
         ordered = [by_id[collection_id] for collection_id in ordered_ids if collection_id in by_id]
         ordered_ids_set = set(ordered_ids)
         document.collections = ordered + [
-            collection for collection in document.collections if collection.id not in ordered_ids_set
+            collection
+            for collection in document.collections
+            if collection.id not in ordered_ids_set
         ]
         return None
 
