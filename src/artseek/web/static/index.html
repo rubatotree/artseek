@@ -801,7 +801,7 @@
       <section class="search-panel" id="panel">
         <form id="search-form" autocomplete="off">
         <div class="search-row">
-          <input id="query" type="text" name="artseek-query" placeholder="搜索图片..." autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" inputmode="search" enterkeyhint="search">
+          <input id="query" type="text" name="artseek-query" placeholder="搜索图片，或粘贴参考图..." title="可输入描述，或直接粘贴参考图" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" inputmode="search" enterkeyhint="search">
           <div class="search-actions">
             <button class="primary" id="search" type="submit">查询</button>
             <button class="secondary random-browse" id="random-browse" type="button" title="在当前选定范围内随机翻阅">随机瀑布</button>
@@ -1181,9 +1181,58 @@
     function isFileDrag(event) {
       return Array.from(event.dataTransfer?.types || []).includes('Files');
     }
+    function isClipboardBitmapName(name) {
+      return /^(image\.(png|jpe?g|webp|gif|bmp|avif|tiff?)|blob|untitled)?$/i.test(name || '');
+    }
+    function preferredClipboardImage(files) {
+      const rank = (file) => {
+        const order = ['image/png', 'image/webp', 'image/jpeg', 'image/jpg', 'image/gif', 'image/bmp', 'image/avif'];
+        const index = order.indexOf(file.type);
+        return index < 0 ? order.length : index;
+      };
+      return files.slice().sort((left, right) => rank(left) - rank(right))[0];
+    }
+    function dedupeClipboardImages(fileList) {
+      const files = [];
+      const seen = new Set();
+      for (const file of fileList) {
+        if (!file || !isImageFile(file)) continue;
+        const key = `${file.size}|${file.type}|${file.name || ''}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        files.push(file);
+      }
+      if (files.length > 1 && files.every((file) => isClipboardBitmapName(file.name))) {
+        return [preferredClipboardImage(files)];
+      }
+      return files;
+    }
+    function clipboardImageFiles(clipboardData) {
+      if (!clipboardData) return [];
+      const fromFiles = Array.from(clipboardData.files || []).filter(isImageFile);
+      // `.files` and `.items` often expose one bitmap twice; getAsFile() also
+      // mints a new lastModified, so name/size/type/mtime is not a stable key.
+      if (fromFiles.length) return dedupeClipboardImages(fromFiles);
+      const fromItems = [];
+      for (const item of Array.from(clipboardData.items || [])) {
+        if (item.kind === 'file') fromItems.push(item.getAsFile());
+      }
+      return dedupeClipboardImages(fromItems);
+    }
+    function handleSearchPaste(event) {
+      const target = event.target instanceof Element ? event.target : document.activeElement;
+      if (!(target instanceof Element) || !target.closest('#panel')) return;
+      const files = clipboardImageFiles(event.clipboardData);
+      if (!files.length) return;
+      if (addReferenceFiles(files)) event.preventDefault();
+    }
     function addReferenceFiles(fileList) {
       const files = [...fileList].filter(isImageFile);
       if (!files.length) return false;
+      if (state.references.length >= MAX_REFS) {
+        $('query-info').textContent = `参考图最多 ${MAX_REFS} 张。`;
+        return false;
+      }
       let added = 0;
       for (const file of files) {
         if (state.references.length >= MAX_REFS) break;
@@ -1192,7 +1241,7 @@
           key: `r${++state.refSeq}`,
           id: null,
           file,
-          name: file.name,
+          name: file.name || '粘贴的参考图',
           src: url,
           preview: url,
           objectUrl: url,
@@ -3968,6 +4017,7 @@
       clearTimeout(fileDragClear);
       document.body.classList.remove('file-drag');
     });
+    document.addEventListener('paste', handleSearchPaste);
 
     document.addEventListener('keydown', handleCollectionHistoryShortcut, true);
     document.addEventListener('keydown', (event) => {
