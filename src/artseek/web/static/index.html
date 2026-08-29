@@ -144,43 +144,71 @@
     #tab-scope[hidden], #tab-advanced[hidden], #tab-collections[hidden] { display: none; }
     .collections-panel { display: grid; gap: 10px; }
     .collections-intro, .collection-status { color: var(--muted); font-size: 12px; line-height: 1.45; }
-    .collection-create { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
-    .collection-create input, .collection-search input, .collection-rename input {
+    .collection-footer-actions { display: flex; align-items: center; gap: 4px; }
+    .collection-footer-actions button { flex: 0 0 32px; width: 32px; height: 32px; min-height: 32px; padding: 0; font-size: 17px; line-height: 1; }
+    .collection-footer-actions button:nth-child(3) { margin-left: auto; }
+    .collection-footer-actions button:disabled,
+    .collection-footer-actions button:disabled:hover { opacity: .45; cursor: default; box-shadow: none; transform: none; }
+    .collection-tool svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.9; vertical-align: middle; }
+    .collection-tool[aria-pressed="true"] { background: var(--rose-soft); color: #8a5268; }
+    .collection-search input, .collection-rename input {
       min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 7px 8px;
       color: var(--ink); background: #fff; font: 12px/1.2 inherit;
     }
-    .collection-create button, .collection-rename button { padding: 7px 10px; font-size: 12px; }
     .collection-search { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
-    .collection-list { display: grid; gap: 3px; }
+    .collection-list { display: grid; gap: 8px; min-width: 0; }
     .collection-list.is-reordering { user-select: none; }
     .collection-empty { padding: 16px 8px; color: var(--muted); font-size: 13px; }
-    .collection-row {
-      display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 4px;
-      min-height: 36px; padding: 3px 4px 3px 7px; border: 1px solid transparent; border-radius: 10px;
-      transition: background .15s ease, border-color .15s ease;
+    .collection-page-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(6, 44px);
+      grid-auto-flow: row; gap: 6px; min-width: 0;
     }
-    .collection-row:hover { background: #f6f1f5; }
-    .collection-row.is-selected { background: var(--blue-soft); color: #496a8a; }
-    .collection-row.is-reordering { border-color: #d7aab9; background: #fff8fb; box-shadow: 0 5px 14px rgba(86, 54, 68, .14); opacity: .82; }
+    .collection-row.collection-tile {
+      position: relative; display: block; min-width: 0; min-height: 0;
+      overflow: hidden; border: 1px solid #eee6eb; border-radius: 10px; background: #fff;
+      box-shadow: 0 1px 2px rgba(69, 51, 76, .04); transition: transform .18s ease, background .18s ease, border-color .18s ease, box-shadow .18s ease;
+    }
+    .collection-row.collection-tile:hover { background: #fdf9fb; border-color: #eadce3; }
+    .collection-row.collection-tile.is-selected { border-color: #b6cbe0; background: var(--blue-soft); color: #496a8a; }
+    .collection-row.collection-tile.is-reordering { border-color: #d7aab9; background: #fff8fb; box-shadow: 0 5px 14px rgba(86, 54, 68, .14); opacity: .82; }
+    .collection-list.is-editing.is-editing-visible .collection-row.collection-tile:not(.is-editing):not(.is-reordering) {
+      transform: translateY(-1px); border-color: #dfbdc9; background: #fffafd; box-shadow: 0 3px 9px rgba(135, 89, 108, .12);
+    }
+    .collection-list.is-editing.is-editing-visible .collection-row.collection-tile:not(.is-editing):not(.is-reordering) .collection-name:hover {
+      background: rgba(201, 122, 152, .12);
+    }
+    .collection-list.is-reorder-mode .collection-name { cursor: grab; touch-action: none; }
+    .collection-list.is-reordering .collection-name { cursor: grabbing; }
+    .collection-list.is-reordering .collection-row.collection-tile.is-reordering {
+      transform: translateY(-2px) scale(1.01);
+      will-change: transform;
+    }
     .collection-name {
-      min-width: 0; overflow: hidden; padding: 6px 4px; border-radius: 7px; background: transparent;
-      color: inherit; font: 600 13px/1.2 inherit; text-align: left; white-space: nowrap; text-overflow: ellipsis;
+      position: absolute; inset: 0; display: grid; place-items: center;
+      min-width: 0; overflow: hidden; padding: 8px 4px; border-radius: 7px; background: transparent;
+      color: inherit; font: 600 11px/1.2 inherit; text-align: center;
     }
     .collection-name:hover { transform: none; background: rgba(119, 153, 189, .10); }
-    .collection-count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-    .collection-drag-handle {
-      width: 28px; min-height: 30px; padding: 0; border-radius: 7px; background: transparent; color: #9b7483;
-      cursor: grab; font-size: 16px; line-height: 1; touch-action: none;
+    .collection-name-label { width: 100%; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .collection-count {
+      position: absolute; right: 6px; bottom: 5px; color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums;
+      line-height: 1; pointer-events: none;
     }
-    .collection-drag-handle:hover, .collection-drag-handle:focus-visible { transform: none; background: #f3e4ea; color: #8a5268; }
-    .collection-drag-handle:active { cursor: grabbing; }
-    .collection-icon {
-      width: 26px; height: 26px; padding: 0; border-radius: 7px; background: transparent; color: #9b7483;
-      font-size: 14px; line-height: 1;
+    .collection-row.is-editing { display: block; }
+    .collection-rename { position: absolute; inset: 7px; display: block; }
+    .collection-rename input {
+      width: 100%; min-width: 0; height: 28px; min-height: 0; padding: 3px 6px; border-radius: 7px;
+      font-size: 11px; line-height: 1.2;
     }
-    .collection-icon:hover { transform: none; background: #f3e4ea; color: #8a5268; }
-    .collection-icon[aria-pressed="true"] { color: #8a5268; background: var(--rose-soft); }
-    .collection-rename { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; grid-column: 2 / -1; }
+    .collection-pagination, .collection-picker-pagination {
+      display: grid; grid-template-columns: 30px minmax(0, 1fr) 30px; align-items: center; gap: 5px;
+    }
+    .collection-page-button {
+      width: 30px; height: 28px; min-height: 0; padding: 0; border-radius: 8px; background: #f6f1f5; color: #665866;
+      font-size: 15px;
+    }
+    .collection-page-button:disabled { opacity: .42; cursor: default; transform: none; }
+    .collection-page-indicator { min-width: 0; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; text-align: center; }
     .time-filter { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
     .time-filter-label { margin-bottom: 8px; font-size: 14px; font-weight: 700; }
     .time-preset {
@@ -318,7 +346,7 @@
     }
     .gallery-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
     .card {
-      position: relative; overflow: hidden; border: 1px solid #eee9ef;
+      position: relative; min-width: 0; max-width: 100%; overflow: hidden; border: 1px solid #eee9ef;
       border-radius: 16px; background: #fff; box-shadow: 0 7px 22px rgba(58, 47, 64, .055);
     }
     .image-wrap {
@@ -330,12 +358,12 @@
     .card.is-dragging { opacity: .55; }
     .image-wrap img { display: block; width: 100%; height: 100%; object-fit: cover; }
     .score { position: absolute; top: 9px; right: 9px; padding: 5px 8px; border-radius: 999px; background: rgba(31,27,35,.72); color: #fff; font-size: 12px; backdrop-filter: blur(8px); }
-    .card-body { padding: 10px 11px 11px; }
+    .card-body { min-width: 0; padding: 10px 11px 11px; }
     .card.has-collection-actions .card-body { padding-right: 68px; min-height: 52px; }
     .card-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-    .filename { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; font-weight: 650; }
-    .meta { margin-top: 4px; color: var(--muted); font-size: 11px; }
-    .hits { margin-top: 7px; font-size: 11px; color: #965a71; line-height: 1.5; }
+    .filename { flex: 1 1 auto; min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; font-weight: 650; }
+    .meta { min-width: 0; overflow: hidden; margin-top: 4px; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .hits { min-width: 0; overflow-wrap: anywhere; margin-top: 7px; font-size: 11px; color: #965a71; line-height: 1.5; }
     .collection-card-actions {
       position: absolute; right: 8px; bottom: 8px; z-index: 2; display: flex; gap: 5px;
     }
@@ -432,8 +460,11 @@
       outline: 2px solid #ddb2c2; outline-offset: 2px;
     }
     .viewer-collection-menu, .card-collection-menu {
-      max-height: min(52vh, calc(100dvh - 32px)); overflow: auto;
-      display: grid; gap: 7px; padding: 10px; border: 1px solid #514553; border-radius: 14px;
+      --collection-picker-width: min(312px, calc(100vw - 24px));
+      --collection-picker-height: min(474px, calc(100dvh - 24px));
+      inline-size: var(--collection-picker-width); block-size: var(--collection-picker-height);
+      overflow: hidden; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 7px; padding: 10px;
+      border: 1px solid #514553; border-radius: 14px;
       background: rgba(34, 29, 39, .98); color: #eee8f0; box-shadow: 0 16px 36px rgba(0, 0, 0, .34);
     }
     .drop-mask {
@@ -446,28 +477,40 @@
       background: rgba(255, 255, 255, .92); color: #8a5268;
       box-shadow: var(--shadow); font-size: 16px; font-weight: 650;
     }
-    .viewer-collection-menu { position: fixed; z-index: 1300; width: min(288px, calc(100vw - 24px)); }
+    .viewer-collection-menu { position: fixed; z-index: 1300; }
     .card-collection-menu {
       position: fixed; z-index: 1200; left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom, 0px));
-      width: min(440px, calc(100vw - 24px)); margin-inline: auto;
+      margin-inline: auto;
     }
     .viewer-collection-menu[hidden], .card-collection-menu[hidden] { display: none; }
-    .viewer-collection-menu-title { color: #bdb4c1; font-size: 12px; font-weight: 650; }
-    .viewer-collection-menu-list { display: grid; gap: 5px; }
+    .viewer-collection-menu-title { min-width: 0; overflow: hidden; color: #bdb4c1; font-size: 12px; font-weight: 650; white-space: nowrap; text-overflow: ellipsis; }
+    .viewer-collection-menu-list {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(6, 44px);
+      grid-auto-flow: row; gap: 6px; min-width: 0; align-content: start;
+    }
     .viewer-collection-menu-item {
-      min-height: 38px; padding: 8px 9px; border: 1px solid #4b414f; border-radius: 9px;
-      background: #302b34; color: #eee8f0; text-align: left; font-size: 13px;
+      position: relative; min-width: 0; min-height: 0; padding: 6px; border: 1px solid #4b414f; border-radius: 9px;
+      background: #302b34; color: #eee8f0; text-align: center; font-size: 12px;
     }
     .viewer-collection-menu-item[aria-pressed="true"] { border-color: #a77b8d; background: #4a3d4d; }
-    .collection-menu-reference { min-height: 38px; padding: 8px 9px; border: 1px solid #a77b8d; border-radius: 9px; background: #4a3d4d; color: #fff; text-align: left; }
-    .card-collection-menu .is-quick-action-target {
+    .collection-picker-tile-label {
+      position: absolute; inset: 0; display: grid; place-items: center; min-width: 0; overflow: hidden; padding: 6px;
+      white-space: nowrap; text-overflow: ellipsis; pointer-events: none;
+    }
+    .collection-picker-tile-count {
+      position: absolute; right: 6px; bottom: 5px; color: #bdb4c1; font-size: 9px;
+      font-variant-numeric: tabular-nums; pointer-events: none;
+    }
+    .collection-menu-reference { position: relative; min-height: 38px; padding: 8px 9px; border: 1px solid #a77b8d; border-radius: 9px; background: #4a3d4d; color: #fff; text-align: left; }
+    .collection-picker-footer { display: grid; gap: 6px; min-width: 0; }
+    .collection-picker-pagination { color: #bdb4c1; }
+    .collection-picker-pagination .collection-page-button { background: #302b34; color: #eee8f0; }
+    .collection-picker-pagination .collection-page-button:disabled { background: #302b34; }
+    .card-collection-menu.is-quick-dragging .is-quick-action-target {
       border-color: #d8a8b9; background: #5b4658; color: #fff;
       box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14);
     }
-    .card-collection-menu .is-quick-action-target::after {
-      content: '松开'; float: right; color: #f1cdd9; font-size: 11px; font-weight: 700;
-    }
-    .viewer-collection-menu-create { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; padding-top: 7px; border-top: 1px solid #4b414f; }
+    .viewer-collection-menu-create { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; padding-top: 6px; border-top: 1px solid #4b414f; }
     .viewer-collection-menu-create input { min-width: 0; padding: 8px 9px; border: 1px solid #4b414f; border-radius: 9px; background: #241f28; color: #eee8f0; font-size: 13px; }
     .viewer-collection-menu-create button { min-height: 38px; padding: 8px 10px; background: #4a3d4d; color: #fff; }
     @media (max-width: 900px) {
@@ -615,16 +658,25 @@
       header { padding-top: 8px; }
       .brand { font-size: 20px; line-height: 1.1; }
       .subtitle { margin: 0; padding: 0; font-size: 11px; }
+      .fold-toggle { cursor: default; }
+      .fold-toggle-meta, .fold-toggle-chevron { display: none; }
+      .tree-panel,
+      .tree-panel.is-open { max-height: none; overflow: visible; }
+      .tree-panel:not(.is-open) .tree-body { display: block; }
       .gallery { gap: 3px; padding: 3px 0 28px; }
       .gallery-col { gap: 3px; }
       .card { border-radius: 12px; }
       .image-wrap { border-radius: 11px 11px 0 0; }
       .card-body { padding: 8px; }
-      .side-tab, .collection-create button, .collection-rename button,
-      .collection-icon, .collection-name { min-height: 40px; }
-      .collection-create input, .collection-search input, .collection-rename input {
+      .side-tab, .collection-footer-actions button,
+      .collection-page-button { min-height: 40px; }
+      .collection-footer-actions button { flex-basis: 40px; width: 40px; height: 40px; }
+      .collection-page-grid { grid-template-rows: repeat(6, 44px); }
+      .collection-name { min-height: 0; font-size: 13px; }
+      .collection-search input, .collection-rename input {
         min-height: 40px; font-size: 16px;
       }
+      .collection-rename input { min-height: 28px; height: 28px; padding: 3px 6px; font-size: 13px; }
       .tree-row { min-height: 44px; }
       .tree-twist, .tree-remove, .tree-refresh { width: 32px; height: 32px; }
       .tree-check { padding: 8px 6px; }
@@ -645,14 +697,14 @@
       #viewer-title { display: none; }
       .modal-bar button { min-height: 40px; padding: 8px 10px; font-size: 13px; }
       .viewer-weight { width: 100%; }
-      .viewer-collection-menu, .card-collection-menu { max-height: min(56vh, calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 24px)); }
-      .card-collection-menu { left: 8px; right: 8px; bottom: max(8px, env(safe-area-inset-bottom, 0px)); width: min(440px, calc(100vw - 16px)); }
+      .viewer-collection-menu, .card-collection-menu { --collection-picker-height: min(474px, calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 16px)); }
+      .card-collection-menu { left: 8px; right: 8px; bottom: max(8px, env(safe-area-inset-bottom, 0px)); }
       .collection-menu-reference, .viewer-collection-menu-item, .viewer-collection-menu-create button { min-height: 44px; }
     }
     @media (hover: hover) and (pointer: fine) {
       .card-collection-menu {
         left: 0; right: auto; top: 0; bottom: auto;
-        width: min(288px, calc(100vw - 24px)); margin: 0;
+        margin: 0;
       }
     }
     @media (prefers-reduced-motion: reduce) {
@@ -714,16 +766,20 @@
         <div id="tree" class="tree"></div>
         </div>
         <div id="tab-collections" class="collections-panel" role="tabpanel" aria-labelledby="tab-btn-collections" hidden>
-          <div class="collections-intro">拖动左侧把手可调整收藏夹顺序；在触控设备上也可直接拖动。图片可通过标题下方的收藏入口加入收藏夹。</div>
-          <form id="collection-create" class="collection-create" autocomplete="off">
-            <input id="collection-name" type="text" maxlength="80" placeholder="新收藏夹名称" aria-label="新收藏夹名称">
-            <button class="secondary" type="submit">新建</button>
-          </form>
+          <div class="collections-intro">点击收藏夹浏览图片。使用底部工具后，直接点击卡片完成对应操作；图片加入、移出收藏后可用撤销恢复。</div>
           <label class="collection-search" for="collection-search">在收藏夹内搜索
             <input id="collection-search" type="search" placeholder="名称、路径、标签或描述" autocomplete="off" spellcheck="false">
           </label>
           <div id="collection-status" class="collection-status" aria-live="polite"></div>
           <div id="collection-list" class="collection-list" aria-label="收藏夹列表"></div>
+          <div class="collection-footer-actions">
+            <button class="secondary" id="collection-undo" type="button" disabled aria-keyshortcuts="Control+Z Meta+Z" aria-label="没有可撤销的收藏操作" title="没有可撤销的收藏操作">↶</button>
+            <button class="secondary" id="collection-redo" type="button" disabled aria-keyshortcuts="Control+Y Control+Shift+Z Meta+Shift+Z" aria-label="没有可重做的收藏操作" title="没有可重做的收藏操作">↷</button>
+            <button class="secondary collection-tool" id="collection-create-tool" type="button" aria-label="新建收藏夹" title="新建收藏夹">＋</button>
+            <button class="secondary collection-tool" id="collection-rename-tool" type="button" aria-pressed="false" aria-label="重命名收藏夹" title="重命名收藏夹">✎</button>
+            <button class="secondary collection-tool" id="collection-reorder-tool" type="button" aria-pressed="false" aria-label="改变收藏夹位置" title="改变收藏夹位置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3 9 6M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg></button>
+            <button class="secondary collection-tool" id="collection-delete-tool" type="button" aria-pressed="false" aria-label="删除收藏夹" title="删除收藏夹"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></button>
+          </div>
         </div>
         <div id="tab-advanced" class="advanced-options" role="tabpanel" aria-labelledby="tab-btn-advanced" hidden>
           <label><input id="use-llm" type="checkbox" checked> 本地大模型理解条件</label>
@@ -829,6 +885,11 @@
       return data;
     }
     const MAX_REFS = 8;
+    const COLLECTION_GRID_COLUMNS = 2;
+    const COLLECTION_GRID_ROWS = 6;
+    const COLLECTIONS_PER_PAGE = COLLECTION_GRID_COLUMNS * COLLECTION_GRID_ROWS;
+    const CARD_MENU_DRAG_THRESHOLD_MOUSE = 8;
+    const CARD_MENU_DRAG_THRESHOLD_TOUCH = 18;
     const GALLERY_ITEM_MIME = 'application/x-artseek-image-id';
     const state = {
       references: [], refSeq: 0, current: null, currentRefKey: null, viewerSource: 'gallery',
@@ -837,14 +898,17 @@
       mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
       randomSeed: null, randomTotal: 0,
       collections: [], collectionId: '', collectionName: '', collectionTotal: null,
-      editingCollectionId: '', collectionSearchTimer: 0,
-      collectionDrag: null, collectionOrderSave: 0,
+      editingCollectionId: '', pendingCreatedCollectionId: '', collectionEditMode: '', collectionEditModeTransitionTimer: 0, collectionSearchTimer: 0,
+      collectionSidebarPage: 0, viewerCollectionMenuPage: 0, cardCollectionMenuPage: 0,
+      collectionDrag: null, collectionOrderSave: 0, collectionReorderClickUntil: 0, collectionEditModeCancelUntil: 0, collectionHistoryBusy: false,
+      collectionHistory: { canUndo: false, canRedo: false, undoLabel: '', redoLabel: '' },
       galleryDragItem: null,
       viewerMenuTrigger: null, viewerMenuSession: 0,
       cardMenuItem: null, cardMenuTrigger: null, cardMenuSession: 0,
     };
     const cardMenuGesture = {
       pointerId: null, item: null, trigger: null, hoverTarget: null, clickTrigger: null,
+      startX: 0, startY: 0, dragging: false, pageHoverLock: '',
     };
     const VIEW_MIN_SCALE = 0.05;
     const VIEW_MAX_SCALE = 8;
@@ -1272,18 +1336,248 @@
     function setCollectionStatus(message) {
       $('collection-status').textContent = message || '';
     }
+    function collectionPageCount() {
+      return Math.max(1, Math.ceil(state.collections.length / COLLECTIONS_PER_PAGE));
+    }
+    function collectionPageStateKey(namespace) {
+      if (namespace === 'sidebar') return 'collectionSidebarPage';
+      if (namespace === 'viewer') return 'viewerCollectionMenuPage';
+      return 'cardCollectionMenuPage';
+    }
+    function collectionPage(namespace) {
+      const key = collectionPageStateKey(namespace);
+      const page = Math.max(0, Math.min(Number(state[key]) || 0, collectionPageCount() - 1));
+      state[key] = page;
+      return page;
+    }
+    function setCollectionPage(namespace, page) {
+      const key = collectionPageStateKey(namespace);
+      const next = Math.max(0, Math.min(Number(page) || 0, collectionPageCount() - 1));
+      state[key] = next;
+      return next;
+    }
+    function clampCollectionPages() {
+      ['sidebar', 'viewer', 'card'].forEach((namespace) => collectionPage(namespace));
+    }
+    function collectionPageItems(namespace) {
+      const page = collectionPage(namespace);
+      const start = page * COLLECTIONS_PER_PAGE;
+      return state.collections.slice(start, start + COLLECTIONS_PER_PAGE);
+    }
+    function setCollectionPageContaining(namespace, collectionId) {
+      const index = state.collections.findIndex((collection) => collection.id === collectionId);
+      if (index >= 0) setCollectionPage(namespace, Math.floor(index / COLLECTIONS_PER_PAGE));
+    }
+    function collectionPaginationMarkup(namespace, { picker = false } = {}) {
+      const page = collectionPage(namespace);
+      const total = collectionPageCount();
+      const dataAttribute = picker ? `data-${namespace}-menu-page` : 'data-collection-page';
+      const className = picker ? 'collection-picker-pagination' : 'collection-pagination';
+      return `<div class="${className}" aria-label="收藏夹分页">
+        <button class="collection-page-button" type="button" ${dataAttribute}="${page - 1}" aria-label="上一页收藏夹" ${page <= 0 ? 'disabled' : ''}>‹</button>
+        <span class="collection-page-indicator" aria-live="polite">第 ${page + 1} / ${total} 页</span>
+        <button class="collection-page-button" type="button" ${dataAttribute}="${page + 1}" aria-label="下一页收藏夹" ${page >= total - 1 ? 'disabled' : ''}>›</button>
+      </div>`;
+    }
+    function renderCollectionEditMode() {
+      const mode = state.collectionEditMode;
+      const list = $('collection-list');
+      const editing = Boolean(mode);
+      const wasEditing = list.classList.contains('is-editing');
+      list.classList.toggle('is-editing', editing);
+      if (!editing) list.classList.remove('is-editing-visible');
+      else if (!wasEditing) requestAnimationFrame(() => {
+        if (state.collectionEditMode) list.classList.add('is-editing-visible');
+      });
+      list.classList.toggle('is-reorder-mode', mode === 'reorder');
+      ['rename', 'reorder', 'delete'].forEach((tool) => {
+        const button = $(`collection-${tool}-tool`);
+        const active = mode === tool;
+        button.setAttribute('aria-pressed', String(active));
+      });
+    }
+    function setCollectionEditMode(mode) {
+      if (state.collectionDrag) return;
+      if (state.collectionEditModeTransitionTimer) {
+        clearTimeout(state.collectionEditModeTransitionTimer);
+        state.collectionEditModeTransitionTimer = 0;
+      }
+      const previousMode = state.collectionEditMode;
+      state.collectionEditMode = state.collectionEditMode === mode ? '' : mode;
+      state.editingCollectionId = '';
+      if (state.collectionEditMode === 'reorder' && previousMode !== 'reorder') renderCollectionList();
+      else if (previousMode === 'reorder' && !state.collectionEditMode) {
+        renderCollectionEditMode();
+        queueCollectionListAfterEditExit();
+      } else renderCollectionEditMode();
+    }
+    function queueCollectionListAfterEditExit() {
+      clearTimeout(state.collectionEditModeTransitionTimer);
+      state.collectionEditModeTransitionTimer = setTimeout(() => {
+        state.collectionEditModeTransitionTimer = 0;
+        renderCollectionList();
+      }, 190);
+    }
+    function exitCollectionEditMode() {
+      if (!state.collectionEditMode && !state.collectionDrag) return;
+      if (state.collectionDrag) cancelCollectionReorder();
+      const form = $('collection-list').querySelector('[data-rename-id]');
+      if (form) {
+        form.dataset.cancelled = 'true';
+        cancelCollectionRename();
+        return;
+      }
+      state.editingCollectionId = '';
+      const previousMode = state.collectionEditMode;
+      state.collectionEditMode = '';
+      if (previousMode === 'reorder') {
+        renderCollectionEditMode();
+        queueCollectionListAfterEditExit();
+      } else renderCollectionEditMode();
+    }
+    function applyCollectionHistory(history) {
+      const info = history || {};
+      state.collectionHistory = {
+        canUndo: Boolean(info.can_undo),
+        canRedo: Boolean(info.can_redo),
+        undoLabel: info.undo_label || '',
+        redoLabel: info.redo_label || '',
+      };
+      renderCollectionHistory();
+    }
+    function renderCollectionHistory() {
+      const undo = $('collection-undo');
+      const redo = $('collection-redo');
+      const history = state.collectionHistory;
+      const busy = state.collectionHistoryBusy;
+      undo.disabled = busy || !history.canUndo;
+      redo.disabled = busy || !history.canRedo;
+      const undoLabel = history.canUndo ? `撤销${history.undoLabel}` : '没有可撤销的收藏操作';
+      const redoLabel = history.canRedo ? `重做${history.redoLabel}` : '没有可重做的收藏操作';
+      undo.setAttribute('aria-label', undoLabel);
+      redo.setAttribute('aria-label', redoLabel);
+      undo.title = undoLabel;
+      redo.title = redoLabel;
+    }
+    function applyCollectionPayload(data) {
+      applyCollectionHistory(data?.history);
+      if (state.collectionDrag) return state.collections;
+      state.collections = data?.collections || [];
+      clampCollectionPages();
+      renderCollectionList();
+      return state.collections;
+    }
     async function requestCollections(imageId = '') {
       const suffix = imageId ? `?${new URLSearchParams({ image_id: imageId })}` : '';
       return parseResponse(await fetch(`/api/collections${suffix}`));
     }
     async function loadCollections() {
-      const data = await requestCollections();
-      if (state.collectionDrag) return state.collections;
-      state.collections = data.collections || [];
-      renderCollectionList();
-      return state.collections;
+      return applyCollectionPayload(await requestCollections());
     }
-    async function changeCollectionMembership(collectionId, item, include) {
+    function isCollectionNameField(target) {
+      if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLTextAreaElement)) return false;
+      if (target.id === 'collection-name' || target.id === 'viewer-picker-create' || target.id === 'card-picker-create') {
+        return true;
+      }
+      return Boolean(target.closest('.collection-rename'));
+    }
+    function isCollectionUndoShortcut(event) {
+      return (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'z' && !event.shiftKey;
+    }
+    function isCollectionRedoShortcut(event) {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return false;
+      const key = event.key.toLowerCase();
+      return (key === 'y' && !event.shiftKey) || (key === 'z' && event.shiftKey);
+    }
+    function handleCollectionHistoryShortcut(event) {
+      const redo = isCollectionRedoShortcut(event);
+      if (!redo && !isCollectionUndoShortcut(event)) return;
+      if (isCollectionNameField(event.target)) return;
+      if (state.collectionHistoryBusy || state.collectionDrag) return;
+      if (redo ? !state.collectionHistory.canRedo : !state.collectionHistory.canUndo) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (redo) redoCollectionHistory();
+      else undoCollectionHistory();
+    }
+    function appendUndoHint(message) {
+      return state.collectionHistory.canUndo ? `${message}可撤销。` : message;
+    }
+    function clearActiveCollectionView(message) {
+      state.searchSeq += 1;
+      state.mode = 'idle';
+      state.collectionId = '';
+      state.collectionName = '';
+      state.collectionTotal = null;
+      state.results = [];
+      state.hasMore = false;
+      state.loadingMore = false;
+      $('gallery').replaceChildren();
+      $('load-more').hidden = true;
+      $('load-more').textContent = '正在载入更多相关图片…';
+      $('query-info').textContent = message || '';
+    }
+    async function refreshOpenCollectionMenus() {
+      if (!$('viewer-collection-menu').hidden && state.current?.id) {
+        await refreshViewerCollectionMenu(state.current);
+      }
+      if (!$('card-collection-menu').hidden && state.cardMenuItem) {
+        await refreshCardCollectionMenu(state.cardMenuItem);
+      }
+    }
+    async function applyCollectionHistoryAction(data, action) {
+      applyCollectionPayload(data);
+      const applied = data?.applied || {};
+      const label = applied.label || '收藏操作';
+      setCollectionStatus(`${action === 'undo' ? '已撤销' : '已重做'}${label}。`);
+      const collectionId = applied.collection_id || '';
+      const activeStillExists = Boolean(
+        state.collectionId && state.collections.some((collection) => collection.id === state.collectionId)
+      );
+      const activeCollection = state.collections.find((collection) => collection.id === state.collectionId);
+      if (activeCollection) state.collectionName = activeCollection.name;
+      if (state.collectionId && !activeStillExists) {
+        clearActiveCollectionView(`已删除「${state.collectionName || applied.name || '收藏夹'}」。`);
+      } else if (applied.kind === 'delete_collection' && action === 'undo' && applied.collection_id && !state.collectionId) {
+        const restored = state.collections.find((collection) => collection.id === applied.collection_id)
+          || data.collection;
+        if (restored) await selectCollection(restored);
+      } else if (applied.kind !== 'rename_collection' && state.mode === 'collection' && state.collectionId && state.collectionId === collectionId) {
+        const previousIndex = state.results.findIndex((entry) => entry.id === state.current?.id);
+        const preferredId = state.current?.id || '';
+        await fetchCollectionImages({ reset: true });
+        if ($('viewer').open) {
+          advanceViewerAfterCollectionRemoval(preferredId, Math.max(0, previousIndex));
+        }
+      }
+      await refreshOpenCollectionMenus();
+    }
+    async function runCollectionHistoryAction(action) {
+      const history = state.collectionHistory;
+      if (state.collectionHistoryBusy || state.collectionDrag) return;
+      if (action === 'undo' ? !history.canUndo : !history.canRedo) return;
+      state.collectionHistoryBusy = true;
+      renderCollectionHistory();
+      try {
+        const path = action === 'undo' ? '/api/collections/undo' : '/api/collections/redo';
+        const data = await parseResponse(await fetch(path, { method: 'POST' }));
+        await applyCollectionHistoryAction(data, action);
+      } catch (error) {
+        setCollectionStatus(`${action === 'undo' ? '撤销' : '重做'}失败：${error.message}`);
+        try { await loadCollections(); }
+        catch (refreshError) { setCollectionStatus(`${action === 'undo' ? '撤销' : '重做'}失败，且无法刷新：${refreshError.message}`); }
+      } finally {
+        state.collectionHistoryBusy = false;
+        renderCollectionHistory();
+      }
+    }
+    function undoCollectionHistory() {
+      return runCollectionHistoryAction('undo');
+    }
+    function redoCollectionHistory() {
+      return runCollectionHistoryAction('redo');
+    }
+    async function changeCollectionMembership(collectionId, item, include, { refreshActive = true } = {}) {
       const encodedCollection = encodeURIComponent(collectionId);
       const response = include
         ? await fetch(`/api/collections/${encodedCollection}/items`, {
@@ -1294,7 +1588,18 @@
             method: 'DELETE',
           });
       const data = await parseResponse(response);
+      applyCollectionHistory(data.history);
       await loadCollections();
+      if (refreshActive && state.mode === 'collection' && state.collectionId === collectionId) {
+        const previousIndex = state.results.findIndex((entry) => entry.id === item.id);
+        const preferredId = include
+          ? item.id
+          : (state.results[previousIndex + 1]?.id || state.results[previousIndex - 1]?.id || '');
+        await fetchCollectionImages({ reset: true });
+        if ($('viewer').open) {
+          advanceViewerAfterCollectionRemoval(preferredId || item.id, Math.max(0, previousIndex));
+        }
+      }
       return data;
     }
     function viewportBounds() {
@@ -1380,17 +1685,38 @@
     }
     function renderCollectionMenu(item, namespace, refreshMenu) {
       const menu = $(`${namespace}-collection-menu`);
-      const entries = state.collections.length
-        ? state.collections.map((collection) => {
-            const included = Boolean(collection.contains);
-            return `<button class="viewer-collection-menu-item" type="button" aria-pressed="${included}" data-${namespace}-menu-collection="${escapeHtml(collection.id)}">${included ? '✓ ' : ''}${escapeHtml(collection.name)}</button>`;
-          }).join('')
-        : '<div class="viewer-collection-menu-title">还没有收藏夹，可直接新建。</div>';
+      const entries = collectionPageItems(namespace).map((collection) => {
+        const included = Boolean(collection.contains);
+        const count = Number(collection.count) || 0;
+        return `<button class="viewer-collection-menu-item collection-picker-tile" type="button" aria-pressed="${included}" data-${namespace}-menu-collection="${escapeHtml(collection.id)}" title="${escapeHtml(collection.name)}">
+          <span class="collection-picker-tile-label">${included ? '✓ ' : ''}${escapeHtml(collection.name)}</span>
+          <span class="collection-picker-tile-count">${count} 张</span>
+        </button>`;
+      }).join('');
+      const pickerContent = entries || '<div class="viewer-collection-menu-title">还没有收藏夹，可直接新建。</div>';
       const titleId = `${namespace}-collection-menu-title`;
       const pickerId = `${namespace}-picker-create`;
-      menu.innerHTML = `<div id="${titleId}" class="viewer-collection-menu-title">收藏「${escapeHtml(item.name)}」</div><button class="collection-menu-reference" type="button" data-${namespace}-menu-reference>添加至参考图</button><div class="viewer-collection-menu-list">${entries}</div><form class="viewer-collection-menu-create" autocomplete="off"><input id="${pickerId}" type="text" maxlength="80" aria-label="新收藏夹名称" placeholder="新收藏夹名称"><button type="submit" data-${namespace}-menu-create>新建并收藏</button></form>`;
+      const page = collectionPage(namespace);
+      const totalPages = collectionPageCount();
+      menu.innerHTML = `<div id="${titleId}" class="viewer-collection-menu-title">收藏「${escapeHtml(item.name)}」· 第 ${page + 1} / ${totalPages} 页</div>
+        <button class="collection-menu-reference" type="button" data-${namespace}-menu-reference>添加至参考图</button>
+        <div class="viewer-collection-menu-list" aria-label="收藏夹第 ${page + 1} 页">${pickerContent}</div>
+        <div class="collection-picker-footer">
+          ${collectionPaginationMarkup(namespace, { picker: true })}
+          <form class="viewer-collection-menu-create" autocomplete="off"><input id="${pickerId}" type="text" maxlength="80" aria-label="新收藏夹名称" placeholder="新收藏夹名称"><button type="submit" data-${namespace}-menu-create>新建并收藏</button></form>
+        </div>`;
       menu.querySelector(`[data-${namespace}-menu-reference]`)?.addEventListener('click', () => {
         addLibraryReferenceWithStatus(item);
+      });
+      menu.querySelectorAll(`[data-${namespace}-menu-page]`).forEach((button) => {
+        button.addEventListener('click', () => {
+          if (button.disabled) return;
+          setCollectionPage(namespace, Number(button.dataset[`${namespace}MenuPage`]));
+          renderCollectionMenu(item, namespace, refreshMenu);
+          if (namespace === 'viewer') positionViewerCollectionMenu();
+          else positionCardCollectionMenu();
+          requestAnimationFrame(() => menu.querySelector(`[data-${namespace}-menu-page="${collectionPage(namespace)}"]`)?.focus());
+        });
       });
       menu.querySelectorAll(`[data-${namespace}-menu-collection]`).forEach((button) => {
         button.addEventListener('click', async () => {
@@ -1400,7 +1726,7 @@
           try {
             const data = await changeCollectionMembership(collection.id, item, !collection.contains);
             const verb = collection.contains ? (data.removed ? '已移出' : '不在') : (data.added ? '已收藏到' : '已在');
-            setCollectionStatus(`${verb}「${collection.name}」。`);
+            setCollectionStatus(appendUndoHint(`${verb}「${collection.name}」。`));
             await refreshMenu(item);
           } catch (error) {
             setCollectionStatus(`收藏失败：${error.message}`);
@@ -1417,7 +1743,8 @@
         try {
           const collection = await createCollection(name);
           await changeCollectionMembership(collection.id, item, true);
-          setCollectionStatus(`已新建并收藏到「${collection.name}」。`);
+          setCollectionPageContaining(namespace, collection.id);
+          setCollectionStatus(appendUndoHint(`已新建并收藏到「${collection.name}」。`));
           await refreshMenu(item, { preserveCreateDraft: false });
         } catch (error) {
           setCollectionStatus(`新建收藏夹失败：${error.message}`);
@@ -1437,6 +1764,7 @@
       const data = await requestCollections(item.id);
       if (session !== state.viewerMenuSession || $('viewer-collection-menu').hidden || state.current !== item) return;
       const focusSnapshot = captureViewerCollectionDialogFocus();
+      applyCollectionHistory(data.history);
       state.collections = data.collections || [];
       renderCollectionList();
       renderViewerCollectionMenu(item);
@@ -1462,6 +1790,8 @@
       const menu = $('card-collection-menu');
       const trigger = state.cardMenuTrigger;
       state.cardMenuSession += 1;
+      clearCardMenuQuickTarget();
+      menu.classList.remove('is-quick-dragging');
       menu.hidden = true;
       trigger?.setAttribute('aria-expanded', 'false');
       state.cardMenuItem = null;
@@ -1500,17 +1830,45 @@
     }
     function cardMenuQuickTargetAt(clientX, clientY) {
       const element = document.elementFromPoint(clientX, clientY);
-      const target = element?.closest('[data-card-menu-reference], [data-card-menu-collection]');
+      const target = element?.closest('[data-card-menu-reference], [data-card-menu-collection], [data-card-menu-page]');
       if (!target || !$('card-collection-menu').contains(target) || target.disabled) return null;
       return target;
     }
     function updateCardMenuQuickTarget(clientX, clientY) {
+      if (!cardMenuGesture.dragging) return null;
       const target = cardMenuQuickTargetAt(clientX, clientY);
+      if (target?.matches('[data-card-menu-page]')) {
+        clearCardMenuQuickTarget();
+        const direction = target.getAttribute('aria-label') || '';
+        if (cardMenuGesture.pageHoverLock === direction) return null;
+        cardMenuGesture.pageHoverLock = direction;
+        const nextPage = Number(target.dataset.cardMenuPage);
+        if (nextPage !== collectionPage('card') && cardMenuGesture.item) {
+          setCollectionPage('card', nextPage);
+          renderCardCollectionMenu(cardMenuGesture.item);
+          positionCardCollectionMenu();
+        }
+        return null;
+      }
+      cardMenuGesture.pageHoverLock = '';
       if (target === cardMenuGesture.hoverTarget) return target;
       clearCardMenuQuickTarget();
       if (target) target.classList.add('is-quick-action-target');
       cardMenuGesture.hoverTarget = target;
       return target;
+    }
+    function updateCardMenuGesture(event) {
+      if (cardMenuGesture.pointerId !== event.pointerId) return;
+      if (!cardMenuGesture.dragging) {
+        const threshold = event.pointerType === 'touch'
+          ? CARD_MENU_DRAG_THRESHOLD_TOUCH
+          : CARD_MENU_DRAG_THRESHOLD_MOUSE;
+        if (Math.hypot(event.clientX - cardMenuGesture.startX, event.clientY - cardMenuGesture.startY) < threshold) return;
+        cardMenuGesture.dragging = true;
+        $('card-collection-menu').classList.add('is-quick-dragging');
+      }
+      event.preventDefault();
+      updateCardMenuQuickTarget(event.clientX, event.clientY);
     }
     function startCardMenuGesture(item, trigger, event) {
       if (!event.isPrimary || event.button !== 0) return;
@@ -1519,17 +1877,25 @@
       cardMenuGesture.item = item;
       cardMenuGesture.trigger = trigger;
       cardMenuGesture.clickTrigger = null;
+      cardMenuGesture.startX = event.clientX;
+      cardMenuGesture.startY = event.clientY;
+      cardMenuGesture.dragging = false;
+      cardMenuGesture.pageHoverLock = '';
       trigger.setPointerCapture?.(event.pointerId);
     }
     function finishCardMenuGesture(event, { cancelled = false } = {}) {
       if (cardMenuGesture.pointerId !== event.pointerId) return;
       const trigger = cardMenuGesture.trigger;
-      const target = cancelled ? null : updateCardMenuQuickTarget(event.clientX, event.clientY);
+      const wasDragging = cardMenuGesture.dragging;
+      const target = cancelled || !wasDragging ? null : updateCardMenuQuickTarget(event.clientX, event.clientY);
       cardMenuGesture.pointerId = null;
       if (trigger?.hasPointerCapture?.(event.pointerId)) trigger.releasePointerCapture(event.pointerId);
       clearCardMenuQuickTarget();
+      $('card-collection-menu').classList.remove('is-quick-dragging');
       cardMenuGesture.item = null;
       cardMenuGesture.trigger = null;
+      cardMenuGesture.dragging = false;
+      cardMenuGesture.pageHoverLock = '';
       if (cancelled) return;
       cardMenuGesture.clickTrigger = trigger;
       if (!target) return;
@@ -1549,6 +1915,7 @@
     async function refreshCardCollectionMenu(item, { session = state.cardMenuSession } = {}) {
       const data = await requestCollections(item.id);
       if (session !== state.cardMenuSession || $('card-collection-menu').hidden || state.cardMenuItem !== item) return;
+      applyCollectionHistory(data.history);
       state.collections = data.collections || [];
       renderCollectionList();
       renderCardCollectionMenu(item);
@@ -1597,48 +1964,78 @@
     });
     function renderCollectionList() {
       const list = $('collection-list');
+      renderCollectionEditMode();
       if (!state.collections.length) {
         list.innerHTML = '<div class="collection-empty">还没有收藏夹。新建一个，把图片整理成自己的灵感板。</div>';
         return;
       }
-      list.innerHTML = state.collections.map((collection) => {
+      const page = collectionPage('sidebar');
+      const pageStart = page * COLLECTIONS_PER_PAGE;
+      const tiles = collectionPageItems('sidebar').map((collection, index) => {
         const selected = collection.id === state.collectionId;
-        const editing = collection.id === state.editingCollectionId;
-        const editor = editing ? `<form class="collection-rename" data-rename-id="${escapeHtml(collection.id)}" autocomplete="off">
-          <input type="text" value="${escapeHtml(collection.name)}" maxlength="80" aria-label="重命名 ${escapeHtml(collection.name)}">
-          <button class="secondary" type="submit">保存</button>
-        </form>` : '';
-        return `<div class="collection-row${selected ? ' is-selected' : ''}" data-collection-id="${escapeHtml(collection.id)}">
-          <button class="collection-drag-handle" type="button" data-collection-drag-handle data-collection-id="${escapeHtml(collection.id)}" aria-label="拖动调整「${escapeHtml(collection.name)}」的顺序" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="拖动调整顺序；Alt + 上下方向键也可调整">⠿</button>
-          <button class="collection-name" type="button" data-collection-action="browse" data-collection-id="${escapeHtml(collection.id)}" title="浏览「${escapeHtml(collection.name)}」" aria-pressed="${selected}">${escapeHtml(collection.name)}</button>
-          <span class="collection-count">${Number(collection.count) || 0}</span>
-          <span>
-            <button class="collection-icon" type="button" data-collection-action="rename" data-collection-id="${escapeHtml(collection.id)}" aria-label="重命名 ${escapeHtml(collection.name)}" title="重命名">✎</button>
-            <button class="collection-icon" type="button" data-collection-action="delete" data-collection-id="${escapeHtml(collection.id)}" aria-label="删除 ${escapeHtml(collection.name)}" title="删除">×</button>
-          </span>${editor}
+        const editing = state.collectionEditMode === 'rename' && collection.id === state.editingCollectionId;
+        const dragging = state.collectionDrag?.started && state.collectionDrag.collectionId === collection.id;
+        if (editing) {
+          return `<div class="collection-row collection-tile is-editing${selected ? ' is-selected' : ''}" data-collection-id="${escapeHtml(collection.id)}">
+            <form class="collection-rename" data-rename-id="${escapeHtml(collection.id)}" autocomplete="off">
+              <input type="text" value="${escapeHtml(collection.name)}" maxlength="80" aria-label="重命名 ${escapeHtml(collection.name)}">
+            </form>
+          </div>`;
+        }
+        return `<div class="collection-row collection-tile${selected ? ' is-selected' : ''}${dragging ? ' is-reordering' : ''}" data-collection-id="${escapeHtml(collection.id)}" data-collection-tile data-collection-index="${pageStart + index}">
+          <button class="collection-name" type="button" data-collection-action="browse" data-collection-id="${escapeHtml(collection.id)}" title="${state.collectionEditMode === 'reorder' ? `拖动调整「${escapeHtml(collection.name)}」的顺序；拖到分页按钮可跨页` : `浏览「${escapeHtml(collection.name)}」`}" aria-pressed="${selected}" ${state.collectionEditMode === 'reorder' ? 'aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"' : ''}><span class="collection-name-label">${escapeHtml(collection.name)}</span><span class="collection-count">${Number(collection.count) || 0}</span></button>
         </div>`;
       }).join('');
+      list.innerHTML = `<div class="collection-page-grid" aria-label="收藏夹第 ${page + 1} 页">${tiles}</div>${collectionPaginationMarkup('sidebar')}`;
+      list.querySelectorAll('[data-collection-page]').forEach((button) => {
+        button.addEventListener('click', () => {
+          if (button.disabled || state.collectionDrag || performance.now() < state.collectionReorderClickUntil) return;
+          setCollectionPage('sidebar', Number(button.dataset.collectionPage));
+          renderCollectionList();
+          requestAnimationFrame(() => list.querySelector(`[data-collection-page="${collectionPage('sidebar')}"]`)?.focus());
+        });
+      });
       list.querySelectorAll('[data-collection-action]').forEach((button) => {
         button.addEventListener('click', () => {
+          if (performance.now() < state.collectionReorderClickUntil) return;
           const collection = state.collections.find((item) => item.id === button.dataset.collectionId);
           if (!collection) return;
-          if (button.dataset.collectionAction === 'browse') selectCollection(collection);
-          if (button.dataset.collectionAction === 'rename') beginCollectionRename(collection.id);
-          if (button.dataset.collectionAction === 'delete') deleteCollection(collection);
+          if (button.dataset.collectionAction !== 'browse') return;
+          if (state.collectionEditMode === 'rename') beginCollectionRename(collection.id);
+          else if (state.collectionEditMode === 'delete') deleteCollection(collection, { exitMode: true });
+          else if (state.collectionEditMode !== 'reorder') selectCollection(collection);
         });
       });
       list.querySelectorAll('[data-rename-id]').forEach((form) => {
-        form.addEventListener('submit', (event) => renameCollection(event, form));
+        const input = form.querySelector('input');
+        form.addEventListener('submit', (event) => {
+          event.preventDefault();
+          renameCollection(form);
+        });
+        input.addEventListener('blur', (event) => {
+          if (form.dataset.cancelled) return;
+          if (event.relatedTarget?.closest('.collection-footer-actions')) {
+            form.dataset.cancelled = 'true';
+            cancelCollectionRename({ keepMode: true });
+            return;
+          }
+          renameCollection(form);
+        });
+        input.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            form.dataset.cancelled = 'true';
+            cancelCollectionRename();
+          }
+        });
       });
-      list.querySelectorAll('[data-collection-drag-handle]').forEach((handle) => {
-        const collection = state.collections.find((item) => item.id === handle.dataset.collectionId);
-        const row = handle.closest('.collection-row');
+      list.querySelectorAll('[data-collection-tile] .collection-name').forEach((tile) => {
+        if (state.collectionEditMode !== 'reorder') return;
+        const collection = state.collections.find((item) => item.id === tile.dataset.collectionId);
+        const row = tile.closest('.collection-row');
         if (!collection || !row) return;
-        handle.addEventListener('pointerdown', (event) => startCollectionReorder(event, collection, row));
-        handle.addEventListener('pointermove', updateCollectionReorder);
-        handle.addEventListener('pointerup', finishCollectionReorder);
-        handle.addEventListener('pointercancel', (event) => finishCollectionReorder(event, { cancelled: true }));
-        handle.addEventListener('keydown', (event) => moveCollectionWithKeyboard(event, collection.id));
+        tile.addEventListener('pointerdown', (event) => startCollectionReorder(event, collection, row));
+        tile.addEventListener('keydown', (event) => moveCollectionWithKeyboard(event, collection.id));
       });
       const editing = list.querySelector('[data-rename-id] input');
       if (editing) requestAnimationFrame(() => editing.focus());
@@ -1650,6 +2047,26 @@
       await loadCollections();
       if (select) selectCollection(data.collection);
       return data.collection;
+    }
+    async function createCollectionFromTool() {
+      if (state.collectionDrag) return;
+      const activeRename = $('collection-list').querySelector('[data-rename-id] input');
+      if (activeRename && !activeRename.form?.dataset.cancelled) { activeRename.focus(); return; }
+      const tool = $('collection-create-tool');
+      tool.disabled = true;
+      try {
+        const collection = await createCollection('');
+        state.collectionEditMode = 'rename';
+        state.editingCollectionId = collection.id;
+        state.pendingCreatedCollectionId = collection.id;
+        setCollectionPage('sidebar', collectionPageCount() - 1);
+        renderCollectionList();
+        setCollectionStatus('已新建收藏夹，请直接输入名称。');
+      } catch (error) {
+        setCollectionStatus(`新建失败：${error.message}`);
+      } finally {
+        tool.disabled = false;
+      }
     }
     async function selectCollection(collection) {
       state.mode = 'collection';
@@ -1665,43 +2082,85 @@
       await fetchCollectionImages({ reset: true });
     }
     function beginCollectionRename(collectionId) {
+      if (state.collectionEditMode !== 'rename') return;
       state.editingCollectionId = collectionId;
       renderCollectionList();
     }
-    async function renameCollection(event, form) {
-      event.preventDefault();
+    async function discardPendingCollection(collectionId) {
+      try {
+        await parseResponse(await fetch(`/api/collections/${encodeURIComponent(collectionId)}?discard=true`, { method: 'DELETE' }));
+        await loadCollections();
+        setCollectionStatus('已取消新建收藏夹。');
+      } catch (error) {
+        setCollectionStatus(`取消新建失败：${error.message}`);
+        await loadCollections().catch(() => {});
+      }
+    }
+    function finishCollectionRename() {
+      state.pendingCreatedCollectionId = '';
+      state.editingCollectionId = '';
+      state.collectionEditMode = '';
+      renderCollectionList();
+    }
+    function cancelCollectionRename({ keepMode = false } = {}) {
+      const pendingCollectionId = state.pendingCreatedCollectionId;
+      state.pendingCreatedCollectionId = '';
+      state.editingCollectionId = '';
+      if (!keepMode) state.collectionEditMode = '';
+      renderCollectionList();
+      if (pendingCollectionId) discardPendingCollection(pendingCollectionId);
+    }
+    async function renameCollection(form) {
+      if (form.dataset.saving) return;
       const name = form.querySelector('input').value.trim();
-      if (!name) return;
+      const collection = state.collections.find((item) => item.id === form.dataset.renameId);
+      if (!collection) {
+        cancelCollectionRename();
+        return;
+      }
+      if (name === collection.name) {
+        finishCollectionRename();
+        return;
+      }
+      form.dataset.saving = 'true';
+      form.querySelector('input').disabled = true;
       try {
         const data = await parseResponse(await fetch(`/api/collections/${encodeURIComponent(form.dataset.renameId)}`, {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
         }));
         state.editingCollectionId = '';
+        state.pendingCreatedCollectionId = '';
+        state.collectionEditMode = '';
         if (state.collectionId === data.collection.id) state.collectionName = data.collection.name;
         await loadCollections();
-        setCollectionStatus('已重命名收藏夹。');
+        setCollectionStatus(appendUndoHint('已重命名收藏夹。'));
       } catch (error) {
+        delete form.dataset.saving;
+        form.querySelector('input').disabled = false;
         setCollectionStatus(`重命名失败：${error.message}`);
       }
     }
     function collectionIdsInList() {
-      return [...$('collection-list').querySelectorAll('.collection-row')]
-        .map((row) => row.dataset.collectionId)
-        .filter(Boolean);
+      return state.collections.map((collection) => collection.id);
     }
     function reorderStateCollections(collectionIds) {
       const collectionsById = new Map(state.collections.map((collection) => [collection.id, collection]));
       state.collections = collectionIds.map((collectionId) => collectionsById.get(collectionId)).filter(Boolean);
     }
-    function restoreCollectionRows(collectionIds) {
-      const list = $('collection-list');
-      const rowsById = new Map(
-        [...list.querySelectorAll('.collection-row')].map((row) => [row.dataset.collectionId, row]),
-      );
-      collectionIds.forEach((collectionId) => {
-        const row = rowsById.get(collectionId);
-        if (row) list.append(row);
-      });
+    function moveCollectionToIndex(collectionId, destinationIndex) {
+      const sourceIndex = state.collections.findIndex((collection) => collection.id === collectionId);
+      if (sourceIndex < 0) return false;
+      const [collection] = state.collections.splice(sourceIndex, 1);
+      const clampedIndex = Math.max(0, Math.min(destinationIndex, state.collections.length));
+      state.collections.splice(clampedIndex, 0, collection);
+      return clampedIndex !== sourceIndex;
+    }
+    function collectionDropIndex(target, event) {
+      const targetIndex = Number(target.dataset.collectionIndex);
+      if (!Number.isInteger(targetIndex)) return null;
+      const bounds = target.getBoundingClientRect();
+      const afterTarget = event.clientX > bounds.left + bounds.width / 2;
+      return targetIndex + (afterTarget ? 1 : 0);
     }
     async function saveCollectionOrder(collectionIds) {
       const saveId = ++state.collectionOrderSave;
@@ -1711,8 +2170,7 @@
           body: JSON.stringify({ collection_ids: collectionIds }),
         }));
         if (saveId !== state.collectionOrderSave) return;
-        state.collections = data.collections || [];
-        renderCollectionList();
+        applyCollectionPayload(data);
         setCollectionStatus('已更新收藏夹顺序。');
       } catch (error) {
         if (saveId !== state.collectionOrderSave) return;
@@ -1722,53 +2180,83 @@
       }
     }
     function startCollectionReorder(event, collection, row) {
-      if (!event.isPrimary || event.button !== 0 || state.collectionDrag) return;
+      if (state.collectionEditMode !== 'reorder' || !event.isPrimary || event.button !== 0 || state.collectionDrag) return;
       const handle = event.currentTarget;
       state.collectionDrag = {
         pointerId: event.pointerId, handle, row, collectionId: collection.id,
         startX: event.clientX, startY: event.clientY, started: false,
         initialIds: collectionIdsInList(),
+        initialPage: collectionPage('sidebar'),
+        pageHoverLock: '',
       };
       handle.setPointerCapture?.(event.pointerId);
+      window.addEventListener('pointermove', updateCollectionReorder, { passive: false });
+      window.addEventListener('pointerup', finishCollectionReorder);
+      window.addEventListener('pointercancel', cancelCollectionReorder);
     }
     function updateCollectionReorder(event) {
       const drag = state.collectionDrag;
       if (!drag || drag.pointerId !== event.pointerId) return;
       if (!drag.started) {
-        if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 4) return;
+        if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 6) return;
         drag.started = true;
-        drag.row.classList.add('is-reordering');
+        if (drag.handle.hasPointerCapture?.(event.pointerId)) drag.handle.releasePointerCapture(event.pointerId);
         $('collection-list').classList.add('is-reordering');
+        renderCollectionList();
       }
       event.preventDefault();
-      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('.collection-row');
-      if (!target || target === drag.row || !$('collection-list').contains(target)) return;
-      const targetBounds = target.getBoundingClientRect();
-      const insertBefore = event.clientY < targetBounds.top + targetBounds.height / 2
-        ? target
-        : target.nextElementSibling;
-      if (insertBefore !== drag.row && insertBefore !== drag.row.nextElementSibling) {
-        $('collection-list').insertBefore(drag.row, insertBefore);
+      const element = document.elementFromPoint(event.clientX, event.clientY);
+      const pageButton = element?.closest('[data-collection-page]');
+      if (pageButton && $('collection-list').contains(pageButton) && !pageButton.disabled) {
+        const direction = pageButton.getAttribute('aria-label') || '';
+        if (drag.pageHoverLock === direction) return;
+        drag.pageHoverLock = direction;
+        const requestedPage = Number(pageButton.dataset.collectionPage);
+        if (requestedPage !== collectionPage('sidebar')) {
+          setCollectionPage('sidebar', requestedPage);
+          renderCollectionList();
+        }
+        return;
       }
+      drag.pageHoverLock = '';
+      const target = element?.closest('[data-collection-tile]');
+      if (!target || !$('collection-list').contains(target) || target.dataset.collectionId === drag.collectionId) return;
+      const destinationIndex = collectionDropIndex(target, event);
+      if (destinationIndex === null) return;
+      const sourceIndex = state.collections.findIndex((collection) => collection.id === drag.collectionId);
+      const adjustedDestination = sourceIndex < destinationIndex ? destinationIndex - 1 : destinationIndex;
+      if (adjustedDestination !== sourceIndex && moveCollectionToIndex(drag.collectionId, adjustedDestination)) {
+        renderCollectionList();
+      }
+    }
+    function cancelCollectionReorder() {
+      const drag = state.collectionDrag;
+      if (!drag) return;
+      finishCollectionReorder({ pointerId: drag.pointerId }, { cancelled: true });
     }
     function finishCollectionReorder(event, { cancelled = false } = {}) {
       const drag = state.collectionDrag;
       if (!drag || drag.pointerId !== event.pointerId) return;
       state.collectionDrag = null;
+      window.removeEventListener('pointermove', updateCollectionReorder);
+      window.removeEventListener('pointerup', finishCollectionReorder);
+      window.removeEventListener('pointercancel', cancelCollectionReorder);
       if (drag.handle.hasPointerCapture?.(event.pointerId)) drag.handle.releasePointerCapture(event.pointerId);
-      drag.row.classList.remove('is-reordering');
       $('collection-list').classList.remove('is-reordering');
       if (!drag.started || cancelled) {
-        restoreCollectionRows(drag.initialIds);
+        reorderStateCollections(drag.initialIds);
+        setCollectionPage('sidebar', drag.initialPage);
+        renderCollectionList();
         return;
       }
       const collectionIds = collectionIdsInList();
+      state.collectionReorderClickUntil = performance.now() + 300;
+      renderCollectionList();
       if (collectionIds.every((collectionId, index) => collectionId === drag.initialIds[index])) return;
-      reorderStateCollections(collectionIds);
       saveCollectionOrder(collectionIds);
     }
     function moveCollectionWithKeyboard(event, collectionId) {
-      if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key) || state.collectionDrag) return;
+      if (state.collectionEditMode !== 'reorder' || !event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key) || state.collectionDrag) return;
       const index = state.collections.findIndex((collection) => collection.id === collectionId);
       const nextIndex = index + (event.key === 'ArrowUp' ? -1 : 1);
       if (index < 0 || nextIndex < 0 || nextIndex >= state.collections.length) return;
@@ -1776,29 +2264,26 @@
       const collections = [...state.collections];
       [collections[index], collections[nextIndex]] = [collections[nextIndex], collections[index]];
       state.collections = collections;
+      setCollectionPageContaining('sidebar', collectionId);
       renderCollectionList();
-      requestAnimationFrame(() => $('collection-list').querySelector(`[data-collection-drag-handle][data-collection-id="${CSS.escape(collectionId)}"]`)?.focus());
+      requestAnimationFrame(() => $('collection-list').querySelector(`[data-collection-action="browse"][data-collection-id="${CSS.escape(collectionId)}"]`)?.focus());
       saveCollectionOrder(collections.map((collection) => collection.id));
     }
-    async function deleteCollection(collection) {
-      if (collection.count && !confirm(`删除「${collection.name}」及其中 ${collection.count} 张收藏？原图不会删除。`)) return;
+    async function deleteCollection(collection, { exitMode = false } = {}) {
+      const itemDescription = collection.count ? `及其中 ${collection.count} 张收藏` : '';
+      if (!confirm(`确定删除「${collection.name}」${itemDescription}？原图不会删除。`)) return;
       const wasSelected = state.collectionId === collection.id;
       try {
         await parseResponse(await fetch(`/api/collections/${encodeURIComponent(collection.id)}`, { method: 'DELETE' }));
+        if (exitMode) state.collectionEditMode = '';
+        state.editingCollectionId = '';
         const activeCollectionWasDeleted = state.collectionId === collection.id;
         if (activeCollectionWasDeleted) {
           // Only a confirmed deletion invalidates an in-flight page request.
-          state.searchSeq += 1;
-          state.mode = 'idle'; state.collectionId = ''; state.collectionName = ''; state.collectionTotal = null;
-          state.results = []; state.hasMore = false;
-          state.loadingMore = false;
-          $('gallery').replaceChildren();
-          $('load-more').hidden = true;
-          $('load-more').textContent = '正在载入更多相关图片…';
-          $('query-info').textContent = `已删除「${collection.name}」。`;
+          clearActiveCollectionView(`已删除「${collection.name}」。`);
         }
         await loadCollections();
-        setCollectionStatus(`已删除「${collection.name}」。`);
+        setCollectionStatus(appendUndoHint(`已删除「${collection.name}」。`));
       } catch (error) {
         setCollectionStatus(`删除失败：${error.message}`);
         if (wasSelected && state.collectionId === collection.id) {
@@ -1883,15 +2368,9 @@
     }
     async function removeFromActiveCollection(item) {
       if (!state.collectionId) return;
-      const previousIndex = state.results.findIndex((entry) => entry.id === item.id);
-      const preferredId = state.results[previousIndex + 1]?.id
-        || state.results[previousIndex - 1]?.id
-        || '';
       try {
         await changeCollectionMembership(state.collectionId, item, false);
-        setCollectionStatus(`已从「${state.collectionName}」移出「${item.name}」。`);
-        await fetchCollectionImages({ reset: true });
-        advanceViewerAfterCollectionRemoval(preferredId, Math.max(0, previousIndex));
+        setCollectionStatus(appendUndoHint(`已从「${state.collectionName}」移出「${item.name}」。`));
       } catch (error) {
         setCollectionStatus(`移出失败：${error.message}`);
       }
@@ -2368,9 +2847,7 @@
           if (item) startCardMenuGesture(item, favoriteButton, event);
         });
         favoriteButton?.addEventListener('pointermove', (event) => {
-          if (cardMenuGesture.pointerId !== event.pointerId) return;
-          event.preventDefault();
-          updateCardMenuQuickTarget(event.clientX, event.clientY);
+          updateCardMenuGesture(event);
         });
         favoriteButton?.addEventListener('pointerup', finishCardMenuGesture);
         favoriteButton?.addEventListener('pointercancel', (event) => {
@@ -3492,6 +3969,7 @@
       document.body.classList.remove('file-drag');
     });
 
+    document.addEventListener('keydown', handleCollectionHistoryShortcut, true);
     document.addEventListener('keydown', (event) => {
       if (!$('card-collection-menu').hidden) {
         if (event.key === 'Escape') {
@@ -3569,6 +4047,7 @@
       });
     });
     $('scope-toggle').addEventListener('click', () => {
+      if (window.matchMedia('(max-width: 720px)').matches) return;
       const panel = $('tree-panel');
       const open = !panel.classList.contains('is-open');
       panel.classList.toggle('is-open', open);
@@ -3577,24 +4056,66 @@
     $('text-weight').addEventListener('change', () => {
       $('text-weight').value = String(textWeight());
     });
-    $('collection-create').addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const input = $('collection-name');
-      const name = input.value.trim();
-      if (!name) { input.focus(); return; }
-      try {
-        const collection = await createCollection(name, { select: true });
-        input.value = '';
-        setCollectionStatus(`已新建「${collection.name}」。`);
-      } catch (error) {
-        setCollectionStatus(`新建失败：${error.message}`);
+    $('collection-undo').addEventListener('click', () => undoCollectionHistory());
+    $('collection-redo').addEventListener('click', () => redoCollectionHistory());
+    document.addEventListener('pointerdown', (event) => {
+      const collectionPanel = $('tab-collections');
+      const renameForm = $('collection-list').querySelector('[data-rename-id]');
+      if (
+        event.button === 0
+        && state.collectionEditMode
+        && !renameForm
+        && !collectionPanel.contains(event.target)
+      ) {
+        exitCollectionEditMode();
+        return;
       }
+      if (event.button !== 2) return;
+      if (state.collectionEditMode || state.collectionDrag) {
+        event.preventDefault();
+        state.collectionEditModeCancelUntil = performance.now() + 500;
+        exitCollectionEditMode();
+        return;
+      }
+      if (!renameForm) return;
+      renameForm.dataset.cancelled = 'true';
+      state.editingCollectionId = '';
+    }, true);
+    document.addEventListener('contextmenu', (event) => {
+      if (performance.now() < state.collectionEditModeCancelUntil) {
+        event.preventDefault();
+        return;
+      }
+      const form = $('collection-list').querySelector('[data-rename-id]');
+      if (!form?.dataset.cancelled) return;
+      event.preventDefault();
+      cancelCollectionRename();
+    }, true);
+    document.addEventListener('focusin', (event) => {
+      if (!state.collectionEditMode) return;
+      if ($('collection-list').querySelector('[data-rename-id]')) return;
+      if (!$('tab-collections').contains(event.target)) exitCollectionEditMode();
+    }, true);
+    document.querySelectorAll('.collection-tool').forEach((tool) => {
+      tool.addEventListener('pointerdown', () => {
+        const form = $('collection-list').querySelector('[data-rename-id]');
+        if (!form) return;
+        form.dataset.cancelled = 'true';
+        state.editingCollectionId = '';
+      });
     });
+    $('collection-create-tool').addEventListener('click', () => createCollectionFromTool());
+    $('collection-rename-tool').addEventListener('click', () => setCollectionEditMode('rename'));
+    $('collection-reorder-tool').addEventListener('click', () => setCollectionEditMode('reorder'));
+    $('collection-delete-tool').addEventListener('click', () => setCollectionEditMode('delete'));
     $('collection-search').addEventListener('input', () => {
       clearTimeout(state.collectionSearchTimer);
       if (!state.collectionId) return;
       state.collectionSearchTimer = setTimeout(() => fetchCollectionImages({ reset: true }), 180);
     });
+    if (window.matchMedia('(max-width: 720px)').matches) {
+      $('scope-toggle').setAttribute('aria-expanded', 'true');
+    }
     if (window.matchMedia('(pointer: fine)').matches) $('query').focus();
     bindGalleryReferenceDropTarget();
     loadLibraryTree();

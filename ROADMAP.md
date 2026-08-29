@@ -106,3 +106,56 @@ then used as the canonical UI order.
    validated persistent ordering.
 6. Complete: add pointer and keyboard ordering controls in the sidebar and
    regression coverage for legacy migration and stale order conflicts.
+
+### Undo history for add/delete
+
+Collection delete, adding an image, and removing an image are reversible
+commands stored in the same atomic sidecar. The stacks survive refresh; a new
+undoable mutation clears redo; history is capped so a large collection cannot
+grow the file without bound. Restore keeps the original collection ID, item
+order, and list position. Create, rename, and reorder are not undoable.
+
+7. Complete: persist undo/redo stacks beside collection rows and expose undo
+   and redo endpoints with history on the collection list.
+8. Complete: add sidebar undo/redo controls, keyboard shortcuts, and
+   regression coverage for restore, stale entries, and history caps.
+
+### Paged collection grid
+
+The collection order remains one canonical, persisted sequence, but every
+collection surface presents it as fixed 2-by-6 pages. The sidebar and both
+collection pickers therefore share a 12-item page model and can independently
+change pages. Reordering moves the canonical sequence, including across page
+boundaries; a drag held over a page control changes the visible page before
+drop. Heart taps still open the picker, while quick-add requires a deliberate
+drag beyond a pointer-distance threshold before release can activate a tile.
+
+9. Complete: replace the sidebar list and picker lists with fixed-size,
+   paged 2-by-6 grids; preserve cross-page ordering and protect touch taps
+   from accidental quick-add releases.
+
+10. Complete: separate collection browsing from structural editing so tile
+    titles and compact counts remain calm by default, while create, reorder,
+    rename, and delete controls appear only in an explicit edit mode.
+11. Complete: reserve the full tile width for eight-character Chinese titles,
+    move compact counts to the lower-right corner, and consolidate collection
+    undo, redo, and edit actions into a bottom icon toolbar.
+12. Complete: replace the single edit state with direct create, rename,
+    reorder, and guarded-delete tools; align picker tile typography with the
+    sidebar and compact the sidebar grid height.
+13. Complete: make inline rename a compact blur-to-save interaction, add
+    durable rename undo/redo history, and refine the collection action icons.
+14. Complete: latch drag pagination by physical button direction so a rendered
+    replacement cannot repeatedly advance pages while the pointer remains over it.
+15. Complete: create blank-titled collection cards for immediate inline naming
+    while preserving empty titles safely in the sidecar and history records.
+16. Complete: accept blank titles on both create and rename API paths so older
+    clients and the automatic blank-name flow share one validation contract.
+17. Complete: treat an automatically created, still-editing card as a temporary
+    row and discard it without history when its rename operation is cancelled.
+18. Complete: record persistent collection-order transitions for undo/redo
+    and make a right-click during an active reorder restore its initial order.
+19. Complete: record collection creation in durable history while keeping
+    cancellation of a still-pending new card history-free.
+20. Complete: provide a visible collection edit-target state and make outside
+    focus or right-click cancel an uncommitted edit mode.

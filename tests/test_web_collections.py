@@ -118,20 +118,48 @@ class CollectionsApiTests(unittest.TestCase):
         return response.json()["collection"]
 
     def test_create_rename_delete_and_list_preserve_order(self) -> None:
+        blank = self.client.post("/api/collections", json={"name": ""})
+        self.assertEqual(blank.status_code, 201)
+        self.assertEqual(blank.json()["collection"]["name"], "")
+        blank_collection = blank.json()["collection"]
+        blank_rename = self.client.patch(
+            f"/api/collections/{blank_collection['id']}", json={"name": ""}
+        )
+        self.assertEqual(blank_rename.status_code, 200)
+        self.assertEqual(blank_rename.json()["collection"]["name"], "")
         first = self.create_collection("灵感")
         second = self.create_collection("待研究")
         listed = self.client.get("/api/collections").json()["collections"]
-        self.assertEqual([item["name"] for item in listed], ["灵感", "待研究"])
+        self.assertEqual([item["name"] for item in listed], ["", "灵感", "待研究"])
 
         renamed = self.client.patch(
             f"/api/collections/{first['id']}", json={"name": "角色设计"}
         )
         self.assertEqual(renamed.status_code, 200)
         self.assertEqual(renamed.json()["collection"]["name"], "角色设计")
+        self.assertEqual(renamed.json()["history"]["undo_label"], "重命名「灵感」为「角色设计」")
         deleted = self.client.delete(f"/api/collections/{second['id']}")
         self.assertEqual(deleted.status_code, 200)
         self.assertTrue(deleted.json()["deleted"])
-        self.assertEqual(len(self.client.get("/api/collections").json()["collections"]), 1)
+        listed_after_delete = self.client.get("/api/collections").json()
+        self.assertEqual(len(listed_after_delete["collections"]), 2)
+        self.assertTrue(listed_after_delete["history"]["can_undo"])
+        self.assertEqual(listed_after_delete["history"]["undo_label"], "删除「待研究」")
+
+        empty_redo = self.client.post("/api/collections/redo")
+        self.assertEqual(empty_redo.status_code, 409)
+        undone = self.client.post("/api/collections/undo")
+        self.assertEqual(undone.status_code, 200)
+        self.assertEqual(undone.json()["applied"]["kind"], "delete_collection")
+        self.assertEqual(
+            [item["id"] for item in undone.json()["collections"]],
+            [blank_collection["id"], first["id"], second["id"]],
+        )
+        redone = self.client.post("/api/collections/redo")
+        self.assertEqual(redone.status_code, 200)
+        self.assertEqual(len(redone.json()["collections"]), 2)
+        self.assertTrue(redone.json()["history"]["can_undo"])
+        self.assertEqual(self.client.post("/api/collections/redo").status_code, 409)
 
     def test_collection_reordering_replaces_pinning_and_rejects_stale_order(self) -> None:
         first = self.create_collection("先创建")
@@ -147,6 +175,7 @@ class CollectionsApiTests(unittest.TestCase):
             [item["id"] for item in reordered.json()["collections"]],
             [third["id"], first["id"], second["id"]],
         )
+        self.assertEqual(reordered.json()["history"]["undo_label"], "调整收藏夹顺序")
         listed = self.client.get("/api/collections").json()["collections"]
         self.assertEqual([item["id"] for item in listed], [third["id"], first["id"], second["id"]])
         stale_order = self.client.put(
@@ -159,6 +188,37 @@ class CollectionsApiTests(unittest.TestCase):
             f"/api/collections/{second['id']}", json={"name": "不再置顶", "pinned": True}
         )
         self.assertEqual(pinned_update.status_code, 422)
+
+    def test_item_membership_changes_expose_undo_and_redo(self) -> None:
+        self.assertEqual(self.client.post("/api/collections/undo").status_code, 409)
+        collection = self.create_collection()
+        endpoint = f"/api/collections/{collection['id']}/items"
+        added = self.client.post(endpoint, json={"image_id": "a"}).json()
+        self.assertTrue(added["added"])
+        self.assertEqual(added["history"]["undo_label"], "收藏「alpha.png」到「灵感」")
+        listed = self.client.get("/api/collections").json()
+        self.assertEqual(listed["history"]["undo_label"], "收藏「alpha.png」到「灵感」")
+
+        undone_add = self.client.post("/api/collections/undo")
+        self.assertEqual(undone_add.status_code, 200)
+        self.assertEqual(undone_add.json()["applied"]["kind"], "add_item")
+        self.assertEqual(undone_add.json()["collection"]["count"], 0)
+        redone_add = self.client.post("/api/collections/redo")
+        self.assertEqual(redone_add.json()["collection"]["count"], 1)
+
+        removed = self.client.delete(f"{endpoint}/a")
+        self.assertTrue(removed.json()["removed"])
+        self.assertEqual(removed.json()["history"]["undo_label"], "从「灵感」移出「alpha.png」")
+        restored = self.client.post("/api/collections/undo")
+        self.assertEqual(restored.status_code, 200)
+        self.assertEqual(restored.json()["applied"]["kind"], "remove_item")
+        self.assertEqual(restored.json()["collection"]["count"], 1)
+        self.assertEqual(
+            [item["id"] for item in self.client.get(
+                f"/api/collections/{collection['id']}/images"
+            ).json()["results"]],
+            ["a"],
+        )
 
     def test_items_are_validated_idempotent_and_return_ordered_filtered_pages(self) -> None:
         collection = self.create_collection()
@@ -211,7 +271,27 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn('viewport-fit=cover', html)
         self.assertIn('inline-size: 100dvw; block-size: 100dvh;', html)
         self.assertIn('id="tab-btn-collections"', html)
+        self.assertIn(".tree-panel:not(.is-open) .tree-body { display: block; }", html)
+        self.assertIn("window.matchMedia('(max-width: 720px)').matches", html)
         self.assertIn('id="collection-search"', html)
+        self.assertIn('id="collection-undo"', html)
+        self.assertIn('id="collection-redo"', html)
+        self.assertIn("/api/collections/undo", html)
+        self.assertIn("/api/collections/redo", html)
+        self.assertIn("function undoCollectionHistory", html)
+        self.assertIn("function redoCollectionHistory", html)
+        self.assertIn("function clearActiveCollectionView", html)
+        self.assertIn("function handleCollectionHistoryShortcut", html)
+        self.assertIn("function isCollectionNameField", html)
+        self.assertIn(
+            "document.addEventListener('keydown', handleCollectionHistoryShortcut, true)",
+            html,
+        )
+        self.assertIn("isCollectionUndoShortcut(event)", html)
+        self.assertIn("isCollectionRedoShortcut(event)", html)
+        self.assertIn("appendUndoHint", html)
+        self.assertIn("applyCollectionHistory(data.history)", html)
+        self.assertNotIn("function isEditableKeyTarget", html)
         self.assertIn('aria-labelledby="tab-btn-collections"', html)
         self.assertNotIn("pinnedCollections()", html)
         self.assertIn('id="ref-drop-zone"', html)
@@ -224,10 +304,47 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn("event.key === 'Home'", html)
         self.assertIn('/api/collections', html)
         self.assertNotIn('data-collection-action="pin"', html)
-        self.assertIn('data-collection-drag-handle', html)
+        self.assertIn('data-collection-tile', html)
         self.assertIn("function startCollectionReorder", html)
         self.assertIn("function moveCollectionWithKeyboard", html)
         self.assertIn("/api/collections/order", html)
+        self.assertIn("const COLLECTIONS_PER_PAGE = COLLECTION_GRID_COLUMNS * COLLECTION_GRID_ROWS;", html)
+        self.assertIn("grid-template-rows: repeat(6, 44px);", html)
+        self.assertIn("grid-template-rows: repeat(6, 44px);", html)
+        self.assertIn("function collectionPaginationMarkup", html)
+        self.assertIn("data-collection-page", html)
+        self.assertIn("function moveCollectionToIndex", html)
+        self.assertIn("拖到分页按钮可跨页", html)
+        self.assertIn('id="collection-create-tool"', html)
+        self.assertIn('id="collection-rename-tool"', html)
+        self.assertIn('id="collection-reorder-tool"', html)
+        self.assertIn('id="collection-delete-tool"', html)
+        self.assertIn("collectionEditMode: ''", html)
+        self.assertIn("function setCollectionEditMode(mode)", html)
+        self.assertIn("async function createCollectionFromTool()", html)
+        self.assertIn("state.collectionEditMode = 'rename';", html)
+        self.assertIn("state.collectionEditMode === 'reorder'", html)
+        self.assertIn("deleteCollection(collection, { exitMode: true })", html)
+        self.assertIn("input.addEventListener('blur'", html)
+        self.assertIn("event.button !== 2", html)
+        self.assertIn("document.addEventListener('contextmenu'", html)
+        self.assertIn("function exitCollectionEditMode()", html)
+        self.assertIn(".collection-list.is-editing.is-editing-visible .collection-row.collection-tile", html)
+        self.assertIn("transform: translateY(-2px) scale(1.01);", html)
+        self.assertIn("function queueCollectionListAfterEditExit()", html)
+        self.assertIn("}, 190);", html)
+        self.assertIn("pendingCreatedCollectionId", html)
+        self.assertIn("?discard=true", html)
+        self.assertNotIn('>保存</button>', html)
+        self.assertIn("applied.kind !== 'rename_collection'", html)
+        self.assertIn('M12 3v18M3 12h18', html)
+        self.assertIn('M4 7h16M10 11v6M14 11v6', html)
+        self.assertIn("${collectionPaginationMarkup('sidebar')}", html)
+        self.assertIn(".collection-name {\n      position: absolute; inset: 0; display: grid; place-items: center;", html)
+        self.assertIn("position: absolute; right: 6px; bottom: 5px; color: var(--muted); font-size: 9px;", html)
+        self.assertIn('id="collection-rename-tool" type="button" aria-pressed="false" aria-label="重命名收藏夹"', html)
+        self.assertIn('>↶</button>', html)
+        self.assertIn('>↷</button>', html)
 
         card_start = html.index("function cardHTML")
         card_end = html.index("function renderGallery", card_start)
@@ -250,8 +367,17 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertNotIn("card.addEventListener('pointermove'", html)
         self.assertIn('function startCardMenuGesture(item, trigger, event)', html)
         self.assertIn('function updateCardMenuQuickTarget(clientX, clientY)', html)
+        self.assertIn('function updateCardMenuGesture(event)', html)
         self.assertIn('function finishCardMenuGesture(event', html)
         self.assertIn('is-quick-action-target', html)
+        self.assertIn('CARD_MENU_DRAG_THRESHOLD_TOUCH = 18', html)
+        self.assertIn('const wasDragging = cardMenuGesture.dragging;', html)
+        self.assertIn("pageHoverLock: ''", html)
+        self.assertIn("cardMenuGesture.pageHoverLock === direction", html)
+        self.assertIn("drag.pageHoverLock === direction", html)
+        self.assertIn("collectionReorderCancelUntil", html)
+        self.assertIn("cancelCollectionReorder();", html)
+        self.assertIn('data-card-menu-page', html)
         self.assertIn("favoriteButton?.addEventListener('pointermove'", html)
         self.assertIn('data-card-action="remove"', card_source)
         self.assertIn("action === 'favorite'", html)
@@ -288,6 +414,10 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn('positionCardCollectionMenu();', html)
         self.assertIn('openCardCollectionMenu(item, actionTarget);', html)
         self.assertIn("position: fixed; z-index: 1300", html)
+        self.assertIn("--collection-picker-height: min(474px", html)
+        self.assertIn('class="collection-picker-tile-label"', html)
+        self.assertIn(".collection-picker-tile-label {\n      position: absolute; inset: 0; display: grid; place-items: center;", html)
+        self.assertIn("position: absolute; right: 6px; bottom: 5px; color: #bdb4c1; font-size: 9px;", html)
         self.assertIn("if (!$('viewer-collection-menu').hidden) {", html)
         self.assertIn("window.addEventListener('orientationchange', sync);", html)
         self.assertIn(
@@ -316,12 +446,17 @@ class CollectionsApiTests(unittest.TestCase):
             viewer_step_source.index("if (view.flipping) return false;"),
         )
 
+        clear_start = html.index("function clearActiveCollectionView")
+        clear_end = html.index("async function refreshOpenCollectionMenus", clear_start)
+        clear_source = html[clear_start:clear_end]
+        self.assertIn("state.searchSeq += 1;", clear_source)
+        self.assertIn("$('load-more').hidden = true;", clear_source)
         delete_start = html.index("async function deleteCollection")
         delete_end = html.index("async function fetchCollectionImages", delete_start)
         delete_source = html[delete_start:delete_end]
         self.assertLess(
             delete_source.index("await parseResponse"),
-            delete_source.index("state.searchSeq += 1;"),
+            delete_source.index("clearActiveCollectionView"),
         )
         self.assertIn(
             "const activeCollectionWasDeleted = state.collectionId === collection.id;",
@@ -333,9 +468,9 @@ class CollectionsApiTests(unittest.TestCase):
         )
         self.assertIn("await fetchCollectionImages({ reset: true });", delete_source)
         self.assertIn("$('panel').classList.remove('loading');", delete_source)
-        self.assertIn("$('load-more').hidden = true;", delete_source)
         self.assertIn("border-radius: 15px 15px 0 0", html)
         self.assertIn(".image-wrap { border-radius: 11px 11px 0 0; }", html)
+        self.assertIn(".filename { flex: 1 1 auto; min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;", html)
 
     def test_missing_qdrant_collection_returns_an_empty_page_without_pruning_membership(
         self,

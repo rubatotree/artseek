@@ -14,7 +14,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ..collections import Collection, CollectionStore
+from ..collections import Collection, CollectionStore, HistoryAction
 from ..config import (
     DEFAULT_WEB_SEARCH_LIMIT,
     MAX_WEB_SEARCH_LIMIT,
@@ -183,8 +183,6 @@ class CollectionNameRequest(BaseModel):
     @classmethod
     def validate_name(cls, value: str) -> str:
         name = value.strip()
-        if not name:
-            raise ValueError("收藏夹名称不能为空")
         if len(name) > 80:
             raise ValueError("收藏夹名称不能超过 80 个字符")
         return name
@@ -201,8 +199,6 @@ class CollectionUpdateRequest(BaseModel):
         if value is None:
             return None
         name = value.strip()
-        if not name:
-            raise ValueError("收藏夹名称不能为空")
         if len(name) > 80:
             raise ValueError("收藏夹名称不能超过 80 个字符")
         return name
@@ -481,16 +477,38 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "results": results,
         }
 
-    @app.get("/api/collections")
-    def list_collections(image_id: str | None = None) -> dict[str, list[dict[str, Any]]]:
-        collections = app.state.collections.list()
+    def collections_payload(
+        collections: list[Collection],
+        history: dict[str, Any],
+        image_id: str | None = None,
+    ) -> dict[str, Any]:
         summaries: list[dict[str, Any]] = []
         for collection in collections:
             summary = collection_summary(collection)
             if image_id:
                 summary["contains"] = image_id in collection.item_ids
             summaries.append(summary)
-        return {"collections": summaries}
+        return {"collections": summaries, "history": history}
+
+    def history_action_payload(result: HistoryAction) -> dict[str, Any]:
+        payload = result.payload()
+        invalidate_collection_id_cursor(result.collection_id)
+        return payload
+
+    def current_history() -> dict[str, Any]:
+        _, history = app.state.collections.snapshot()
+        return history
+
+    def image_display_name(point_id: str) -> str:
+        payload = app.state.engine.store.get(point_id)
+        if not isinstance(payload, dict):
+            return ""
+        return str(payload.get("name") or "")
+
+    @app.get("/api/collections")
+    def list_collections(image_id: str | None = None) -> dict[str, Any]:
+        collections, history = app.state.collections.snapshot()
+        return collections_payload(collections, history, image_id)
 
     @app.post("/api/collections", status_code=201)
     def create_collection(request: CollectionNameRequest) -> dict[str, Any]:
@@ -498,11 +516,26 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         return {"collection": collection_summary(collection)}
 
     @app.put("/api/collections/order")
-    def reorder_collections(request: CollectionOrderRequest) -> dict[str, list[dict[str, Any]]]:
+    def reorder_collections(request: CollectionOrderRequest) -> dict[str, Any]:
         collections = app.state.collections.reorder(request.collection_ids)
         if collections is None:
             raise HTTPException(409, "收藏夹已更新，请刷新后重试")
-        return {"collections": [collection_summary(collection) for collection in collections]}
+        _, history = app.state.collections.snapshot()
+        return collections_payload(collections, history)
+
+    @app.post("/api/collections/undo")
+    def undo_collection_history() -> dict[str, Any]:
+        result = app.state.collections.undo()
+        if result is None:
+            raise HTTPException(409, "没有可撤销的操作")
+        return history_action_payload(result)
+
+    @app.post("/api/collections/redo")
+    def redo_collection_history() -> dict[str, Any]:
+        result = app.state.collections.redo()
+        if result is None:
+            raise HTTPException(409, "没有可重做的操作")
+        return history_action_payload(result)
 
     @app.patch("/api/collections/{collection_id}")
     def update_collection(collection_id: str, request: CollectionUpdateRequest) -> dict[str, Any]:
@@ -512,36 +545,59 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         )
         if collection is None:
             raise HTTPException(404, "收藏夹不存在")
-        return {"collection": collection_summary(collection)}
+        return {
+            "collection": collection_summary(collection),
+            "history": current_history(),
+        }
 
     @app.delete("/api/collections/{collection_id}")
-    def delete_collection(collection_id: str) -> dict[str, Any]:
-        collection = app.state.collections.delete(collection_id)
+    def delete_collection(collection_id: str, discard: bool = False) -> dict[str, Any]:
+        collection = app.state.collections.delete(collection_id, record_history=not discard)
         if collection is None:
             raise HTTPException(404, "收藏夹不存在")
         invalidate_collection_id_cursor(collection_id)
-        return {"deleted": True, "collection": collection_summary(collection)}
+        return {
+            "deleted": True,
+            "collection": collection_summary(collection),
+            "history": current_history(),
+        }
 
     @app.post("/api/collections/{collection_id}/items")
     def add_collection_item(collection_id: str, request: CollectionItemRequest) -> dict[str, Any]:
         require_collection(collection_id)
         if not app.state.engine.store.get(request.image_id):
             raise HTTPException(404, "图片不在索引中，无法收藏")
-        collection, added = app.state.collections.add_item(collection_id, request.image_id)
+        collection, added = app.state.collections.add_item(
+            collection_id,
+            request.image_id,
+            item_name=image_display_name(request.image_id),
+        )
         if collection is None:
             raise HTTPException(404, "收藏夹不存在")
         if added:
             invalidate_collection_id_cursor(collection_id)
-        return {"collection": collection_summary(collection), "added": added}
+        return {
+            "collection": collection_summary(collection),
+            "added": added,
+            "history": current_history(),
+        }
 
     @app.delete("/api/collections/{collection_id}/items/{point_id}")
     def remove_collection_item(collection_id: str, point_id: str) -> dict[str, Any]:
-        collection, removed = app.state.collections.remove_item(collection_id, point_id)
+        collection, removed = app.state.collections.remove_item(
+            collection_id,
+            point_id,
+            item_name=image_display_name(point_id),
+        )
         if collection is None:
             raise HTTPException(404, "收藏夹不存在")
         if removed:
             invalidate_collection_id_cursor(collection_id)
-        return {"collection": collection_summary(collection), "removed": removed}
+        return {
+            "collection": collection_summary(collection),
+            "removed": removed,
+            "history": current_history(),
+        }
 
     @app.get("/api/collections/{collection_id}/images")
     def collection_images(
