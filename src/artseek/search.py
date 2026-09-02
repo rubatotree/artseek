@@ -58,20 +58,32 @@ def compose_visual_vector(
     return combined.astype(np.float32, copy=False)
 
 
-def duplicate_key(payload: dict[str, Any]) -> tuple[Any, ...] | None:
-    """Identity of a byte-identical copy: content hash, else size plus pixel size."""
-    digest = str(payload.get("content_hash") or "").strip()
+def duplicate_keys(payload: dict[str, Any]) -> tuple[tuple[Any, ...], ...]:
+    """Identities used by 「去除重复」: content hash, perceptual hash, else size."""
+    keys: list[tuple[Any, ...]] = []
+    digest = str(payload.get("content_hash") or "").strip().casefold()
     if digest:
-        return ("h", digest)
+        keys.append(("h", digest))
+    phash = str(payload.get("phash") or "").strip().casefold()
+    if phash:
+        keys.append(("p", phash))
+    if digest:
+        return tuple(keys)
     try:
         size = int(payload.get("size_bytes") or 0)
         width = int(payload.get("width") or 0)
         height = int(payload.get("height") or 0)
     except (TypeError, ValueError):
-        return None
+        return tuple(keys)
     if size > 0 and width > 0 and height > 0:
-        return ("s", size, width, height)
-    return None
+        keys.append(("s", size, width, height))
+    return tuple(keys)
+
+
+def duplicate_key(payload: dict[str, Any]) -> tuple[Any, ...] | None:
+    """Primary duplicate identity: content hash, else perceptual hash, else size."""
+    keys = duplicate_keys(payload)
+    return keys[0] if keys else None
 
 
 def keep_first_unique(
@@ -81,11 +93,10 @@ def keep_first_unique(
     seen: set[tuple[Any, ...]] = set(seen_keys or ())
     unique: list[RankedRow] = []
     for row in ranked:
-        key = duplicate_key(row[1]["payload"])
-        if key is not None:
-            if key in seen:
-                continue
-            seen.add(key)
+        keys = duplicate_keys(row[1]["payload"])
+        if keys and any(key in seen for key in keys):
+            continue
+        seen.update(keys)
         unique.append(row)
     return unique
 
@@ -581,9 +592,7 @@ class SearchEngine:
             seen_keys: set[tuple[Any, ...]] = set()
             if excluded:
                 for payload in self._retrieve_payloads(list(excluded)).values():
-                    key = duplicate_key(payload)
-                    if key is not None:
-                        seen_keys.add(key)
+                    seen_keys.update(duplicate_keys(payload))
             ranked = keep_first_unique(ranked, seen_keys)
         if excluded:
             ranked = [row for row in ranked if row[0] not in excluded]

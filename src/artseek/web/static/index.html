@@ -137,6 +137,20 @@
     .model-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .model-state { color: #8a5268; font-size: 12px; font-weight: 650; }
     .model-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .storage-block {
+      display: grid; gap: 10px; padding-top: 8px;
+      border-top: 1px solid var(--line);
+    }
+    .storage-block .storage-title { color: var(--ink); font-weight: 650; }
+    .storage-field { display: grid; gap: 4px; }
+    .storage-field input[type="text"] {
+      width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 10px;
+      padding: 7px 8px; color: var(--ink); background: #fff; font: 12px/1.2 inherit;
+    }
+    .storage-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .storage-actions button { padding: 7px 10px; font-size: 12px; }
+    .storage-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .notes-close-pane { display: none; }
     .advanced-options input[type="number"] {
       width: 64px; border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px;
       color: var(--ink); background: #fff; font: inherit; font-size: 13px;
@@ -405,6 +419,183 @@
     }
     dialog[open] { display: flex; flex-direction: column; }
     dialog::backdrop { background: rgba(16, 13, 18, .22); }
+    .viewer-body {
+      position: relative; flex: 1; min-width: 0; min-height: 0;
+      display: flex;
+    }
+    .notes-pane {
+      --notes-width: 440px;
+      position: relative;
+      flex: 0 0 0px; width: 0; min-width: 0; max-width: min(80vw, 920px);
+      display: flex; flex-direction: column; min-height: 0;
+      overflow: hidden; overscroll-behavior: contain;
+      background: #fff; color: var(--ink);
+      border-left: 0 solid var(--line);
+      box-shadow: none;
+      opacity: 0; pointer-events: none;
+      transform: translateX(16px);
+      transition:
+        flex-basis 280ms cubic-bezier(0.32, 0.72, 0, 1),
+        width 280ms cubic-bezier(0.32, 0.72, 0, 1),
+        min-width 280ms cubic-bezier(0.32, 0.72, 0, 1),
+        opacity 200ms ease,
+        transform 280ms cubic-bezier(0.32, 0.72, 0, 1),
+        box-shadow 280ms ease,
+        border-left-width 280ms ease;
+    }
+    .notes-pane.is-open {
+      flex-basis: var(--notes-width); width: var(--notes-width); min-width: 280px;
+      opacity: 1; pointer-events: auto;
+      border-left-width: 1px;
+      box-shadow: -16px 0 36px rgba(69, 51, 76, .08);
+      transform: none;
+    }
+    .notes-pane.is-resizing { transition: none; }
+    .notes-pane[hidden] { display: none; }
+    .notes-resize {
+      position: absolute; left: -5px; top: 0; bottom: 0; z-index: 6;
+      width: 10px; cursor: col-resize; touch-action: none;
+    }
+    .notes-resize:hover, .notes-pane.is-resizing .notes-resize { background: rgba(201, 122, 152, .28); }
+    .notes-pane.is-resizing { user-select: none; }
+    .notes-head, .notes-foot {
+      flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+      padding: 8px 10px; background: var(--paper);
+    }
+    .notes-head { border-bottom: 1px solid var(--line); }
+    .notes-foot {
+      border-top: 1px solid var(--line); color: var(--muted); font-size: 11px;
+      justify-content: space-between; min-width: 0;
+    }
+    .notes-pane button {
+      padding: 7px 10px; border-radius: 10px; background: #f6f1f5; color: #665866; font-size: 12px;
+    }
+    .notes-pane button:hover { transform: none; background: var(--rose-soft); color: #8a5268; }
+    .notes-pane button.danger { color: #8a5268; }
+    .notes-tabs {
+      flex: 1; min-width: 0; display: flex; gap: 4px; overflow-x: auto;
+      overscroll-behavior: contain; touch-action: pan-x;
+    }
+    .notes-tabs.is-reordering { user-select: none; touch-action: none; }
+    .notes-tab {
+      flex: 0 0 auto; max-width: 140px; overflow: hidden;
+      padding: 6px 8px; border-radius: 8px; background: #fff; color: #665866;
+      border: 1px solid var(--line);
+      font-size: 12px; white-space: nowrap; text-overflow: ellipsis;
+      user-select: none;
+      transition: background .12s ease, border-color .12s ease, box-shadow .12s ease;
+    }
+    .notes-tabs:has(.notes-tab:nth-child(2)) .notes-tab { cursor: grab; }
+    .notes-tab.is-active { background: var(--rose-soft); border-color: #eadce3; color: #8a5268; }
+    .notes-tab.is-dragging {
+      opacity: .96; cursor: grabbing; z-index: 8;
+      box-shadow: 0 8px 22px rgba(86, 54, 68, .16);
+      transition: none; pointer-events: none;
+    }
+    .notes-tab-hole {
+      flex: 0 0 auto; border-radius: 8px; background: #f4eef2;
+      pointer-events: none;
+    }
+    .notes-tabs.is-reordering .notes-tab { cursor: grabbing; }
+    .notes-tabs {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(138, 82, 104, .45) transparent;
+    }
+    .notes-tabs::-webkit-scrollbar { height: 5px; }
+    .notes-tabs::-webkit-scrollbar-track { background: transparent; }
+    .notes-tabs::-webkit-scrollbar-thumb {
+      background: rgba(138, 82, 104, .42);
+      border-radius: 999px;
+    }
+    .notes-tabs::-webkit-scrollbar-thumb:hover { background: rgba(138, 82, 104, .62); }
+    .notes-editor .vditor-content,
+    .notes-editor .vditor-ir {
+      overflow-x: hidden !important;
+      overflow-y: auto !important;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    .notes-editor .vditor-content::-webkit-scrollbar,
+    .notes-editor .vditor-ir::-webkit-scrollbar {
+      width: 0; height: 0; display: none;
+    }
+    .notes-empty, .notes-editor {
+      flex: 1; min-height: 0; min-width: 0; background: #fff;
+    }
+    .notes-editor { display: flex; flex-direction: column; overflow: hidden; }
+    .notes-empty {
+      display: grid; place-items: center; padding: 18px; color: var(--muted);
+      font-size: 13px; text-align: center; line-height: 1.55;
+    }
+    .notes-empty[hidden], .notes-editor[hidden] { display: none; }
+    .notes-count { margin-left: 4px; color: #c97a98; font-variant-numeric: tabular-nums; }
+    #viewer-notes[hidden] { display: none; }
+    .notes-editor .vditor {
+      display: flex !important; flex-direction: column;
+      height: 100% !important; min-height: 0; border: 0;
+      background: #fff !important; color: var(--ink) !important;
+    }
+    .notes-editor .vditor-content,
+    .notes-editor .vditor-ir {
+      flex: 1 1 auto; min-height: 0; height: auto !important;
+      overflow: auto !important; overscroll-behavior: contain;
+      background: #fff !important; color: var(--ink) !important;
+    }
+    .notes-editor .vditor-reset,
+    .notes-editor .vditor-ir pre.vditor-reset {
+      height: auto !important; min-height: 100%; overflow: visible !important;
+      background: #fff !important; color: var(--ink) !important;
+    }
+    .notes-editor .vditor-toolbar {
+      flex: 0 0 auto; overflow: hidden;
+      max-height: 96px; opacity: 1;
+      background: var(--paper) !important; border-bottom: 1px solid var(--line) !important;
+      transition: max-height 220ms ease, opacity 180ms ease, padding 220ms ease, border-width 220ms ease;
+    }
+    .notes-pane.is-reading .vditor-toolbar {
+      max-height: 0 !important; opacity: 0; padding: 0 !important;
+      border-bottom-width: 0 !important; pointer-events: none;
+    }
+    .notes-pane.is-reading .vditor-ir pre.vditor-reset,
+    .notes-pane.is-reading .vditor-ir [contenteditable="false"] {
+      opacity: 1 !important; caret-color: transparent; cursor: default;
+    }
+    .notes-editor .vditor-toolbar__item { color: #665866 !important; }
+    .notes-editor .vditor-toolbar__item:hover,
+    .notes-editor .vditor-menu--current { background: var(--rose-soft) !important; color: #8a5268 !important; }
+    .notes-editor .vditor-ir__node--expand { background: var(--rose-soft); }
+    .notes-pane.is-reading .vditor-ir__node--expand { background: transparent; }
+    .notes-pane.is-reading .vditor-ir__marker,
+    .notes-pane.is-reading .vditor-ir__marker--pre,
+    .notes-pane.is-reading .vditor-ir__marker--title,
+    .notes-pane.is-reading .vditor-ir__marker--bracket,
+    .notes-pane.is-reading .vditor-ir__marker--link,
+    .notes-pane.is-reading .vditor-ir__marker--alt { display: none !important; }
+    .notes-editor .vditor-ir a { color: #8a5268; }
+    .notes-editor .vditor-ir p:has(img),
+    .notes-editor .vditor-reset p:has(img) { text-align: center; }
+    .notes-editor [data-type="img"],
+    .notes-editor .vditor-image,
+    .notes-editor figure.vditor-image {
+      display: block; max-width: 100%; margin: 18px auto; text-align: center;
+    }
+    .notes-editor img {
+      position: static; left: auto; top: auto;
+      display: block; margin: 0 auto;
+      max-width: min(100%, 520px); width: auto; height: auto;
+      max-height: min(52vh, 440px);
+      object-fit: contain; border-radius: 12px;
+      box-shadow: 0 10px 28px rgba(69, 51, 76, .1);
+    }
+    .notes-editor .vditor-image[data-image-caption]::after,
+    .notes-editor figure.vditor-image figcaption {
+      display: block; margin: 8px auto 0; max-width: 36em;
+      color: var(--muted); font-size: 12px; line-height: 1.45;
+      text-align: center; opacity: 1; font-style: normal;
+    }
+    .notes-editor .vditor-hint, .notes-editor .vditor-panel {
+      background: #fff; border: 1px solid var(--line); color: var(--ink);
+    }
     .viewer-stage {
       position: relative; flex: 1; min-width: 0; min-height: 0;
       display: grid; place-items: center;
@@ -697,6 +888,19 @@
       #viewer-title { display: none; }
       .modal-bar button { min-height: 40px; padding: 8px 10px; font-size: 13px; }
       .viewer-weight { width: 100%; }
+      .notes-pane {
+        position: absolute; inset: 0; z-index: 4;
+        flex: none; width: auto !important; min-width: 0 !important; max-width: none;
+        flex-basis: auto !important;
+        border-left: 0; box-shadow: none;
+        transform: translateX(10%);
+      }
+      .notes-pane.is-open {
+        width: auto !important; min-width: 0 !important;
+        transform: none; box-shadow: none;
+      }
+      .notes-resize { display: none; }
+      .notes-close-pane { display: inline-flex; }
       .viewer-collection-menu, .card-collection-menu {
         --collection-picker-height: min(520px, calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 16px));
         gap: 10px;
@@ -714,6 +918,7 @@
     @media (prefers-reduced-motion: reduce) {
       button, .upload-label { transition: none; }
       dialog, dialog::backdrop, .modal-bar { backdrop-filter: none; -webkit-backdrop-filter: none; }
+      .notes-pane, .notes-editor .vditor-toolbar { transition: none; transform: none; }
     }
   </style>
 </head>
@@ -788,7 +993,7 @@
         <div id="tab-advanced" class="advanced-options" role="tabpanel" aria-labelledby="tab-btn-advanced" hidden>
           <label><input id="use-llm" type="checkbox" checked> 本地大模型理解条件</label>
           <label><input id="strict-tags" type="checkbox"> 细节标签至少命中一项</label>
-          <label title="完全相同的图片只保留最先检索到的"><input id="dedupe" type="checkbox" checked> 去除重复</label>
+          <label title="相同文件、相同内容哈希或相同感知哈希的图片只保留最先检索到的"><input id="dedupe" type="checkbox" checked> 去除重复</label>
           <label>每批 <input id="limit" type="range" min="12" max="80" step="4" value="40"> <span id="limit-value">40</span></label>
           <div class="model-block">
             <div class="model-head">
@@ -797,6 +1002,19 @@
             </div>
             <p id="model-hint" class="model-hint">启动时不占用显存；检索时自动载入，闲置后卸载。</p>
             <label title="0 表示保持载入，直到手动卸载">自动卸载 <input id="auto-unload" type="number" min="0" max="1440" step="1" value="10"> 分钟</label>
+          </div>
+          <div class="storage-block">
+            <div class="storage-title">存储位置</div>
+            <label class="storage-field">向量库
+              <input id="qdrant-path" type="text" spellcheck="false" autocomplete="off" placeholder="本地 Qdrant 目录">
+            </label>
+            <label class="storage-field">笔记库
+              <input id="notes-dir" type="text" spellcheck="false" autocomplete="off" placeholder="Markdown 笔记目录">
+            </label>
+            <div class="storage-actions">
+              <button class="secondary" id="storage-save" type="button">保存路径</button>
+            </div>
+            <p id="storage-hint" class="storage-hint">向量库路径保存后需重启 ArtSeek 才能切换。笔记库立即生效，不会写入原图目录。</p>
           </div>
         </div>
         </div>
@@ -836,6 +1054,7 @@
     </div>
   </div>
   <dialog id="viewer" aria-label="原图预览">
+    <div class="viewer-body" id="viewer-body">
     <div class="viewer-stage" id="viewer-stage">
       <button class="viewer-close" id="viewer-close" type="button" aria-label="关闭">×</button>
       <button class="viewer-nav prev" id="viewer-prev" type="button" tabindex="-1" aria-label="上一张">‹</button>
@@ -843,6 +1062,21 @@
       <img id="viewer-image" data-slot="current" alt="原图预览" draggable="false" decoding="async" loading="eager">
       <img id="viewer-image-next" data-slot="next" alt="" draggable="false" decoding="async" loading="eager">
       <button class="viewer-nav next" id="viewer-next" type="button" tabindex="-1" aria-label="下一张">›</button>
+    </div>
+    <aside class="notes-pane" id="notes-pane" hidden>
+      <div class="notes-resize" id="notes-resize" role="separator" aria-orientation="vertical" aria-label="调整笔记栏宽度"></div>
+      <div class="notes-head">
+        <div class="notes-tabs" id="notes-tabs" role="tablist" aria-label="图片笔记"></div>
+        <button id="notes-new" type="button" title="新建笔记">＋</button>
+        <button id="notes-edit-toggle" type="button" aria-pressed="false" title="展开或收起编辑工具" hidden>编辑</button>
+        <button id="notes-delete" class="danger" type="button" title="删除当前笔记" hidden>删除本篇</button>
+        <button id="notes-delete-all" class="danger" type="button" title="删除该图片的全部笔记文件夹" hidden>删除全部</button>
+        <button class="notes-close-pane" id="notes-close-pane" type="button">返回图片</button>
+      </div>
+      <div class="notes-empty" id="notes-empty">还没有笔记。可新建一篇，或直接粘贴图片；会保存在笔记库里，与向量点和图片内容同时关联。删掉原图后笔记仍会留在笔记库中。</div>
+      <div class="notes-editor" id="notes-editor" hidden></div>
+      <div class="notes-foot" id="notes-foot"></div>
+    </aside>
     </div>
     <div class="modal-bar">
       <span id="viewer-title"></span>
@@ -855,6 +1089,7 @@
       </label>
       <button id="viewer-remove-ref" type="button" hidden>从参考中移除</button>
       <button id="viewer-reference" type="button">添加为参考</button>
+      <button id="viewer-notes" type="button" aria-pressed="false" aria-controls="notes-pane" hidden>笔记</button>
       <button id="viewer-collection-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="viewer-collection-menu">收藏到…</button>
       <button id="viewer-remove-collection" type="button" hidden>移出收藏夹</button>
     </div>
@@ -1026,6 +1261,950 @@
         });
       }, 180);
     }
+    function applyStoragePaths(data) {
+      $('qdrant-path').value = data.qdrant_path || '';
+      $('notes-dir').value = data.notes_dir || '';
+      if (data.qdrant_restart_required) {
+        $('storage-hint').textContent = '向量库路径已保存，重启 ArtSeek 后才会切换。笔记库立即生效，不会写入原图目录。';
+      }
+    }
+    async function loadStoragePaths() {
+      applyStoragePaths(await parseResponse(await fetch('/api/storage-paths')));
+    }
+    async function saveStoragePaths() {
+      const payload = {
+        qdrant_path: $('qdrant-path').value.trim(),
+        notes_dir: $('notes-dir').value.trim(),
+      };
+      const data = await parseResponse(await fetch('/api/storage-paths', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }));
+      applyStoragePaths(data);
+      $('storage-hint').textContent = data.qdrant_restart_required
+        ? '向量库路径已保存，重启 ArtSeek 后才会切换。笔记库已立即生效。'
+        : '存储路径已保存。笔记库立即生效，不会写入原图目录。';
+      return data;
+    }
+
+    const VDITOR_CDN = '/static/vendor/vditor';
+    const notes = {
+      open: false,
+      hash: '',
+      imageId: '',
+      list: [],
+      currentName: '',
+      dirty: false,
+      saveTimer: 0,
+      editor: null,
+      loader: null,
+      imageObserver: null,
+      loadSeq: 0,
+      motionSeq: 0,
+      editing: false,
+      status: '',
+      suppressTabClick: false,
+      orderSeq: 0,
+      saveLock: null,
+      saveAgain: false,
+    };
+    function isNotesEditorEvent(target) {
+      return Boolean(target && target.closest && target.closest('#notes-pane'));
+    }
+    function noteLinkBase() {
+      return notes.hash ? `/api/note-files/${notes.hash}/` : '';
+    }
+    function applyNoteLinkBase() {
+      const base = noteLinkBase();
+      const vditor = notes.editor && notes.editor.vditor;
+      if (!vditor) return base;
+      if (vditor.options && vditor.options.preview && vditor.options.preview.markdown) {
+        vditor.options.preview.markdown.linkBase = base;
+      }
+      if (vditor.lute && typeof vditor.lute.SetLinkBase === 'function') {
+        vditor.lute.SetLinkBase(base);
+      }
+      return base;
+    }
+    function markdownForSave(content) {
+      const base = noteLinkBase();
+      if (!base || !content) return content;
+      return content.split(base).join('');
+    }
+    function noteImageCaption(img) {
+      const title = (img.getAttribute('title') || '').trim();
+      if (title) return title;
+      const alt = (img.getAttribute('alt') || '').trim();
+      if (!alt) return '';
+      return alt.replace(/\.[a-z0-9]{2,4}$/i, '');
+    }
+    function applyNoteImageSrcs() {
+      const base = noteLinkBase();
+      const root = $('notes-editor');
+      if (!root) return;
+      root.querySelectorAll('img').forEach((img) => {
+        const src = img.getAttribute('src') || '';
+        if (base && src && !/^(https?:|data:|blob:|\/\/)/i.test(src) && !src.startsWith('/api/note-files/')) {
+          img.setAttribute('src', encodeURI(base + src.replace(/^\.\//, '')));
+        }
+        const caption = noteImageCaption(img);
+        const host = img.closest('[data-type="img"]') || img.closest('.vditor-image') || img.parentElement;
+        if (!(host instanceof HTMLElement)) return;
+        if (caption) {
+          host.classList.add('vditor-image');
+          host.setAttribute('data-image-caption', caption);
+        }
+      });
+    }
+    function setNotesEditing(editing) {
+      notes.editing = Boolean(editing);
+      $('notes-pane').classList.toggle('is-reading', !notes.editing);
+      const toggle = $('notes-edit-toggle');
+      toggle.hidden = notes.list.length === 0;
+      toggle.setAttribute('aria-pressed', String(notes.editing));
+      toggle.textContent = notes.editing ? '收起编辑' : '编辑';
+      try { localStorage.setItem('artseek.notesEditing', notes.editing ? '1' : '0'); }
+      catch (_) { /* ignore quota */ }
+    }
+    function restoreNotesEditing() {
+      try { setNotesEditing(localStorage.getItem('artseek.notesEditing') === '1'); }
+      catch (_) { setNotesEditing(false); }
+    }
+    function watchNoteImages() {
+      if (notes.imageObserver || typeof MutationObserver === 'undefined') return;
+      const root = $('notes-editor');
+      if (!root) return;
+      notes.imageObserver = new MutationObserver(() => applyNoteImageSrcs());
+      notes.imageObserver.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] });
+    }
+    function setNotesStatus(message) {
+      notes.status = message || '';
+      const hashHint = notes.hash ? ` · ${notes.hash.slice(0, 12)}` : '';
+      const name = notes.currentName ? ` · ${notes.currentName}` : '';
+      $('notes-foot').textContent = `${notes.status || '已同步'}${name}${hashHint}`;
+    }
+    function currentImageId() {
+      return state.current && state.current.id ? state.current.id : '';
+    }
+    function updateNotesButton() {
+      const button = $('viewer-notes');
+      const imageId = currentImageId();
+      button.hidden = !imageId;
+      const count = notes.imageId === imageId ? notes.list.length : '';
+      button.innerHTML = count === '' ? '笔记' : `笔记<span class="notes-count">${count}</span>`;
+      button.setAttribute('aria-pressed', String(notes.open));
+    }
+    function renderNoteTabs() {
+      const tabs = $('notes-tabs');
+      tabs.replaceChildren();
+      notes.list.forEach((item) => {
+        const tab = document.createElement('button');
+        tab.type = 'button';
+        tab.className = 'notes-tab';
+        tab.dataset.name = item.name;
+        tab.draggable = false;
+        tab.textContent = item.title || item.name;
+        tab.title = notes.list.length > 1
+          ? '拖动可调整顺序；单击打开；双击重命名'
+          : '双击重命名';
+        tab.classList.toggle('is-active', item.name === notes.currentName);
+        tab.addEventListener('click', () => {
+          if (notes.suppressTabClick) return;
+          selectNote(item.name);
+        });
+        tab.addEventListener('dblclick', () => {
+          if (notes.suppressTabClick) return;
+          renameNote(item.name);
+        });
+        tabs.appendChild(tab);
+      });
+      const empty = notes.list.length === 0;
+      $('notes-delete').hidden = !notes.currentName;
+      $('notes-delete-all').hidden = empty;
+      $('notes-edit-toggle').hidden = empty;
+      $('notes-empty').hidden = !empty;
+      $('notes-editor').hidden = empty;
+    }
+    function loadVditor() {
+      if (window.Vditor) return Promise.resolve();
+      if (notes.loader) return notes.loader;
+      notes.loader = new Promise((resolve, reject) => {
+        const css = document.createElement('link');
+        css.rel = 'stylesheet';
+        css.href = `${VDITOR_CDN}/dist/index.css`;
+        document.head.appendChild(css);
+        const script = document.createElement('script');
+        script.src = `${VDITOR_CDN}/dist/index.min.js`;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error('笔记编辑器未能载入'));
+        document.head.appendChild(script);
+      });
+      return notes.loader;
+    }
+    function destroyNoteEditor() {
+      cancelNotesScroll();
+      if (notes.imageObserver) {
+        notes.imageObserver.disconnect();
+        notes.imageObserver = null;
+      }
+      if (notes.editor && typeof notes.editor.destroy === 'function') {
+        try { notes.editor.destroy(); } catch (_) { /* keep a fresh host node */ }
+      }
+      notes.editor = null;
+      let host = $('notes-editor');
+      if (!host) {
+        host = document.createElement('div');
+        host.id = 'notes-editor';
+        host.className = 'notes-editor';
+        $('notes-pane').insertBefore(host, $('notes-foot'));
+      }
+      host.replaceChildren();
+      host.hidden = notes.list.length === 0;
+    }
+    async function ensureNoteEditor() {
+      await loadVditor();
+      if (notes.editor) {
+        applyNoteLinkBase();
+        return notes.editor;
+      }
+      await new Promise((resolve, reject) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          reject(new Error('笔记编辑器启动超时'));
+        }, 8000);
+        notes.editor = new window.Vditor('notes-editor', {
+          cdn: VDITOR_CDN,
+          mode: 'ir',
+          theme: 'classic',
+          lang: 'zh_CN',
+          height: '100%',
+          cache: { enable: false },
+          toolbar: [
+            'headings', 'bold', 'italic', 'strike', '|',
+            'list', 'ordered-list', 'check', '|',
+            'link', 'upload', 'table', '|',
+            'undo', 'redo',
+          ],
+          preview: {
+            hljs: { enable: false },
+            math: { inlineDigit: false },
+            theme: { current: 'light', path: `${VDITOR_CDN}/dist/css/content-theme` },
+            markdown: { linkBase: noteLinkBase(), imageCaption: true },
+            parse: () => applyNoteImageSrcs(),
+          },
+          upload: {
+            accept: 'image/*',
+            handler: (files) => uploadNoteAssets(files),
+          },
+          after: () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            applyNoteLinkBase();
+            watchNoteImages();
+            applyNoteImageSrcs();
+            setNotesEditing(notes.editing);
+            resolve();
+          },
+          input: () => {
+            notes.dirty = true;
+            applyHeadingTitleToTab(notes.editor.getValue());
+            scheduleNoteSave();
+          },
+        });
+      });
+      return notes.editor;
+    }
+    async function uploadNoteAssets(files) {
+      if (!notes.imageId) return '没有打开的图片';
+      const images = [...files].filter((file) => file && String(file.type || '').startsWith('image/'));
+      if (!images.length) return '只能粘贴或上传图片';
+      try {
+        if (!notes.currentName) await createNote();
+        await ensureNoteEditor();
+        for (const file of images) {
+          const body = new FormData();
+          body.append('file', file);
+          const result = await parseResponse(await fetch(`/api/images/${encodeURIComponent(notes.imageId)}/assets`, {
+            method: 'POST', body,
+          }));
+          const caption = file.name.replace(/\.[^.]+$/, '') || file.name;
+          notes.editor.insertValue(`![${caption}](${result.path} "${caption}")`);
+        }
+        applyNoteLinkBase();
+        applyNoteImageSrcs();
+        notes.dirty = true;
+        scheduleNoteSave();
+        return null;
+      } catch (error) {
+        return error.message || '附件未能保存';
+      }
+    }
+    function clipboardImageFiles(clipboard) {
+      if (!clipboard) return [];
+      const fromItems = [...(clipboard.items || [])]
+        .filter((item) => item.kind === 'file' && String(item.type || '').startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .filter(Boolean);
+      if (fromItems.length) return fromItems;
+      return [...(clipboard.files || [])].filter((file) => String(file.type || '').startsWith('image/'));
+    }
+    async function handleNotesPaste(event) {
+      const files = clipboardImageFiles(event.clipboardData);
+      if (!files.length || !notes.imageId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!notes.editing) return;
+      const message = await uploadNoteAssets(files);
+      if (message) setNotesStatus(message);
+    }
+    async function flushNoteSave() {
+      clearTimeout(notes.saveTimer);
+      if (notes.dirty || notes.saveLock || notes.saveAgain) await saveCurrentNote();
+    }
+    function scheduleNoteSave() {
+      clearTimeout(notes.saveTimer);
+      notes.saveTimer = setTimeout(() => {
+        saveCurrentNote().catch((error) => setNotesStatus(`保存失败：${error.message}`));
+      }, 500);
+    }
+    function firstHeadingTitle(markdown) {
+      const lines = String(markdown || '').replace(/^\uFEFF/, '').split(/\r?\n/);
+      let first = '';
+      for (const line of lines) {
+        if (line.trim()) {
+          first = line;
+          break;
+        }
+      }
+      const match = first.match(/^ {0,3}#(?!#)[ \t]*(.+?)(?:[ \t]+#+)?[ \t]*$/);
+      if (!match) return '';
+      let title = match[1].replace(/\s+#+\s*$/, '').trim();
+      title = title.replace(/!\[[^\]]*]\([^)]*\)/g, '');
+      title = title.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
+      title = title.replace(/[*_`]+/g, '').trim();
+      return title;
+    }
+    function applyHeadingTitleToTab(markdown) {
+      const heading = firstHeadingTitle(markdown);
+      if (!heading || !notes.currentName) return;
+      const row = notes.list.find((item) => item.name === notes.currentName);
+      if (!row || row.title === heading) return;
+      row.title = heading;
+      const tab = [...$('notes-tabs').querySelectorAll('.notes-tab')]
+        .find((node) => node.dataset.name === notes.currentName);
+      if (tab) tab.textContent = heading;
+    }
+    function applySavedNote(previousName, saved) {
+      const row = notes.list.find((item) => item.name === previousName || item.name === saved.name);
+      const live = notes.editor ? firstHeadingTitle(notes.editor.getValue()) : '';
+      const nextTitle = live || saved.title;
+      notes.currentName = saved.name;
+      if (!row) return;
+      const changed = row.name !== saved.name || row.title !== nextTitle;
+      row.name = saved.name;
+      row.title = nextTitle;
+      row.updated_at = saved.updated_at;
+      if (changed) renderNoteTabs();
+    }
+    async function saveCurrentNote() {
+      if (!notes.imageId || !notes.editor) return;
+      if (notes.saveLock) {
+        notes.saveAgain = true;
+        await notes.saveLock;
+        if (notes.dirty || notes.saveAgain) await saveCurrentNote();
+        return;
+      }
+      let unlock = () => {};
+      notes.saveLock = new Promise((resolve) => { unlock = resolve; });
+      try {
+        while (notes.imageId && notes.currentName && notes.editor) {
+          notes.saveAgain = false;
+          notes.dirty = false;
+          const imageId = notes.imageId;
+          const previousName = notes.currentName;
+          const content = markdownForSave(notes.editor.getValue());
+          const heading = firstHeadingTitle(content);
+          const payload = { content };
+          if (heading) payload.title = heading;
+          let saved;
+          try {
+            saved = await parseResponse(await fetch(
+              `/api/images/${encodeURIComponent(imageId)}/notes/${encodeURIComponent(previousName)}`,
+              {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+              },
+            ));
+          } catch (error) {
+            notes.dirty = true;
+            throw error;
+          }
+          if (imageId !== notes.imageId) return;
+          applySavedNote(previousName, saved);
+          if (!notes.saveAgain && !notes.dirty) break;
+        }
+        setNotesStatus('已保存');
+      } finally {
+        notes.saveLock = null;
+        unlock();
+      }
+    }
+    async function selectNote(name) {
+      if (!notes.imageId || !name) return;
+      if (notes.currentName === name && notes.editor) return;
+      await flushNoteSave();
+      const doc = await parseResponse(await fetch(
+        `/api/images/${encodeURIComponent(notes.imageId)}/notes/${encodeURIComponent(name)}`,
+      ));
+      notes.currentName = doc.name;
+      renderNoteTabs();
+      await ensureNoteEditor();
+      applyNoteLinkBase();
+      notes.editor.setValue(doc.content || '');
+      applyNoteImageSrcs();
+      applyHeadingTitleToTab(doc.content || '');
+      notes.dirty = false;
+      clearTimeout(notes.saveTimer);
+      setNotesStatus('已载入');
+    }
+    async function renameNote(name) {
+      const current = notes.list.find((item) => item.name === name);
+      const next = window.prompt('笔记标题', current ? current.title : name);
+      if (next == null) return;
+      await flushNoteSave();
+      const row = notes.list.find((item) => item.name === name)
+        || notes.list.find((item) => item.name === notes.currentName);
+      if (!row) return;
+      const saved = await parseResponse(await fetch(
+        `/api/images/${encodeURIComponent(notes.imageId)}/notes/${encodeURIComponent(row.name)}`,
+        {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: next }),
+        },
+      ));
+      applySavedNote(row.name, saved);
+      setNotesStatus('已重命名');
+    }
+    async function createNote() {
+      if (!notes.imageId) return;
+      await flushNoteSave();
+      const created = await parseResponse(await fetch(`/api/images/${encodeURIComponent(notes.imageId)}/notes`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: '笔记', content: '' }),
+      }));
+      notes.list.push({ name: created.name, title: created.title, updated_at: created.updated_at, size_bytes: 0 });
+      updateNotesButton();
+      setNotesEditing(true);
+      await selectNote(created.name);
+    }
+    async function deleteCurrentNote() {
+      if (!notes.imageId || !notes.currentName) return;
+      if (!window.confirm(`删除「${notes.currentName}」？仅移除本篇引用、且存放在笔记库中的图片，原图不受影响。`)) return;
+      const result = await parseResponse(await fetch(
+        `/api/images/${encodeURIComponent(notes.imageId)}/notes/${encodeURIComponent(notes.currentName)}`,
+        { method: 'DELETE' },
+      ));
+      notes.dirty = false;
+      notes.list = notes.list.filter((item) => item.name !== notes.currentName);
+      notes.currentName = '';
+      destroyNoteEditor();
+      updateNotesButton();
+      renderNoteTabs();
+      const removed = (result.removed_assets || []).length;
+      if (notes.list.length) {
+        await selectNote(notes.list[0].name);
+        if (removed) setNotesStatus(`已删除本篇，并清理 ${removed} 个未再引用的附件`);
+      } else {
+        setNotesStatus(removed ? `没有笔记，已清理 ${removed} 个附件` : '没有笔记');
+      }
+    }
+    async function deleteAllNotes() {
+      if (!notes.imageId) return;
+      if (!window.confirm('删除该图片在笔记库中的整个文件夹？所有笔记和其中粘贴的图片都会移除，原图和向量索引不受影响。')) return;
+      await flushNoteSave().catch(() => {});
+      await parseResponse(await fetch(`/api/images/${encodeURIComponent(notes.imageId)}/notes`, {
+        method: 'DELETE',
+      }));
+      notes.dirty = false;
+      notes.list = [];
+      notes.currentName = '';
+      destroyNoteEditor();
+      updateNotesButton();
+      renderNoteTabs();
+      setNotesStatus('已删除全部笔记');
+    }
+    const NOTES_WIDTH_KEY = 'artseek.notesWidth';
+    function clampNotesWidth(value) {
+      const body = $('viewer-body');
+      const max = Math.max(280, Math.min(920, Math.floor((body?.clientWidth || 900) * 0.8)));
+      const width = Number(value);
+      if (!Number.isFinite(width)) return Math.min(440, max);
+      return Math.max(280, Math.min(max, Math.round(width)));
+    }
+    function applyNotesWidth(value) {
+      const width = clampNotesWidth(value);
+      $('notes-pane').style.setProperty('--notes-width', `${width}px`);
+      try { localStorage.setItem(NOTES_WIDTH_KEY, String(width)); } catch (_) { /* ignore quota */ }
+      return width;
+    }
+    function restoreNotesWidth() {
+      try { applyNotesWidth(localStorage.getItem(NOTES_WIDTH_KEY) || 440); }
+      catch (_) { applyNotesWidth(440); }
+    }
+    function bindNotesResize() {
+      const handle = $('notes-resize');
+      let drag = null;
+      handle.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        const pane = $('notes-pane');
+        drag = { startX: event.clientX, startWidth: pane.getBoundingClientRect().width };
+        pane.classList.add('is-resizing');
+        handle.setPointerCapture(event.pointerId);
+      });
+      handle.addEventListener('pointermove', (event) => {
+        if (!drag) return;
+        applyNotesWidth(drag.startWidth - (event.clientX - drag.startX));
+        if (typeof fitViewerFrame === 'function') fitViewerFrame();
+      });
+      const stop = (event) => {
+        if (!drag) return;
+        drag = null;
+        $('notes-pane').classList.remove('is-resizing');
+        try { handle.releasePointerCapture(event.pointerId); } catch (_) { /* already released */ }
+        if (typeof fitViewerFrame === 'function') fitViewerFrame();
+      };
+      handle.addEventListener('pointerup', stop);
+      handle.addEventListener('pointercancel', stop);
+    }
+    async function loadImageNotes() {
+      await flushNoteSave().catch(() => {});
+      const imageId = currentImageId();
+      const seq = ++notes.loadSeq;
+      if (!imageId) {
+        notes.list = [];
+        notes.imageId = '';
+        notes.hash = '';
+        notes.currentName = '';
+        updateNotesButton();
+        if (notes.open) closeNotesPane({ keepViewer: true });
+        return;
+      }
+      try {
+        const data = await parseResponse(await fetch(`/api/images/${encodeURIComponent(imageId)}/notes`));
+        if (seq !== notes.loadSeq) return;
+        notes.imageId = data.image.id;
+        notes.hash = data.image.content_hash;
+        notes.list = data.notes || [];
+        updateNotesButton();
+        if (!notes.open) return;
+        renderNoteTabs();
+        if (notes.list.length) {
+          const prefer = notes.list.some((item) => item.name === notes.currentName)
+            ? notes.currentName
+            : notes.list[0].name;
+          await selectNote(prefer);
+        } else {
+          notes.currentName = '';
+          destroyNoteEditor();
+          setNotesStatus('没有笔记');
+        }
+      } catch (error) {
+        if (seq !== notes.loadSeq) return;
+        notes.list = [];
+        updateNotesButton();
+        setNotesStatus(`笔记未能读取：${error.message}`);
+      }
+    }
+    function prefersReducedNotesMotion() {
+      return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+    function waitForNotesPaneTransition(pane) {
+      if (typeof fitViewerFrame === 'function') fitViewerFrame();
+      if (prefersReducedNotesMotion()) return Promise.resolve();
+      return new Promise((resolve) => {
+        let finished = false;
+        let frame = 0;
+        const done = () => {
+          if (finished) return;
+          finished = true;
+          pane.removeEventListener('transitionend', onEnd);
+          cancelAnimationFrame(frame);
+          if (typeof fitViewerFrame === 'function') fitViewerFrame();
+          resolve();
+        };
+        const onEnd = (event) => {
+          if (event.target !== pane) return;
+          done();
+        };
+        pane.addEventListener('transitionend', onEnd);
+        const tick = () => {
+          if (typeof fitViewerFrame === 'function') fitViewerFrame();
+          if (!finished) frame = requestAnimationFrame(tick);
+        };
+        frame = requestAnimationFrame(tick);
+        setTimeout(done, 420);
+      });
+    }
+    function notesWheelScroller(event) {
+      if (event.target.closest('.notes-tabs')) return $('notes-tabs');
+      return document.querySelector('#notes-editor .vditor-ir')
+        || document.querySelector('#notes-editor .vditor-content')
+        || $('notes-editor');
+    }
+    const notesScroll = {
+      x: { scroller: null, target: 0 },
+      y: { scroller: null, target: 0 },
+      frame: 0,
+    };
+    function cancelNotesScroll() {
+      if (notesScroll.frame) {
+        cancelAnimationFrame(notesScroll.frame);
+        notesScroll.frame = 0;
+      }
+      notesScroll.x.scroller = null;
+      notesScroll.y.scroller = null;
+    }
+    function clampNotesScroll(scroller, axis, value) {
+      const max = axis === 'x'
+        ? Math.max(0, scroller.scrollWidth - scroller.clientWidth)
+        : Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      return Math.max(0, Math.min(max, value));
+    }
+    function tickNotesScroll() {
+      notesScroll.frame = 0;
+      let keep = false;
+      for (const axis of ['x', 'y']) {
+        const slot = notesScroll[axis];
+        const scroller = slot.scroller;
+        if (!scroller) continue;
+        const prop = axis === 'x' ? 'scrollLeft' : 'scrollTop';
+        slot.target = clampNotesScroll(scroller, axis, slot.target);
+        const current = scroller[prop];
+        const delta = slot.target - current;
+        if (Math.abs(delta) < 0.5) {
+          scroller[prop] = slot.target;
+          continue;
+        }
+        scroller[prop] = current + delta * 0.22;
+        keep = true;
+      }
+      if (keep) notesScroll.frame = requestAnimationFrame(tickNotesScroll);
+    }
+    function nudgeNotesScroll(scroller, axis, delta) {
+      const slot = notesScroll[axis];
+      const prop = axis === 'x' ? 'scrollLeft' : 'scrollTop';
+      if (slot.scroller !== scroller) {
+        slot.scroller = scroller;
+        slot.target = scroller[prop];
+      }
+      slot.target = clampNotesScroll(scroller, axis, slot.target + delta);
+      if (prefersReducedNotesMotion()) {
+        scroller[prop] = slot.target;
+        return;
+      }
+      if (!notesScroll.frame) notesScroll.frame = requestAnimationFrame(tickNotesScroll);
+    }
+    function handleNotesWheel(event) {
+      event.stopPropagation();
+      event.preventDefault();
+      const scroller = notesWheelScroller(event);
+      if (!scroller) return;
+      const tabs = Boolean(event.target.closest('.notes-tabs'));
+      const page = tabs ? scroller.clientWidth : scroller.clientHeight;
+      const line = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? page : 1;
+      if (tabs) {
+        nudgeNotesScroll(scroller, 'x', (event.deltaY + event.deltaX) * line);
+        return;
+      }
+      if (event.shiftKey) {
+        nudgeNotesScroll(scroller, 'x', event.deltaY * line);
+        return;
+      }
+      nudgeNotesScroll(scroller, 'y', event.deltaY * line);
+      if (event.deltaX) nudgeNotesScroll(scroller, 'x', event.deltaX * line);
+    }
+    let noteTabDrag = null;
+    function noteTabFromEvent(event) {
+      const tab = event.target.closest && event.target.closest('.notes-tab');
+      return tab && $('notes-tabs').contains(tab) ? tab : null;
+    }
+    function noteOrderFromNames(names, fallback) {
+      const byName = new Map((fallback || notes.list).map((item) => [item.name, item]));
+      return names.map((name) => byName.get(name)).filter(Boolean);
+    }
+    function resetNoteTabDragStyle(tab) {
+      if (!tab) return;
+      tab.classList.remove('is-dragging');
+      tab.removeAttribute('aria-grabbed');
+      tab.style.cssText = '';
+    }
+    function noteTabHoleIndex(clientX, drag) {
+      const others = [...$('notes-tabs').children].filter((node) => node !== drag.tab && node !== drag.hole);
+      let index = 0;
+      for (const node of others) {
+        const rect = node.getBoundingClientRect();
+        if (clientX >= rect.left + rect.width / 2) index += 1;
+        else break;
+      }
+      return index;
+    }
+    function placeNoteTabHole(index, drag) {
+      const tabs = $('notes-tabs');
+      const others = [...tabs.children].filter((node) => node !== drag.tab && node !== drag.hole);
+      const next = others[index] || null;
+      if (drag.hole.nextSibling === next && drag.hole.parentNode === tabs) return;
+      tabs.insertBefore(drag.hole, next);
+    }
+    function stopNoteTabEdgeScroll(drag) {
+      const frame = drag && drag.scrollFrame;
+      if (frame) cancelAnimationFrame(frame);
+      if (drag) drag.scrollFrame = 0;
+    }
+    function tickNoteTabEdgeScroll() {
+      const drag = noteTabDrag;
+      if (!drag || !drag.active) return;
+      drag.scrollFrame = 0;
+      const bar = $('notes-tabs');
+      const max = bar.scrollWidth - bar.clientWidth;
+      if (max <= 0) return;
+      const rect = bar.getBoundingClientRect();
+      const x = drag.lastX;
+      const edge = 48;
+      let delta = 0;
+      if (x < rect.left + edge) {
+        delta = -Math.max(6, Math.round((edge - (x - rect.left)) * 0.4));
+      } else if (x > rect.right - edge) {
+        delta = Math.max(6, Math.round((x - (rect.right - edge)) * 0.4));
+      }
+      if (!delta) return;
+      const next = Math.max(0, Math.min(max, bar.scrollLeft + delta));
+      if (next === bar.scrollLeft) return;
+      bar.scrollLeft = next;
+      placeNoteTabHole(noteTabHoleIndex(x, drag), drag);
+      drag.scrollFrame = requestAnimationFrame(tickNoteTabEdgeScroll);
+    }
+    function unlistenNoteTabDrag() {
+      window.removeEventListener('pointermove', onNoteTabPointerMove);
+      window.removeEventListener('pointerup', onNoteTabPointerUp);
+      window.removeEventListener('pointercancel', onNoteTabPointerCancel);
+    }
+    function listenNoteTabDrag() {
+      unlistenNoteTabDrag();
+      window.addEventListener('pointermove', onNoteTabPointerMove, { passive: false });
+      window.addEventListener('pointerup', onNoteTabPointerUp);
+      window.addEventListener('pointercancel', onNoteTabPointerCancel);
+    }
+    function beginNoteTabDrag(event) {
+      if (!noteTabDrag || noteTabDrag.active) return;
+      const rect = noteTabDrag.tab.getBoundingClientRect();
+      const hole = document.createElement('span');
+      hole.className = 'notes-tab-hole';
+      hole.style.width = `${rect.width}px`;
+      hole.style.height = `${rect.height}px`;
+      noteTabDrag.active = true;
+      noteTabDrag.moved = true;
+      noteTabDrag.origin = notes.list.slice();
+      noteTabDrag.offsetX = event.clientX - rect.left;
+      noteTabDrag.originTop = rect.top;
+      noteTabDrag.hole = hole;
+      noteTabDrag.tab.after(hole);
+      noteTabDrag.tab.classList.add('is-dragging');
+      noteTabDrag.tab.setAttribute('aria-grabbed', 'true');
+      noteTabDrag.tab.style.position = 'fixed';
+      noteTabDrag.tab.style.left = `${rect.left}px`;
+      noteTabDrag.tab.style.top = `${rect.top}px`;
+      noteTabDrag.tab.style.width = `${rect.width}px`;
+      noteTabDrag.tab.style.margin = '0';
+      noteTabDrag.tab.style.zIndex = '8';
+      $('notes-tabs').classList.add('is-reordering');
+      try { noteTabDrag.tab.setPointerCapture(event.pointerId); } catch (_) { /* already capturing */ }
+      positionNoteTabGhost(event);
+    }
+    function positionNoteTabGhost(event) {
+      if (!noteTabDrag || !noteTabDrag.active) return;
+      noteTabDrag.lastX = event.clientX;
+      noteTabDrag.tab.style.left = `${event.clientX - noteTabDrag.offsetX}px`;
+      noteTabDrag.tab.style.top = `${noteTabDrag.originTop}px`;
+      placeNoteTabHole(noteTabHoleIndex(event.clientX, noteTabDrag), noteTabDrag);
+      if (!noteTabDrag.scrollFrame) {
+        noteTabDrag.scrollFrame = requestAnimationFrame(tickNoteTabEdgeScroll);
+      }
+    }
+    function finishNoteTabDrag(event, options) {
+      const cancelled = Boolean(options && options.cancelled);
+      if (!noteTabDrag) return;
+      window.clearTimeout(noteTabDrag.timer);
+      const drag = noteTabDrag;
+      noteTabDrag = null;
+      stopNoteTabEdgeScroll(drag);
+      unlistenNoteTabDrag();
+      $('notes-tabs').classList.remove('is-reordering');
+      try { drag.tab.releasePointerCapture(event.pointerId); } catch (_) { /* already released */ }
+      if (!drag.active) {
+        resetNoteTabDragStyle(drag.tab);
+        drag.hole?.remove();
+        return;
+      }
+      notes.suppressTabClick = true;
+      window.setTimeout(() => { notes.suppressTabClick = false; }, 0);
+      if (cancelled) {
+        drag.hole?.remove();
+        resetNoteTabDragStyle(drag.tab);
+        notes.list = drag.origin;
+        renderNoteTabs();
+        return;
+      }
+      const names = [...$('notes-tabs').children]
+        .filter((node) => node !== drag.tab)
+        .map((node) => (node === drag.hole ? drag.tab.dataset.name : node.dataset.name));
+      if (drag.hole && drag.hole.parentNode) drag.hole.replaceWith(drag.tab);
+      else $('notes-tabs').appendChild(drag.tab);
+      resetNoteTabDragStyle(drag.tab);
+      const ordered = noteOrderFromNames(names, drag.origin);
+      const same = ordered.length === drag.origin.length
+        && ordered.every((item, index) => item.name === drag.origin[index].name);
+      notes.list = ordered;
+      renderNoteTabs();
+      if (!same) persistNoteOrder(drag.origin);
+    }
+    function onNoteTabPointerDown(event) {
+      const tab = noteTabFromEvent(event);
+      if (!tab || !event.isPrimary || event.button !== 0 || notes.list.length < 2) return;
+      if (noteTabDrag) finishNoteTabDrag(event, { cancelled: true });
+      noteTabDrag = {
+        tab,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        pointerType: event.pointerType,
+        moved: false,
+        active: false,
+        origin: notes.list.slice(),
+        hole: null,
+        offsetX: 0,
+        originTop: 0,
+        lastX: event.clientX,
+        scrollFrame: 0,
+        timer: 0,
+      };
+      listenNoteTabDrag();
+      if (event.pointerType === 'touch') {
+        noteTabDrag.timer = window.setTimeout(() => beginNoteTabDrag(event), 320);
+        return;
+      }
+      try { tab.setPointerCapture(event.pointerId); } catch (_) { /* ignore */ }
+    }
+    function onNoteTabPointerMove(event) {
+      if (!noteTabDrag || event.pointerId !== noteTabDrag.pointerId) return;
+      const dx = event.clientX - noteTabDrag.startX;
+      const dy = event.clientY - noteTabDrag.startY;
+      if (!noteTabDrag.active) {
+        if (Math.hypot(dx, dy) < 6) return;
+        if (noteTabDrag.pointerType === 'touch') {
+          window.clearTimeout(noteTabDrag.timer);
+          unlistenNoteTabDrag();
+          noteTabDrag = null;
+          return;
+        }
+        beginNoteTabDrag(event);
+      }
+      event.preventDefault();
+      positionNoteTabGhost(event);
+    }
+    function onNoteTabPointerUp(event) {
+      finishNoteTabDrag(event, { cancelled: false });
+    }
+    function onNoteTabPointerCancel(event) {
+      finishNoteTabDrag(event, { cancelled: true });
+    }
+    async function persistNoteOrder(previous) {
+      if (!notes.imageId) return;
+      const seq = ++notes.orderSeq;
+      try {
+        const data = await parseResponse(await fetch(
+          `/api/images/${encodeURIComponent(notes.imageId)}/note-order`,
+          {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ names: notes.list.map((item) => item.name) }),
+          },
+        ));
+        if (seq !== notes.orderSeq) return;
+        if (Array.isArray(data.notes)) notes.list = data.notes;
+        renderNoteTabs();
+        setNotesStatus('已调整顺序');
+      } catch (error) {
+        if (seq !== notes.orderSeq) return;
+        if (previous && previous.length) {
+          notes.list = previous;
+          renderNoteTabs();
+        }
+        setNotesStatus(`顺序未能保存：${error.message}`);
+      }
+    }
+    function moveCurrentNote(delta) {
+      const index = notes.list.findIndex((item) => item.name === notes.currentName);
+      if (index < 0) return;
+      const next = Math.max(0, Math.min(notes.list.length - 1, index + delta));
+      if (next === index) return;
+      const previous = notes.list.slice();
+      const list = previous.slice();
+      const [item] = list.splice(index, 1);
+      list.splice(next, 0, item);
+      notes.list = list;
+      renderNoteTabs();
+      persistNoteOrder(previous);
+    }
+    function bindNoteTabs() {
+      $('notes-tabs').addEventListener('pointerdown', onNoteTabPointerDown);
+    }
+    function handleNotesKeys(event) {
+      if (!event.altKey || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+      if (notes.editing && event.target.closest('.vditor')) return;
+      event.preventDefault();
+      moveCurrentNote(event.key === 'ArrowLeft' ? -1 : 1);
+    }
+    async function openNotesPane() {
+      if (!currentImageId()) return;
+      const seq = ++notes.motionSeq;
+      notes.open = true;
+      restoreNotesWidth();
+      const pane = $('notes-pane');
+      pane.hidden = false;
+      pane.getBoundingClientRect();
+      $('viewer-notes').setAttribute('aria-pressed', 'true');
+      const motion = waitForNotesPaneTransition(pane);
+      pane.classList.add('is-open');
+      await Promise.all([loadImageNotes(), motion]);
+      if (seq !== notes.motionSeq) return;
+      if (typeof fitViewerFrame === 'function') fitViewerFrame();
+    }
+    async function closeNotesPane() {
+      const seq = ++notes.motionSeq;
+      await flushNoteSave().catch(() => {});
+      if (seq !== notes.motionSeq) return;
+      notes.open = false;
+      const pane = $('notes-pane');
+      $('viewer-notes').setAttribute('aria-pressed', 'false');
+      if (pane.hidden) {
+        pane.classList.remove('is-open');
+        return;
+      }
+      const motion = waitForNotesPaneTransition(pane);
+      pane.classList.remove('is-open');
+      await motion;
+      if (seq !== notes.motionSeq) return;
+      pane.hidden = true;
+      if (typeof fitViewerFrame === 'function') fitViewerFrame();
+    }
+    async function toggleNotesPane() {
+      if (notes.open) await closeNotesPane();
+      else await openNotesPane();
+    }
     function modelHint(data) {
       if (data.loading) return '正在载入图文向量模型…';
       if (!data.loaded) return '启动时不占用显存；检索时自动载入。';
@@ -1129,13 +2308,43 @@
       }
     });
     $('viewer-close').addEventListener('click', () => $('viewer').close());
+    $('viewer').addEventListener('cancel', (event) => {
+      if (notes.open) {
+        event.preventDefault();
+        closeNotesPane();
+      }
+    });
     $('viewer').addEventListener('close', () => {
       closeViewerCollectionMenu({ restoreFocus: false });
+      closeNotesPane();
       resetView();
       clearViewerSlots();
       state.currentRefKey = null;
       state.viewerSource = 'gallery';
       syncRefSelection();
+    });
+    $('viewer-notes').addEventListener('click', () => toggleNotesPane());
+    $('notes-new').addEventListener('click', () => createNote().catch((error) => setNotesStatus(error.message)));
+    $('notes-edit-toggle').addEventListener('click', () => setNotesEditing(!notes.editing));
+    $('notes-delete').addEventListener('click', () => deleteCurrentNote().catch((error) => setNotesStatus(error.message)));
+    $('notes-delete-all').addEventListener('click', () => deleteAllNotes().catch((error) => setNotesStatus(error.message)));
+    $('notes-close-pane').addEventListener('click', () => closeNotesPane());
+    $('notes-pane').addEventListener('beforeinput', (event) => {
+      if (!notes.editing) event.preventDefault();
+    });
+    $('notes-pane').addEventListener('paste', (event) => {
+      handleNotesPaste(event).catch((error) => setNotesStatus(error.message));
+    }, true);
+    $('notes-pane').addEventListener('wheel', handleNotesWheel, { passive: false, capture: true });
+    $('notes-pane').addEventListener('keydown', handleNotesKeys);
+    bindNoteTabs();
+    bindNotesResize();
+    restoreNotesWidth();
+    restoreNotesEditing();
+    $('storage-save').addEventListener('click', () => {
+      saveStoragePaths().catch((error) => {
+        $('storage-hint').textContent = `路径未能保存：${error.message}`;
+      });
     });
     $('viewer-reference').addEventListener('click', () => {
       if (!state.current) return;
@@ -1545,7 +2754,7 @@
     function handleCollectionHistoryShortcut(event) {
       const redo = isCollectionRedoShortcut(event);
       if (!redo && !isCollectionUndoShortcut(event)) return;
-      if (isCollectionNameField(event.target)) return;
+      if (isCollectionNameField(event.target) || isNotesEditorEvent(event.target)) return;
       if (state.collectionHistoryBusy || state.collectionDrag) return;
       if (redo ? !state.collectionHistory.canRedo : !state.collectionHistory.canUndo) return;
       event.preventDefault();
@@ -3257,6 +4466,7 @@
       state.currentRefKey = null;
       $('viewer-title').textContent = item.path;
       updateViewerNav();
+      loadImageNotes();
     }
     function applyReferenceViewerState(ref) {
       closeViewerCollectionMenu({ restoreFocus: false });
@@ -3265,6 +4475,7 @@
       state.current = ref.id ? { id: ref.id, name: ref.name, path: ref.name } : null;
       $('viewer-title').textContent = ref.name;
       updateViewerNav();
+      loadImageNotes();
     }
     function openViewer(item) {
       applyGalleryViewerState(item);
@@ -4048,6 +5259,7 @@
         return;
       }
       if (!$('viewer').open) return;
+      if (isNotesEditorEvent(event.target)) return;
       if (event.key === 'ArrowLeft') { event.preventDefault(); stepViewer(-1, { animate: true }); }
       else if (event.key === 'ArrowRight') { event.preventDefault(); stepViewer(1, { animate: true }); }
       else if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomBy(1.25); }
@@ -4055,6 +5267,10 @@
       else if (event.key === '0') { event.preventDefault(); resetView(false); }
     });
     document.addEventListener('wheel', (event) => {
+      if (isNotesEditorEvent(event.target)) {
+        event.stopPropagation();
+        return;
+      }
       if ($('viewer').open && event.ctrlKey) event.preventDefault();
     }, { passive: false });
     function setSideTab(name) {
@@ -4172,6 +5388,9 @@
     loadCollections().catch((error) => setCollectionStatus(`收藏夹不可用：${error.message}`));
     loadWebSearchSettings().catch((error) => {
       $('model-hint').textContent = `查询设置未能读取：${error.message}`;
+    });
+    loadStoragePaths().catch((error) => {
+      $('storage-hint').textContent = `存储路径未能读取：${error.message}`;
     });
     fetchModelStatus().catch((error) => {
       $('model-hint').textContent = modelApiErrorMessage(error);

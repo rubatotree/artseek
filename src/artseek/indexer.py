@@ -18,6 +18,7 @@ from .image_io import (
     file_digest,
     image_metadata,
     load_rgb,
+    perceptual_hash,
     point_id,
 )
 from .incremental_state import (
@@ -481,6 +482,7 @@ class ImageIndexer:
                         "root_key": root_key,
                         "folder_key": canonical_path(path.parent),
                         "content_hash": file_digest(path),
+                        "phash": perceptual_hash(image),
                         "tags": tags.tags,
                         "tag_scores": tags.scores,
                         "caption": caption,

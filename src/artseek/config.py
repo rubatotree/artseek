@@ -68,6 +68,8 @@ class IndexingConfig:
 class AppConfig:
     data_dir: Path = field(default_factory=lambda: Path(user_data_dir(APP_NAME)))
     cache_dir: Path = field(default_factory=lambda: Path(user_cache_dir(APP_NAME)))
+    qdrant_path_override: Path | None = None
+    notes_dir_override: Path | None = None
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     tagger: TaggerConfig = field(default_factory=TaggerConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -76,7 +78,11 @@ class AppConfig:
 
     @property
     def qdrant_path(self) -> Path:
-        return self.data_dir / "qdrant"
+        return self.qdrant_path_override or (self.data_dir / "qdrant")
+
+    @property
+    def notes_dir(self) -> Path:
+        return self.notes_dir_override or (self.data_dir / "notes")
 
     @property
     def manifest_path(self) -> Path:
@@ -110,6 +116,7 @@ class AppConfig:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+        self.notes_dir.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass(slots=True)
@@ -135,6 +142,9 @@ def default_config_text() -> str:
     return f'''# ArtSeek 本地配置。Windows 路径建议写成 D:/Pictures 这种形式。
 data_dir = "{data}"
 cache_dir = "{cache}"
+# 可选。默认是 data_dir 下的 qdrant 与 notes。网页「高级」改路径写入 runtime.json，并优先于这里。
+# qdrant_path = "D:/ArtSeek/qdrant"
+# notes_dir = "D:/ArtSeek/notes"
 
 [embedding]
 # 轻量而且支持中文/日语/韩语的图文向量模型。
@@ -198,12 +208,71 @@ def _merge_dataclass(instance: Any, values: dict[str, Any]) -> None:
             setattr(instance, key, value)
 
 
+def coerce_directory_path(value: Any, *, create: bool = False) -> Path:
+    """Expand, make absolute, and optionally create a user-supplied directory."""
+    if not isinstance(value, (str, Path)) or not str(value).strip():
+        raise ValueError("路径不能为空")
+    text = str(value).strip()
+    if "\x00" in text:
+        raise ValueError("路径不合法")
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    try:
+        path = path.resolve()
+    except OSError as exc:
+        raise ValueError(f"无法解析路径：{exc}") from exc
+    if create:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ValueError(f"无法使用该目录：{exc}") from exc
+    return path
+
+
+def paths_equal(left: Path, right: Path) -> bool:
+    try:
+        return os.path.normcase(str(left.resolve())) == os.path.normcase(str(right.resolve()))
+    except OSError:
+        return os.path.normcase(str(left)) == os.path.normcase(str(right))
+
+
+def _optional_directory_path(value: Any) -> Path | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        return coerce_directory_path(value, create=False)
+    except ValueError:
+        return None
+
+
+def apply_runtime_paths(config: AppConfig) -> None:
+    """Runtime path overrides win over config.toml so CLI and web share locations."""
+    data = _load_runtime_data(config)
+    if "qdrant_path" in data:
+        override = _optional_directory_path(data.get("qdrant_path"))
+        config.qdrant_path_override = override
+    if "notes_dir" in data:
+        override = _optional_directory_path(data.get("notes_dir"))
+        config.notes_dir_override = override
+
+
 def load_config(path: Path | None = None) -> AppConfig:
     path = path or default_config_path()
     cfg = AppConfig()
     if path.exists():
         with path.open("rb") as handle:
-            _merge_dataclass(cfg, tomllib.load(handle))
+            raw = tomllib.load(handle)
+        qdrant = raw.pop("qdrant_path", None)
+        notes = raw.pop("notes_dir", None)
+        _merge_dataclass(cfg, raw)
+        if isinstance(qdrant, str) and qdrant.strip():
+            cfg.qdrant_path_override = coerce_directory_path(qdrant, create=False)
+        if isinstance(notes, str) and notes.strip():
+            cfg.notes_dir_override = coerce_directory_path(notes, create=False)
+    apply_runtime_paths(cfg)
     cfg.ensure_dirs()
     return cfg
 
@@ -280,4 +349,34 @@ def save_web_search_settings(config: AppConfig, settings: WebSearchSettings) -> 
             "dedupe": bool(settings.dedupe),
             "limit": clamp_web_search_limit(settings.limit),
         }
+        _save_runtime_data(config, payload)
+
+
+def save_storage_paths(
+    config: AppConfig,
+    *,
+    qdrant_path: Path | str | None = None,
+    notes_dir: Path | str | None = None,
+    update_qdrant: bool = False,
+    update_notes: bool = False,
+) -> None:
+    """Persist path overrides. Empty/None clears an override back to the default."""
+    with _RUNTIME_SETTINGS_LOCK:
+        payload = _load_runtime_data(config)
+        if update_qdrant:
+            if qdrant_path in (None, ""):
+                payload.pop("qdrant_path", None)
+                config.qdrant_path_override = None
+            else:
+                path = coerce_directory_path(qdrant_path, create=False)
+                payload["qdrant_path"] = str(path)
+                config.qdrant_path_override = path
+        if update_notes:
+            if notes_dir in (None, ""):
+                payload.pop("notes_dir", None)
+                config.notes_dir_override = None
+            else:
+                path = coerce_directory_path(notes_dir, create=True)
+                payload["notes_dir"] = str(path)
+                config.notes_dir_override = path
         _save_runtime_data(config, payload)

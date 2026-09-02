@@ -5,7 +5,15 @@ import os
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageOps, UnidentifiedImageError
+
+PHASH_LENGTH = 16
+PHASH_MAX_DISTANCE = 10
+PHASH_ASPECT_MAX_RATIO = 1.25
+_PHASH_WIDTH = 9
+_PHASH_HEIGHT = 8
+_PHASH_MIN_STD = 4.0
 
 IMAGE_EXTENSIONS = {
     ".jpg",
@@ -37,6 +45,49 @@ def file_digest(path: Path | str, *, chunk_size: int = 1024 * 1024) -> str:
         while chunk := handle.read(chunk_size):
             hasher.update(chunk)
     return hasher.hexdigest()
+
+
+def perceptual_hash(source: Path | str | Image.Image) -> str:
+    """64-bit difference hash. Empty string means the image is too flat to match."""
+    image = source if isinstance(source, Image.Image) else load_rgb(source)
+    gray = image.convert("L").resize(
+        (_PHASH_WIDTH, _PHASH_HEIGHT),
+        Image.Resampling.LANCZOS,
+    )
+    pixels = np.asarray(gray, dtype=np.int16)
+    if float(np.std(pixels)) < _PHASH_MIN_STD:
+        return ""
+    bits = (pixels[:, 1:] > pixels[:, :-1]).reshape(-1)
+    value = 0
+    for bit in bits.tolist():
+        value = (value << 1) | int(bit)
+    return f"{value:0{PHASH_LENGTH}x}"
+
+
+def hamming_distance(left: str, right: str) -> int:
+    if not left or not right:
+        return 64
+    if left == right:
+        return 0
+    try:
+        return (int(left, 16) ^ int(right, 16)).bit_count()
+    except ValueError:
+        return 64
+
+
+def aspect_ratio_compatible(
+    width_a: int,
+    height_a: int,
+    width_b: int,
+    height_b: int,
+    *,
+    max_ratio: float = PHASH_ASPECT_MAX_RATIO,
+) -> bool:
+    if min(width_a, height_a, width_b, height_b) <= 0:
+        return True
+    ratio_a = width_a / height_a
+    ratio_b = width_b / height_b
+    return max(ratio_a, ratio_b) / min(ratio_a, ratio_b) <= max_ratio
 
 
 def scan_images(roots: Iterable[Path], recursive: bool = True) -> Iterator[tuple[Path, Path]]:

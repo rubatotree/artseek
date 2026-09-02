@@ -6,9 +6,18 @@ ArtSeek 面向本地插画收藏检索。贡献时请保持这三条约束：原
 
 ## 开发环境
 
-需要 Python 3.11 和 [uv](https://docs.astral.sh/uv/)。Windows 上请用仓库里的脚本换成 CUDA 版 PyTorch，否则索引会静默跑在 CPU 上。
+需要 Python 3.11、Git 和 [uv](https://docs.astral.sh/uv/)。Windows 上请用仓库里的脚本换成 CUDA 版 PyTorch，否则索引会静默跑在 CPU 上。
+
+克隆时带上子模块。Vditor 钉在 tag `v3.11.3`；上游不提交 `dist/`，本仓库也不提交构建产物。笔记编辑器需在子模块里构建一次：
 
 ```powershell
+git clone --recurse-submodules <本仓库>
+cd ArtSeek
+git submodule update --init --recursive
+Push-Location src/artseek/web/static/vendor/vditor
+pnpm install
+pnpm build
+Pop-Location
 uv venv --python 3.11
 uv pip install --link-mode=copy --python .venv\Scripts\python.exe -e ".[all,dev]"
 .\scripts\install_cuda_torch.ps1
@@ -17,6 +26,8 @@ uv pip install --link-mode=copy --python .venv\Scripts\python.exe -e ".[all,dev]
 Linux：
 
 ```bash
+git submodule update --init --recursive
+(cd src/artseek/web/static/vendor/vditor && pnpm install && pnpm build)
 uv venv --python 3.11
 uv pip install --python .venv/bin/python -e '.[all,dev]'
 ```

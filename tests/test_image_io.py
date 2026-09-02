@@ -6,7 +6,16 @@ from pathlib import Path
 
 from PIL import Image
 
-from artseek.image_io import canonical_path, file_digest, load_rgb, point_id, scan_images
+from artseek.image_io import (
+    PHASH_MAX_DISTANCE,
+    canonical_path,
+    file_digest,
+    hamming_distance,
+    load_rgb,
+    perceptual_hash,
+    point_id,
+    scan_images,
+)
 
 
 class ImageIOTests(unittest.TestCase):
@@ -26,6 +35,27 @@ class ImageIOTests(unittest.TestCase):
             self.assertEqual(load_rgb(image_path).mode, "RGB")
             self.assertEqual(file_digest(image_path), file_digest(image_path))
             self.assertEqual(len(file_digest(image_path)), 64)
+
+    def test_perceptual_hash_survives_resize_not_a_different_picture(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = Image.new("RGB", (80, 60))
+            pixels = original.load()
+            for y in range(60):
+                for x in range(80):
+                    pixels[x, y] = ((x * 17 + y * 9) % 200, (x * 5) % 180, (y * 11) % 160)
+            source = root / "orig.png"
+            scaled = root / "scaled.png"
+            other = root / "other.png"
+            original.save(source)
+            original.resize((320, 240), Image.Resampling.LANCZOS).save(scaled)
+            Image.new("RGB", (80, 60), (20, 180, 40)).save(other)
+            left = perceptual_hash(source)
+            right = perceptual_hash(scaled)
+            alien = perceptual_hash(other)
+            self.assertEqual(len(left), 16)
+            self.assertLessEqual(hamming_distance(left, right), PHASH_MAX_DISTANCE)
+            self.assertGreater(hamming_distance(left, alien), PHASH_MAX_DISTANCE)
 
 
 if __name__ == "__main__":

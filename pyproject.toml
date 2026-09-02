@@ -82,6 +82,7 @@ include = [
   "/CONTRIBUTING.md",
   "/SECURITY.md",
   "/pyproject.toml",
+  "/.gitmodules",
 ]
 
 [tool.pytest.ini_options]

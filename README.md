@@ -22,6 +22,7 @@ ArtSeek 是一个完全本地运行的插画图片收藏检索工具。它不会
 - 可选严格标签模式，要求结果至少精确命中一个细节标签；
 - 可选使用本地视觉语言模型，为每张插画生成结构化长描述；
 - 命令行与离线本地网页图库；
+- 为每张图撰写一篇或多篇 Markdown 笔记，按图片内容哈希存放在可配置的笔记库中；
 - Windows、Linux；NVIDIA GPU、CPU 均可运行。
 
 ## 推荐配置
@@ -42,11 +43,14 @@ ArtSeek 是一个完全本地运行的插画图片收藏检索工具。它不会
 要求：Windows 10/11、NVIDIA 驱动、Python 3.11。推荐使用 [uv](https://docs.astral.sh/uv/) 管理环境。
 
 ```powershell
+git clone --recurse-submodules <本仓库>
 cd ArtSeek
 Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\setup_windows.ps1
 .\.venv\Scripts\Activate.ps1
 ```
+
+笔记编辑器用 Git 子模块钉住 [Vditor `v3.11.3`](https://github.com/Vanessa219/vditor/tree/v3.11.3)。上游不把 `dist/` 放进 Git，本仓库也不提交构建产物；`setup_windows.ps1` 会初始化子模块。若 `src/artseek/web/static/vendor/vditor/dist/index.min.js` 仍不存在，在该子模块目录执行 `pnpm install && pnpm build`。
 
 如果已经安装 uv，也可以手动执行：
 
@@ -62,6 +66,10 @@ Windows 上 PyPI 的 `torch` 默认是 CPU 轮子。`install_cuda_torch.ps1` 会
 ## Linux 安装
 
 ```bash
+git clone --recurse-submodules <本仓库>
+cd ArtSeek
+git submodule update --init --recursive
+(cd src/artseek/web/static/vendor/vditor && pnpm install && pnpm build)
 uv venv --python 3.11
 uv pip install --python .venv/bin/python -e '.[all]'
 source .venv/bin/activate

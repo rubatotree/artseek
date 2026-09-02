@@ -208,7 +208,7 @@ def search_command(
         bool, typer.Option("--strict-tags", help="要求结果至少精确命中一个细节标签")
     ] = False,
     dedupe: Annotated[
-        bool, typer.Option("--dedupe", help="完全相同的图片只保留最先检索到的")
+        bool, typer.Option("--dedupe", help="相同文件或相同哈希的图片只保留最先检索到的")
     ] = False,
     json_output: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:

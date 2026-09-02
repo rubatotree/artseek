@@ -7,6 +7,14 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        git submodule update --init --recursive
+    }
+    $vditorJs = Join-Path $PWD "src\artseek\web\static\vendor\vditor\dist\index.min.js"
+    if (-not (Test-Path $vditorJs)) {
+        Write-Host "未找到 Vditor dist。子模块钉在 v3.11.3；上游不提交构建产物。" -ForegroundColor Yellow
+        Write-Host "请在 src\artseek\web\static\vendor\vditor 执行：pnpm install && pnpm build" -ForegroundColor Yellow
+    }
     uv venv --python 3.11
     # Windows 上 uv 默认 hardlink；venv 与 cache 跨盘时链接会 silently 失效，
     # 表现为 dist-info 还在、google.protobuf 源文件却丢失。

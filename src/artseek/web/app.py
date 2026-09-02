@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import mimetypes
 import random
 import tempfile
 import threading
@@ -12,6 +13,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..collections import Collection, CollectionStore, HistoryAction
@@ -23,9 +25,11 @@ from ..config import (
     AppConfig,
     WebSearchSettings,
     load_web_search_settings,
+    paths_equal,
+    save_storage_paths,
     save_web_search_settings,
 )
-from ..image_io import canonical_path, make_thumbnail
+from ..image_io import PHASH_LENGTH, canonical_path, make_thumbnail, perceptual_hash
 from ..incremental_state import IncrementalIndexState
 from ..indexer import ImageIndexer
 from ..library import (
@@ -39,6 +43,7 @@ from ..library import (
     rebuild_catalog,
     save_scope,
 )
+from ..notes import NoteError, NoteStore, resolve_content_hash
 from ..search import SearchEngine
 
 
@@ -223,6 +228,46 @@ class CollectionOrderRequest(BaseModel):
         return value
 
 
+class StoragePathsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    qdrant_path: str | None = None
+    notes_dir: str | None = None
+
+
+class NoteCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = None
+    content: str = ""
+
+
+class NoteWriteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = None
+    content: str | None = None
+
+    @model_validator(mode="after")
+    def validate_write(self) -> NoteWriteRequest:
+        if self.title is None and self.content is None:
+            raise ValueError("请提供笔记标题或内容")
+        return self
+
+
+class NoteOrderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    names: list[str]
+
+    @field_validator("names")
+    @classmethod
+    def validate_names(cls, value: list[str]) -> list[str]:
+        if any(not str(name).strip() for name in value):
+            raise ValueError("笔记名称不能为空")
+        return value
+
+
 class CollectionItemRequest(BaseModel):
     image_id: str
 
@@ -278,6 +323,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     app.state.index_job = IndexJob()
     app.state.index_lock = threading.Lock()
     app.state.collections = CollectionStore(config.collections_path)
+    app.state.notes = NoteStore(config.notes_dir)
+    app.state.active_qdrant_path = config.qdrant_path
     app.state.collection_index_empty = False
     app.state.collection_index_generation = 0
     app.state.collection_id_cursors: OrderedDict[str, CollectionIdCursor] = OrderedDict()
@@ -1052,4 +1099,232 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         save_web_search_settings(config, settings)
         return dataclasses.asdict(settings)
 
+    def storage_paths_payload(*, qdrant_restart_required: bool | None = None) -> dict[str, Any]:
+        active = app.state.active_qdrant_path
+        restart = (
+            qdrant_restart_required
+            if qdrant_restart_required is not None
+            else not paths_equal(config.qdrant_path, active)
+        )
+        return {
+            "qdrant_path": str(config.qdrant_path),
+            "notes_dir": str(config.notes_dir),
+            "active_qdrant_path": str(active),
+            "qdrant_restart_required": restart,
+        }
+
+    def _payload_phash(payload: dict[str, Any] | None) -> str:
+        if not payload:
+            return ""
+        stored = str(payload.get("phash") or "").strip().casefold()
+        if len(stored) == PHASH_LENGTH:
+            return stored
+        raw_path = Path(str(payload.get("path") or ""))
+        if not raw_path.is_file():
+            return ""
+        try:
+            return perceptual_hash(raw_path)
+        except (OSError, ValueError):
+            return ""
+
+    def notes_context(point_id: str) -> tuple[dict[str, Any], str]:
+        getter = getattr(app.state.engine.store, "get", None)
+        payload = getter(point_id) if callable(getter) else None
+        digest = ""
+        if payload:
+            try:
+                digest = resolve_content_hash(payload)
+            except FileNotFoundError:
+                digest = app.state.notes.lookup_by_point_id(point_id) or ""
+            except NoteError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        if not digest:
+            digest = app.state.notes.lookup_by_point_id(point_id) or ""
+        if not digest:
+            detail = "图片不在索引中" if not payload else "原图片已移动或删除，且没有已保存的笔记"
+            raise HTTPException(404, detail)
+        identity = note_identity(payload or {}, point_id)
+        try:
+            canonical = app.state.notes.resolve_canonical(digest, **identity)
+        except NoteError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if not payload:
+            meta = app.state.notes.image_meta(canonical)
+            payload = {
+                "name": meta.get("name") or "",
+                "path": meta.get("path") or "",
+                "content_hash": canonical,
+            }
+        payload = dict(payload)
+        payload["phash"] = identity.get("phash") or payload.get("phash") or ""
+        return payload, canonical
+
+    def note_identity(payload: dict[str, Any], point_id: str) -> dict[str, Any]:
+        try:
+            width = int(payload.get("width") or 0)
+        except (TypeError, ValueError):
+            width = 0
+        try:
+            height = int(payload.get("height") or 0)
+        except (TypeError, ValueError):
+            height = 0
+        return {
+            "name": str(payload.get("name") or ""),
+            "path": str(payload.get("path") or ""),
+            "point_id": point_id,
+            "phash": _payload_phash(payload),
+            "width": width,
+            "height": height,
+        }
+
+    @app.get("/api/storage-paths")
+    def storage_paths() -> dict:
+        return storage_paths_payload()
+
+    @app.put("/api/storage-paths")
+    def update_storage_paths(request: StoragePathsRequest) -> dict:
+        update_qdrant = request.qdrant_path is not None
+        update_notes = request.notes_dir is not None
+        if not update_qdrant and not update_notes:
+            raise HTTPException(400, "请提供向量库或笔记库路径")
+        try:
+            save_storage_paths(
+                config,
+                qdrant_path=request.qdrant_path,
+                notes_dir=request.notes_dir,
+                update_qdrant=update_qdrant,
+                update_notes=update_notes,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if update_notes:
+            config.ensure_dirs()
+            app.state.notes.set_root(config.notes_dir)
+        return storage_paths_payload()
+
+    @app.get("/api/images/{point_id}/notes")
+    def list_image_notes(point_id: str) -> dict:
+        payload, digest = notes_context(point_id)
+        try:
+            notes = app.state.notes.list_notes(digest, **note_identity(payload, point_id))
+        except NoteError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {
+            "image": {
+                "id": point_id,
+                "content_hash": digest,
+                "name": str(payload.get("name") or ""),
+                "path": str(payload.get("path") or ""),
+            },
+            "notes": [item.as_dict() for item in notes],
+        }
+
+    @app.post("/api/images/{point_id}/notes")
+    def create_image_note(point_id: str, request: NoteCreateRequest) -> dict:
+        payload, digest = notes_context(point_id)
+        try:
+            note = app.state.notes.create_note(
+                digest,
+                title=request.title,
+                content=request.content,
+                **note_identity(payload, point_id),
+            )
+        except NoteError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return note.as_dict()
+
+    @app.put("/api/images/{point_id}/note-order")
+    def reorder_image_notes(point_id: str, request: NoteOrderRequest) -> dict:
+        payload, digest = notes_context(point_id)
+        try:
+            notes = app.state.notes.reorder_notes(
+                digest,
+                request.names,
+                **note_identity(payload, point_id),
+            )
+        except NoteError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"notes": [item.as_dict() for item in notes]}
+
+    @app.get("/api/images/{point_id}/notes/{name}")
+    def read_image_note(point_id: str, name: str) -> dict:
+        _payload, digest = notes_context(point_id)
+        try:
+            return app.state.notes.read_note(digest, name).as_dict()
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except NoteError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.put("/api/images/{point_id}/notes/{name}")
+    def write_image_note(point_id: str, name: str, request: NoteWriteRequest) -> dict:
+        payload, digest = notes_context(point_id)
+        try:
+            note = app.state.notes.write_note(
+                digest,
+                name,
+                title=request.title,
+                content=request.content,
+                **note_identity(payload, point_id),
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except NoteError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return note.as_dict()
+
+    @app.delete("/api/images/{point_id}/notes/{name}")
+    def delete_image_note(point_id: str, name: str) -> dict:
+        _payload, digest = notes_context(point_id)
+        try:
+            removed = app.state.notes.delete_note(digest, name)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except NoteError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"deleted": True, "removed_assets": removed}
+
+    @app.delete("/api/images/{point_id}/notes")
+    def delete_all_image_notes(point_id: str) -> dict:
+        _payload, digest = notes_context(point_id)
+        try:
+            app.state.notes.delete_folder(digest)
+        except NoteError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"deleted": True, "folder": digest}
+
+    @app.post("/api/images/{point_id}/assets")
+    async def upload_note_asset(point_id: str, file: UploadFile = File(...)) -> dict:
+        payload, digest = notes_context(point_id)
+        data = await file.read()
+        filename = file.filename or "paste"
+        if not Path(filename).suffix:
+            filename += mimetypes.guess_extension(file.content_type or "") or ".png"
+        try:
+            relative = app.state.notes.save_asset(
+                digest,
+                filename,
+                data,
+                **note_identity(payload, point_id),
+            )
+        except NoteError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {
+            "path": relative,
+            "url": f"/api/note-files/{digest}/{relative}",
+        }
+
+    @app.get("/api/note-files/{content_hash}/{relative:path}")
+    def note_file(content_hash: str, relative: str) -> FileResponse:
+        try:
+            path = app.state.notes.public_file(content_hash, relative)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except NoteError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        media_type, _ = mimetypes.guess_type(path.name)
+        return FileResponse(path, media_type=media_type or "application/octet-stream")
+
+    static_dir = Path(__file__).with_name("static")
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
     return app

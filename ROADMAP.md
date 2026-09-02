@@ -159,3 +159,46 @@ drag beyond a pointer-distance threshold before release can activate a tile.
     cancellation of a still-pending new card history-free.
 20. Complete: provide a visible collection edit-target state and make outside
     focus or right-click cancel an uncommitted edit mode.
+
+## Image notes
+
+Notes are user-owned Markdown, not index state. Each indexed image maps to
+one folder in a configurable notes vault, keyed by the file's SHA-256 `content_hash`. Byte-identical copies and
+near-duplicate resizes (dHash Hamming distance ≤ 10, similar aspect
+ratio) share one folder via aliases stored in `.artseek-index.json`.
+The Hamming scan covers only hashes already in the notes vault, not the
+whole Qdrant collection. Originals remain read-only.
+
+The in-app editor is Vditor, pinned as a Git submodule at tag `v3.11.3`.
+Upstream does not commit `dist/`; this repo does not either. Build once
+inside the submodule after `git submodule update --init`. Advanced settings expose the Qdrant directory and the notes vault
+path. Path overrides persist in `runtime.json` and are applied by
+`load_config`, so CLI indexing and the web server share the same locations.
+Changing the Qdrant path requires a process restart; the notes path applies
+immediately.
+
+### Risks and safeguards
+
+- Note names and asset paths are contained under `{notes_dir}/{hash}/`.
+  `..`, absolute paths, and Windows reserved device names are rejected.
+- Writes use a sibling `.tmp` file and replace, with a process-local lock.
+- A missing `content_hash` falls back to hashing the current file; a missing
+  file cannot open notes. Pixel edits produce a new hash and a new folder.
+- Vditor is configured with a local `cdn` path so it does not fetch KaTeX or
+  Mermaid from the network. Diagrams stay disabled until those assets are
+  vendored.
+- Live relocation of a local Qdrant client is unsupported; the UI saves the
+  new path and asks for a restart.
+
+### Milestones
+
+1. Complete: add overridable `qdrant_path` / `notes_dir` with runtime.json
+   precedence.
+2. Complete: implement the content-hash note vault (`NoteStore`) and
+   persistence tests.
+3. Complete: expose notes CRUD, asset upload, and storage-path APIs.
+4. Complete: add the viewer notes pane with lazy-loaded Vditor and Advanced
+   path fields.
+5. Complete: cover sanitization, identity, API, and homepage fingerprints.
+6. Complete: persist per-image note order; drag tabs like a browser strip;
+   hide the editor scrollbar; sync the filename from the first ATX H1.

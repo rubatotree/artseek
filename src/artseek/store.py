@@ -21,6 +21,7 @@ SEARCH_PAYLOAD_FIELDS = (
     "height",
     "size_bytes",
     "content_hash",
+    "phash",
     "tags",
     "caption",
 )

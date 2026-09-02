@@ -8,7 +8,13 @@ import numpy as np
 from artseek.config import AppConfig
 from artseek.image_io import canonical_path
 from artseek.library import day_start_ns
-from artseek.search import SearchEngine, compose_visual_vector, duplicate_key, keep_first_unique
+from artseek.search import (
+    SearchEngine,
+    compose_visual_vector,
+    duplicate_key,
+    duplicate_keys,
+    keep_first_unique,
+)
 from artseek.store import Neighbor, query_mode
 
 LIB = Path("lib")
@@ -123,6 +129,20 @@ class DuplicateStore(FakeStore):
         ]
 
 
+class HashDuplicateStore(DuplicateStore):
+    payloads = {
+        **DuplicateStore.payloads,
+        "a": {**DuplicateStore.payloads["a"], "content_hash": "aa" * 32},
+        "a_copy": {
+            **DuplicateStore.payloads["a_copy"],
+            "content_hash": "AA" * 32,
+            "size_bytes": 999,
+            "width": 12,
+            "height": 12,
+        },
+    }
+
+
 class SearchFusionTests(unittest.TestCase):
     def test_strict_positive_and_negative_tags(self) -> None:
         engine = object.__new__(SearchEngine)
@@ -213,11 +233,23 @@ class SearchFusionTests(unittest.TestCase):
         self.assertFalse(done.has_more)
 
     def test_duplicate_key_prefers_content_hash(self) -> None:
-        hashed = duplicate_key({"content_hash": "abc", "size_bytes": 1, "width": 2, "height": 3})
+        hashed = duplicate_key({"content_hash": "ABC", "size_bytes": 1, "width": 2, "height": 3})
         sized = duplicate_key({"size_bytes": 111, "width": 100, "height": 200})
         self.assertEqual(hashed, ("h", "abc"))
         self.assertEqual(sized, ("s", 111, 100, 200))
         self.assertIsNone(duplicate_key({"width": 100, "height": 200}))
+        self.assertEqual(
+            duplicate_keys(
+                {
+                    "content_hash": "AB" * 32,
+                    "phash": "FF" * 8,
+                    "size_bytes": 9,
+                    "width": 1,
+                    "height": 1,
+                }
+            ),
+            (("h", "ab" * 32), ("p", "ff" * 8)),
+        )
 
     def test_keep_first_unique_drops_later_copies(self) -> None:
         payload_a = {"size_bytes": 111, "width": 100, "height": 200}
@@ -229,6 +261,45 @@ class SearchFusionTests(unittest.TestCase):
         ]
         kept = keep_first_unique(ranked)
         self.assertEqual([row[0] for row in kept], ["a", "b"])
+
+    def test_keep_first_unique_drops_same_content_or_perceptual_hash(self) -> None:
+        digest = "ab" * 32
+        ranked = [
+            (
+                "a",
+                {"payload": {"content_hash": digest, "size_bytes": 10, "width": 8, "height": 8}},
+                [],
+            ),
+            (
+                "a_copy",
+                {
+                    "payload": {
+                        "content_hash": digest.upper(),
+                        "size_bytes": 99,
+                        "width": 64,
+                        "height": 64,
+                    }
+                },
+                [],
+            ),
+            (
+                "b",
+                {"payload": {"phash": "aa" * 8, "size_bytes": 11, "width": 9, "height": 9}},
+                [],
+            ),
+            (
+                "b_copy",
+                {"payload": {"phash": "AA" * 8, "size_bytes": 12, "width": 16, "height": 16}},
+                [],
+            ),
+            (
+                "c",
+                {"payload": {"content_hash": "cd" * 32, "size_bytes": 10, "width": 8, "height": 8}},
+                [],
+            ),
+        ]
+        kept = keep_first_unique(ranked)
+        self.assertEqual([row[0] for row in kept], ["a", "b", "c"])
 
     def test_dedupe_keeps_first_identical_hit(self) -> None:
         engine = object.__new__(SearchEngine)
@@ -266,6 +337,16 @@ class SearchFusionTests(unittest.TestCase):
         self.assertEqual(first.results[0].id, unique.results[0].id)
         self.assertEqual(second.results[0].id, unique.results[1].id)
         self.assertNotIn("a_copy", [item.id for item in second.results])
+
+    def test_dedupe_drops_same_content_hash_despite_size(self) -> None:
+        engine = object.__new__(SearchEngine)
+        engine.config = AppConfig()
+        engine.config.llm.enabled = False
+        engine.embedder = FakeEmbedder()
+        engine.store = HashDuplicateStore()
+
+        unique = engine.search("姬袖", expand=False, limit=10, dedupe=True)
+        self.assertEqual([item.id for item in unique.results], ["a", "b", "c"])
 
     def test_query_mode_avoids_large_has_id(self) -> None:
         self.assertEqual(query_mode(0, 24541), "empty")
