@@ -9,7 +9,7 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
@@ -25,6 +25,7 @@ from ..config import (
     AppConfig,
     WebSearchSettings,
     load_web_search_settings,
+    migrate_storage_tree,
     paths_equal,
     save_storage_paths,
     save_web_search_settings,
@@ -45,6 +46,7 @@ from ..library import (
 )
 from ..notes import NoteError, NoteStore, resolve_content_hash
 from ..search import SearchEngine
+from ..store import VectorStore
 
 
 def _parse_id_list(raw: str) -> list[str]:
@@ -235,6 +237,13 @@ class StoragePathsRequest(BaseModel):
     notes_dir: str | None = None
 
 
+class StorageMigrateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["qdrant", "notes"]
+    destination: str
+
+
 class NoteCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -325,6 +334,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     app.state.collections = CollectionStore(config.collections_path)
     app.state.notes = NoteStore(config.notes_dir)
     app.state.active_qdrant_path = config.qdrant_path
+    app.state.storage_lock = threading.Lock()
     app.state.collection_index_empty = False
     app.state.collection_index_generation = 0
     app.state.collection_id_cursors: OrderedDict[str, CollectionIdCursor] = OrderedDict()
@@ -1201,6 +1211,70 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             config.ensure_dirs()
             app.state.notes.set_root(config.notes_dir)
         return storage_paths_payload()
+
+    def _reopen_vector_store(path: Path) -> None:
+        app.state.engine.store = VectorStore(config)
+        app.state.active_qdrant_path = path
+
+    @app.post("/api/storage-paths/migrate")
+    def migrate_storage_path(request: StorageMigrateRequest) -> dict:
+        if app.state.index_job.running:
+            raise HTTPException(409, "正在索引图片，请稍后再迁移")
+        if not app.state.storage_lock.acquire(blocking=False):
+            raise HTTPException(409, "正在迁移存储目录")
+        try:
+            if request.kind == "notes":
+                source = Path(app.state.notes.root)
+                try:
+                    dest, copied = migrate_storage_tree(source, request.destination)
+                    save_storage_paths(
+                        config, notes_dir=dest, update_notes=True
+                    )
+                except ValueError as exc:
+                    raise HTTPException(400, str(exc)) from exc
+                app.state.notes.set_root(config.notes_dir)
+                return {
+                    **storage_paths_payload(),
+                    "kind": "notes",
+                    "copied": copied,
+                    "source": str(source),
+                    "destination": str(config.notes_dir),
+                }
+
+            source = Path(app.state.active_qdrant_path)
+            live = isinstance(app.state.engine.store, VectorStore)
+            if live:
+                app.state.engine.store.close()
+            switched = False
+            try:
+                dest, copied = migrate_storage_tree(source, request.destination)
+                save_storage_paths(config, qdrant_path=dest, update_qdrant=True)
+                if live:
+                    _reopen_vector_store(config.qdrant_path)
+                else:
+                    app.state.active_qdrant_path = config.qdrant_path
+                switched = True
+            except Exception:
+                if live and not switched:
+                    if not paths_equal(config.qdrant_path, source):
+                        save_storage_paths(config, qdrant_path=source, update_qdrant=True)
+                    _reopen_vector_store(source)
+                raise
+            return {
+                **storage_paths_payload(),
+                "kind": "qdrant",
+                "copied": copied,
+                "source": str(source),
+                "destination": str(config.qdrant_path),
+            }
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(500, f"迁移失败：{exc}") from exc
+        finally:
+            app.state.storage_lock.release()
 
     @app.get("/api/images/{point_id}/notes")
     def list_image_notes(point_id: str) -> dict:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import threading
 import tomllib
 from dataclasses import dataclass, field
@@ -235,6 +236,73 @@ def paths_equal(left: Path, right: Path) -> bool:
         return os.path.normcase(str(left.resolve())) == os.path.normcase(str(right.resolve()))
     except OSError:
         return os.path.normcase(str(left)) == os.path.normcase(str(right))
+
+
+_STORAGE_LOCK_NAMES = frozenset({".lock"})
+
+
+def _resolved_or_absolute(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except OSError:
+        return path if path.is_absolute() else Path.cwd() / path
+
+
+def paths_overlap(left: Path, right: Path) -> bool:
+    """True when either path is the other, or one directory contains the other."""
+    left_resolved = _resolved_or_absolute(left)
+    right_resolved = _resolved_or_absolute(right)
+    if paths_equal(left_resolved, right_resolved):
+        return True
+    return left_resolved.is_relative_to(right_resolved) or right_resolved.is_relative_to(
+        left_resolved
+    )
+
+
+def storage_visible_entries(path: Path) -> list[Path]:
+    """Directory children excluding Qdrant lock files."""
+    if not path.exists():
+        return []
+    if not path.is_dir():
+        raise ValueError("路径不是目录")
+    return [item for item in path.iterdir() if item.name not in _STORAGE_LOCK_NAMES]
+
+
+def _ignore_storage_locks(_directory: str, names: list[str]) -> set[str]:
+    return {name for name in names if name in _STORAGE_LOCK_NAMES}
+
+
+def migrate_storage_tree(source: Path, destination: Path | str) -> tuple[Path, bool]:
+    """Copy a vector or notes directory to an empty destination. Source is kept.
+
+    Returns `(destination, copied)`. `copied` is False when the source had no
+    visible files, in which case only the destination directory is created.
+    """
+    dest = coerce_directory_path(destination, create=False)
+    if dest.exists() and not dest.is_dir():
+        raise ValueError("目标路径不是目录")
+    if source.exists() and not source.is_dir():
+        raise ValueError("当前路径不是目录")
+    if paths_equal(source, dest):
+        raise ValueError("目标路径与当前路径相同")
+    if paths_overlap(source, dest):
+        raise ValueError("不能迁到当前目录内部或其上级目录")
+    if storage_visible_entries(dest):
+        raise ValueError("目标目录不是空目录，请另选路径以免覆盖已有库")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if not storage_visible_entries(source):
+        dest.mkdir(parents=True, exist_ok=True)
+        return dest, False
+    try:
+        shutil.copytree(
+            source,
+            dest,
+            dirs_exist_ok=dest.is_dir(),
+            ignore=_ignore_storage_locks,
+        )
+    except OSError as exc:
+        raise ValueError(f"复制失败：{exc}") from exc
+    return dest, True
 
 
 def _optional_directory_path(value: Any) -> Path | None:

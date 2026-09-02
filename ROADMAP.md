@@ -187,8 +187,11 @@ immediately.
 - Vditor is configured with a local `cdn` path so it does not fetch KaTeX or
   Mermaid from the network. Diagrams stay disabled until those assets are
   vendored.
-- Live relocation of a local Qdrant client is unsupported; the UI saves the
-  new path and asks for a restart.
+- Saving a Qdrant path without copying still requires a restart. 「迁移」
+  closes the local client, copies the directory (skipping `.lock`), and
+  reopens at the destination so the session can keep using the moved
+  library. The source directory is left in place. A non-empty destination
+  is rejected so an existing library cannot be overwritten.
 
 ### Milestones
 
@@ -202,3 +205,5 @@ immediately.
 5. Complete: cover sanitization, identity, API, and homepage fingerprints.
 6. Complete: persist per-image note order; drag tabs like a browser strip;
    hide the editor scrollbar; sync the filename from the first ATX H1.
+7. Complete: add per-path 「迁移」 controls that copy the live Qdrant or
+   notes directory to the typed destination, then switch to it.

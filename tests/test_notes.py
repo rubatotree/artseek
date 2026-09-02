@@ -7,7 +7,13 @@ from pathlib import Path
 
 from PIL import Image
 
-from artseek.config import AppConfig, apply_runtime_paths, load_config, save_storage_paths
+from artseek.config import (
+    AppConfig,
+    apply_runtime_paths,
+    load_config,
+    migrate_storage_tree,
+    save_storage_paths,
+)
 from artseek.image_io import file_digest, perceptual_hash
 from artseek.notes import (
     NoteError,
@@ -299,3 +305,40 @@ class StoragePathTests(unittest.TestCase):
             save_storage_paths(cfg, qdrant_path=None, update_qdrant=True)
             apply_runtime_paths(cfg)
             self.assertEqual(cfg.qdrant_path, cfg.data_dir / "qdrant")
+
+    def test_migrate_storage_tree_copies_and_skips_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = root / "qdrant"
+            dest = root / "moved" / "qdrant"
+            (source / "collection").mkdir(parents=True)
+            (source / "meta.json").write_text("{}", encoding="utf-8")
+            (source / ".lock").write_text("pid", encoding="utf-8")
+            path, copied = migrate_storage_tree(source, dest)
+            self.assertTrue(copied)
+            self.assertEqual(path.resolve(), dest.resolve())
+            self.assertTrue((dest / "meta.json").is_file())
+            self.assertTrue((dest / "collection").is_dir())
+            self.assertFalse((dest / ".lock").exists())
+            self.assertTrue((source / "meta.json").is_file())
+
+    def test_migrate_storage_tree_rejects_overlap_and_nonempty(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = root / "notes"
+            source.mkdir()
+            (source / "keep.md").write_text("x", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "相同"):
+                migrate_storage_tree(source, source)
+            with self.assertRaisesRegex(ValueError, "内部"):
+                migrate_storage_tree(source, source / "nested")
+            with self.assertRaisesRegex(ValueError, "上级"):
+                migrate_storage_tree(source, root)
+            occupied = root / "occupied"
+            occupied.mkdir()
+            (occupied / "other.md").write_text("y", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "空目录"):
+                migrate_storage_tree(source, occupied)
+            empty, copied = migrate_storage_tree(root / "missing", root / "fresh")
+            self.assertFalse(copied)
+            self.assertTrue(empty.is_dir())

@@ -73,6 +73,45 @@ class NotesApiTests(unittest.TestCase):
         self.assertTrue(qdrant_saved["qdrant_restart_required"])
         self.assertEqual(Path(qdrant_saved["active_qdrant_path"]), self.config.data_dir / "qdrant")
 
+    def test_storage_migrate_copies_notes_and_qdrant_marker(self) -> None:
+        created = self.client.post(
+            "/api/images/img-1/notes",
+            json={"title": "构图", "content": "keep"},
+        ).json()
+        self.assertEqual(created["name"], "构图.md")
+        original_notes = self.config.notes_dir
+        moved_notes = Path(self._temporary_directory.name) / "vault-b"
+        migrated = self.client.post(
+            "/api/storage-paths/migrate",
+            json={"kind": "notes", "destination": str(moved_notes)},
+        ).json()
+        self.assertTrue(migrated["copied"])
+        self.assertEqual(Path(migrated["notes_dir"]).resolve(), moved_notes.resolve())
+        self.assertTrue((moved_notes / self.digest / "构图.md").is_file())
+        self.assertTrue((original_notes / self.digest / "构图.md").is_file())
+        listed = self.client.get("/api/images/img-1/notes").json()
+        self.assertEqual([item["name"] for item in listed["notes"]], ["构图.md"])
+        marker = self.config.data_dir / "qdrant"
+        marker.mkdir(parents=True, exist_ok=True)
+        (marker / "meta.json").write_text("{}", encoding="utf-8")
+        (marker / ".lock").write_text("pid", encoding="utf-8")
+        moved_qdrant = Path(self._temporary_directory.name) / "qdrant-b"
+        qdrant = self.client.post(
+            "/api/storage-paths/migrate",
+            json={"kind": "qdrant", "destination": str(moved_qdrant)},
+        ).json()
+        self.assertTrue(qdrant["copied"])
+        self.assertEqual(Path(qdrant["qdrant_path"]).resolve(), moved_qdrant.resolve())
+        self.assertEqual(Path(qdrant["active_qdrant_path"]).resolve(), moved_qdrant.resolve())
+        self.assertFalse(qdrant["qdrant_restart_required"])
+        self.assertTrue((moved_qdrant / "meta.json").is_file())
+        self.assertFalse((moved_qdrant / ".lock").exists())
+        same = self.client.post(
+            "/api/storage-paths/migrate",
+            json={"kind": "notes", "destination": str(moved_notes)},
+        )
+        self.assertEqual(same.status_code, 400)
+
     def test_note_crud_and_path_escape(self) -> None:
         listed = self.client.get("/api/images/img-1/notes").json()
         self.assertEqual(listed["image"]["content_hash"], self.digest)
@@ -145,7 +184,10 @@ class NotesApiTests(unittest.TestCase):
         self.assertIn('id="notes-pane"', html)
         self.assertIn('id="qdrant-path"', html)
         self.assertIn('id="notes-dir"', html)
+        self.assertIn('id="qdrant-migrate"', html)
+        self.assertIn('id="notes-migrate"', html)
         self.assertIn("/api/storage-paths", html)
+        self.assertIn("/api/storage-paths/migrate", html)
         self.assertIn("/static/vendor/vditor", html)
         self.assertIn("function isNotesEditorEvent", html)
         self.assertIn('id="notes-resize"', html)

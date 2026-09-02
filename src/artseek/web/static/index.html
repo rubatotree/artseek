@@ -143,9 +143,15 @@
     }
     .storage-block .storage-title { color: var(--ink); font-weight: 650; }
     .storage-field { display: grid; gap: 4px; }
+    .storage-path-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; }
     .storage-field input[type="text"] {
       width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 10px;
       padding: 7px 8px; color: var(--ink); background: #fff; font: 12px/1.2 inherit;
+    }
+    .storage-path-row button { padding: 7px 10px; font-size: 12px; white-space: nowrap; }
+    .storage-path-row button:disabled,
+    .storage-actions button:disabled {
+      opacity: .45; cursor: default; box-shadow: none; transform: none;
     }
     .storage-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .storage-actions button { padding: 7px 10px; font-size: 12px; }
@@ -1005,16 +1011,24 @@
           </div>
           <div class="storage-block">
             <div class="storage-title">存储位置</div>
-            <label class="storage-field">向量库
-              <input id="qdrant-path" type="text" spellcheck="false" autocomplete="off" placeholder="本地 Qdrant 目录">
-            </label>
-            <label class="storage-field">笔记库
-              <input id="notes-dir" type="text" spellcheck="false" autocomplete="off" placeholder="Markdown 笔记目录">
-            </label>
+            <div class="storage-field">
+              <label for="qdrant-path">向量库</label>
+              <div class="storage-path-row">
+                <input id="qdrant-path" type="text" spellcheck="false" autocomplete="off" placeholder="本地 Qdrant 目录">
+                <button class="secondary" id="qdrant-migrate" type="button" title="把当前向量库复制到输入的目录，原目录保留">迁移</button>
+              </div>
+            </div>
+            <div class="storage-field">
+              <label for="notes-dir">笔记库</label>
+              <div class="storage-path-row">
+                <input id="notes-dir" type="text" spellcheck="false" autocomplete="off" placeholder="Markdown 笔记目录">
+                <button class="secondary" id="notes-migrate" type="button" title="把当前笔记库复制到输入的目录，原目录保留">迁移</button>
+              </div>
+            </div>
             <div class="storage-actions">
               <button class="secondary" id="storage-save" type="button">保存路径</button>
             </div>
-            <p id="storage-hint" class="storage-hint">向量库路径保存后需重启 ArtSeek 才能切换。笔记库立即生效，不会写入原图目录。</p>
+            <p id="storage-hint" class="storage-hint">「保存路径」只改指向，不复制文件。向量库保存后需重启才切换；「迁移」会复制当前库到输入目录并立即切换。原图目录不会被写入。</p>
           </div>
         </div>
         </div>
@@ -1271,6 +1285,11 @@
     async function loadStoragePaths() {
       applyStoragePaths(await parseResponse(await fetch('/api/storage-paths')));
     }
+    function setStorageBusy(busy) {
+      ['storage-save', 'qdrant-migrate', 'notes-migrate'].forEach((id) => {
+        $(id).disabled = busy;
+      });
+    }
     async function saveStoragePaths() {
       const payload = {
         qdrant_path: $('qdrant-path').value.trim(),
@@ -1285,6 +1304,37 @@
         ? '向量库路径已保存，重启 ArtSeek 后才会切换。笔记库已立即生效。'
         : '存储路径已保存。笔记库立即生效，不会写入原图目录。';
       return data;
+    }
+    async function migrateStoragePath(kind) {
+      const input = kind === 'qdrant' ? $('qdrant-path') : $('notes-dir');
+      const destination = input.value.trim();
+      const label = kind === 'qdrant' ? '向量库' : '笔记库';
+      if (!destination) {
+        $('storage-hint').textContent = `请填写${label}的目标路径`;
+        return;
+      }
+      if (!window.confirm(`将当前${label}复制到：\n${destination}\n\n原目录会保留，不会改动原图。确定迁移？`)) {
+        return;
+      }
+      setStorageBusy(true);
+      $('storage-hint').textContent = `正在复制${label}…`;
+      try {
+        const data = await parseResponse(await fetch('/api/storage-paths/migrate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind, destination }),
+        }));
+        applyStoragePaths(data);
+        $('storage-hint').textContent = data.copied
+          ? `${label}已复制并切换。原目录仍在，不会改动原图。`
+          : `当前${label}为空，已切换到新路径。`;
+        return data;
+      } catch (error) {
+        $('storage-hint').textContent = `${label}未能迁移：${error.message}`;
+        throw error;
+      } finally {
+        setStorageBusy(false);
+      }
     }
 
     const VDITOR_CDN = '/static/vendor/vditor';
@@ -2345,6 +2395,12 @@
       saveStoragePaths().catch((error) => {
         $('storage-hint').textContent = `路径未能保存：${error.message}`;
       });
+    });
+    $('qdrant-migrate').addEventListener('click', () => {
+      migrateStoragePath('qdrant').catch(() => {});
+    });
+    $('notes-migrate').addEventListener('click', () => {
+      migrateStoragePath('notes').catch(() => {});
     });
     $('viewer-reference').addEventListener('click', () => {
       if (!state.current) return;
