@@ -214,3 +214,28 @@ immediately.
    folder catalog, folder scope, collections, manifest) with migrate/save.
 10. Complete: display titles from the first Markdown line; files use unique
     UTC timestamps instead of 「笔记」/untitled names.
+
+## Shareable view URLs
+
+The web UI is still a single `index.html`. FastAPI serves that shell at
+`/search`, `/folder`, `/random`, `/c/{id}`, `/i/{point_id}`, and
+`/i/{point_id}/notes/{name}` in addition to `/`. The client pushes overlay
+entries for the viewer and notes, replaces the URL when flipping images or
+switching note tabs, and applies `popstate` without a full reload. Same-origin
+links inside Vditor are captured so a pasted `/i/{id}/notes/{name}` opens the
+cited note. `/image/{point_id}` remains the original-file route.
+
+The search URL keeps the query text and in-library reference IDs
+(`/search?q=…&ref=id[:weight],id`). After a run, the server writes a JSON
+snapshot under `cache_dir/search-snapshots/{id}.json` and the client replaces
+the address with `&s={id}`. Reopening prefers the snapshot so ranking stays
+frozen; a cache miss re-encodes `q` + `ref`. Uploaded file references stay
+session-only. Snapshots are capped (96 files, 400 hits) and travel with cache
+directory migration.
+
+### Milestones
+
+1. Complete: SPA shell routes, History API sync, in-note link capture, and
+   homepage / API fingerprints.
+2. Complete: persist search snapshots beside `q`/`ref` in the URL, restore
+   them on open, and cover store/API/homepage fingerprints.

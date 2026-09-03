@@ -301,6 +301,39 @@ class NotesApiTests(unittest.TestCase):
         self.assertNotIn("/api/agents", html)
         self.assertNotIn("/api/agent-settings", html)
         self.assertNotIn("/agent/ws", html)
+        self.assertIn("function parseAppRoute", html)
+        self.assertIn("function commitRoute", html)
+        self.assertIn("function applyAppRoute", html)
+        self.assertIn("function handleAppLink", html)
+        self.assertIn("function dismissViewer", html)
+        self.assertIn("function dismissNotes", html)
+        self.assertIn("history.pushState", html)
+        self.assertIn("popstate", html)
+        self.assertIn("`/i/${encodeURIComponent(route.imageId || '')}`", html)
+        self.assertIn("params.set('q', route.query)", html)
+        self.assertIn("params.set('ref', ref)", html)
+        self.assertIn("params.set('s', route.snapshot)", html)
+        self.assertIn("function parseSearchRefs", html)
+        self.assertIn("function restoreSearchSnapshot", html)
+        self.assertIn("/api/search-snapshots/", html)
+
+    def test_spa_view_routes_serve_the_app_shell(self) -> None:
+        for path in (
+            "/search",
+            "/folder",
+            "/random",
+            "/c/col-1",
+            "/i/img-1",
+            "/i/img-1/notes",
+            "/i/img-1/notes/20260903T010203.md",
+        ):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("ArtSeek", response.text)
+                self.assertIn("function parseAppRoute", response.text)
+        image = self.client.get("/image/img-1")
+        self.assertEqual(image.status_code, 404)
         vditor_js = (
             Path(__file__).resolve().parents[1]
             / "src/artseek/web/static/vendor/vditor/dist/index.min.js"

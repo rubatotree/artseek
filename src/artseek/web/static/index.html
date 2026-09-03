@@ -1158,9 +1158,11 @@
     const CARD_MENU_DRAG_THRESHOLD_MOUSE = 8;
     const CARD_MENU_DRAG_THRESHOLD_TOUCH = 18;
     const GALLERY_ITEM_MIME = 'application/x-artseek-image-id';
+    const routeCtl = { applying: false, seq: 0, dismissAll: false };
     const state = {
       references: [], refSeq: 0, current: null, currentRefKey: null, viewerSource: 'gallery',
       results: [], offset: 0, hasMore: false, loadingMore: false, searchSeq: 0,
+      searchSnapshotId: '', searchRequest: null,
       colHeights: [],
       mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
       randomSeed: null, randomTotal: 0,
@@ -1368,6 +1370,7 @@
       imageId: '',
       list: [],
       currentName: '',
+      pendingName: '',
       dirty: false,
       saveTimer: 0,
       editor: null,
@@ -1724,9 +1727,12 @@
         unlock();
       }
     }
-    async function selectNote(name) {
+    async function selectNote(name, { skipRoute = false } = {}) {
       if (!notes.imageId || !name) return;
-      if (notes.currentName === name && notes.editor) return;
+      if (notes.currentName === name && notes.editor) {
+        if (!skipRoute) syncOpenOverlayRoute({ replace: true });
+        return;
+      }
       await flushNoteSave();
       const doc = await parseResponse(await fetch(
         `/api/images/${encodeURIComponent(notes.imageId)}/notes/${encodeURIComponent(name)}`,
@@ -1741,6 +1747,7 @@
       notes.dirty = false;
       clearTimeout(notes.saveTimer);
       setNotesStatus('已载入');
+      if (!skipRoute) syncOpenOverlayRoute({ replace: true });
     }
     async function renameNote(name) {
       const current = notes.list.find((item) => item.name === name);
@@ -1871,7 +1878,7 @@
         notes.hash = '';
         notes.currentName = '';
         updateNotesButton();
-        if (notes.open) closeNotesPane({ keepViewer: true });
+        if (notes.open) closeNotesPane({ skipRoute: true });
         return;
       }
       try {
@@ -1884,8 +1891,10 @@
         if (!notes.open) return;
         renderNoteTabs();
         if (notes.list.length) {
-          const prefer = notes.list.some((item) => item.name === notes.currentName)
-            ? notes.currentName
+          const wanted = notes.pendingName || notes.currentName;
+          notes.pendingName = '';
+          const prefer = notes.list.some((item) => item.name === wanted)
+            ? wanted
             : notes.list[0].name;
           await selectNote(prefer);
         } else {
@@ -2250,10 +2259,11 @@
       event.preventDefault();
       moveCurrentNote(event.key === 'ArrowLeft' ? -1 : 1);
     }
-    async function openNotesPane() {
+    async function openNotesPane({ skipRoute = false } = {}) {
       if (!currentImageId()) return;
       const seq = ++notes.motionSeq;
       notes.open = true;
+      if (!skipRoute) syncOpenOverlayRoute({ replace: false });
       restoreNotesWidth();
       const pane = $('notes-pane');
       pane.hidden = false;
@@ -2265,7 +2275,7 @@
       if (seq !== notes.motionSeq) return;
       if (typeof fitViewerFrame === 'function') fitViewerFrame();
     }
-    async function closeNotesPane() {
+    async function closeNotesPane({ skipRoute = false } = {}) {
       const seq = ++notes.motionSeq;
       await flushNoteSave().catch(() => {});
       if (seq !== notes.motionSeq) return;
@@ -2284,7 +2294,7 @@
       if (typeof fitViewerFrame === 'function') fitViewerFrame();
     }
     async function toggleNotesPane() {
-      if (notes.open) await closeNotesPane();
+      if (notes.open) await dismissNotes();
       else await openNotesPane();
     }
     function modelHint(data) {
@@ -2389,16 +2399,15 @@
         $('upload').click();
       }
     });
-    $('viewer-close').addEventListener('click', () => $('viewer').close());
+    $('viewer-close').addEventListener('click', () => dismissViewer());
     $('viewer').addEventListener('cancel', (event) => {
-      if (notes.open) {
-        event.preventDefault();
-        closeNotesPane();
-      }
+      event.preventDefault();
+      if (notes.open) dismissNotes();
+      else dismissViewer();
     });
     $('viewer').addEventListener('close', () => {
       closeViewerCollectionMenu({ restoreFocus: false });
-      closeNotesPane();
+      closeNotesPane({ skipRoute: true });
       resetView();
       clearViewerSlots();
       state.currentRefKey = null;
@@ -2410,7 +2419,7 @@
     $('notes-edit-toggle').addEventListener('click', () => setNotesEditing(!notes.editing));
     $('notes-delete').addEventListener('click', () => deleteCurrentNote().catch((error) => setNotesStatus(error.message)));
     $('notes-delete-all').addEventListener('click', () => deleteAllNotes().catch((error) => setNotesStatus(error.message)));
-    $('notes-close-pane').addEventListener('click', () => closeNotesPane());
+    $('notes-close-pane').addEventListener('click', () => dismissNotes());
     $('notes-pane').addEventListener('beforeinput', (event) => {
       if (!notes.editing) event.preventDefault();
     });
@@ -2448,7 +2457,7 @@
     $('viewer-remove-ref').addEventListener('click', () => {
       if (!state.currentRefKey) return;
       removeReference(state.currentRefKey);
-      if (!state.references.length) $('viewer').close();
+      if (!state.references.length) dismissViewer();
       else openReferenceViewer(state.references[Math.max(0, currentRefIndex())].key);
     });
     $('viewer-weight').addEventListener('input', () => {
@@ -2583,6 +2592,73 @@
       renderReferences();
       return true;
     }
+    function librarySearchRefs() {
+      return state.references
+        .filter((ref) => ref.id)
+        .map((ref) => ({ id: ref.id, weight: clampWeight(ref.weight) }));
+    }
+    function formatSearchRefs(refs) {
+      return (refs || []).filter((ref) => ref && ref.id).map((ref) => {
+        const weight = clampWeight(ref.weight);
+        return weight === 1 ? ref.id : `${ref.id}:${formatWeight(weight)}`;
+      }).join(',');
+    }
+    function parseSearchRefs(raw) {
+      const text = String(raw || '').trim();
+      if (!text) return [];
+      return text.split(',').map((part) => {
+        const token = part.trim();
+        if (!token) return null;
+        const colon = token.lastIndexOf(':');
+        if (colon > 0 && /^\d+(?:\.\d+)?$/.test(token.slice(colon + 1))) {
+          return { id: token.slice(0, colon), weight: clampWeight(token.slice(colon + 1)) };
+        }
+        return { id: token, weight: 1 };
+      }).filter(Boolean);
+    }
+    function searchRefsEqual(left, right) {
+      if (left.length !== right.length) return false;
+      return left.every((item, index) => (
+        item.id === right[index].id && clampWeight(item.weight) === clampWeight(right[index].weight)
+      ));
+    }
+    function clearSearchReferences() {
+      state.references.forEach((ref) => {
+        if (ref.objectUrl) URL.revokeObjectURL(ref.objectUrl);
+      });
+      state.references = [];
+      state.currentRefKey = null;
+    }
+    async function restoreLibraryReferences(refs) {
+      const wanted = (refs || []).filter((item) => item && item.id).slice(0, MAX_REFS);
+      if (searchRefsEqual(librarySearchRefs(), wanted) && state.references.every((ref) => ref.id)) {
+        renderReferences();
+        return;
+      }
+      clearSearchReferences();
+      for (const spec of wanted) {
+        let item = state.results.find((entry) => entry.id === spec.id);
+        if (!item) {
+          try { item = await ensureGalleryItem(spec.id); }
+          catch {
+            item = { id: spec.id, name: spec.id, path: '', width: 0, height: 0 };
+          }
+        }
+        state.references.push({
+          key: `r${++state.refSeq}`,
+          id: item.id,
+          file: null,
+          name: item.name || spec.id,
+          src: `/image/${item.id}`,
+          preview: `/thumb/${item.id}`,
+          objectUrl: null,
+          width: item.width || 0,
+          height: item.height || 0,
+          weight: clampWeight(spec.weight),
+        });
+      }
+      renderReferences();
+    }
     function addLibraryReferenceWithStatus(item) {
       const alreadyReferenced = state.references.some((ref) => ref.id === item.id);
       const added = addLibraryReference(item);
@@ -2666,7 +2742,7 @@
             event.preventDefault();
             event.stopPropagation();
             removeReference(ref.key);
-            if ($('viewer').open && state.viewerSource === 'reference' && !state.references.length) $('viewer').close();
+            if ($('viewer').open && state.viewerSource === 'reference' && !state.references.length) dismissViewer();
             return;
           }
           open();
@@ -2872,6 +2948,7 @@
       $('load-more').hidden = true;
       $('load-more').textContent = '正在载入更多相关图片…';
       $('query-info').textContent = message || '';
+      if (!routeCtl.applying) commitGalleryRoute({ replace: true });
     }
     async function refreshOpenCollectionMenus() {
       if (!$('viewer-collection-menu').hidden && state.current?.id) {
@@ -3424,7 +3501,7 @@
         tool.disabled = false;
       }
     }
-    async function selectCollection(collection) {
+    async function selectCollection(collection, { skipRoute = false } = {}) {
       state.mode = 'collection';
       state.collectionId = collection.id;
       state.collectionName = collection.name;
@@ -3435,6 +3512,7 @@
       state.editingCollectionId = '';
       renderTree();
       renderCollectionList();
+      if (!skipRoute) commitGalleryRoute();
       await fetchCollectionImages({ reset: true });
     }
     function beginCollectionRename(collectionId) {
@@ -3713,7 +3791,7 @@
       const next = state.results.find((entry) => entry.id === preferredId)
         || state.results[Math.min(previousIndex, state.results.length - 1)];
       if (!next) {
-        $('viewer').close();
+        dismissViewer();
         return;
       }
       applyGalleryViewerState(next);
@@ -3721,6 +3799,7 @@
       syncNeighborImages();
       if (viewerSlots.current.complete && viewerSlots.current.naturalWidth) applyLoadedFit();
       prefetchViewerAhead();
+      syncOpenOverlayRoute({ replace: true });
     }
     async function removeFromActiveCollection(item) {
       if (!state.collectionId) return;
@@ -3752,7 +3831,7 @@
       return (values[0] & 0x1fffff) * 0x100000000 + values[1];
     }
 
-    function startRandomBrowse() {
+    function startRandomBrowse({ skipRoute = false } = {}) {
       if (!treeState.selected.size) {
         $('query-info').textContent = '请先勾选要随机浏览的文件夹。';
         return;
@@ -3765,13 +3844,14 @@
       state.collectionName = '';
       state.collectionTotal = null;
       state.randomTotal = 0;
-      state.randomSeed = newRandomSeed();
+      if (!skipRoute || state.randomSeed == null) state.randomSeed = newRandomSeed();
       renderTree();
       renderCollectionList();
-      fetchRandomBrowse({ reset: true });
+      if (!skipRoute) commitGalleryRoute();
+      fetchRandomBrowse({ reset: true, skipRoute });
     }
 
-    async function fetchRandomBrowse({ reset }) {
+    async function fetchRandomBrowse({ reset, skipRoute = false }) {
       if (!reset && (state.loadingMore || !state.hasMore)) return;
       const seq = reset ? ++state.searchSeq : state.searchSeq;
       if (reset) {
@@ -3803,6 +3883,7 @@
         const incoming = data.results || [];
         state.randomSeed = data.seed;
         state.randomTotal = data.total || 0;
+        if (reset && !skipRoute && !routeCtl.applying) commitGalleryRoute({ replace: true });
         if (reset) {
           state.results = incoming;
           renderGallery(state.results, { append: false });
@@ -3845,7 +3926,7 @@
       $('query-info').textContent = `随机浏览当前范围 · ${shown} / ${state.randomTotal} 张图${more}`;
     }
 
-    function previewFolder(key, name) {
+    function previewFolder(key, name, { skipRoute = false } = {}) {
       state.mode = 'browse';
       state.browseKey = key;
       state.browseName = name || key;
@@ -3858,6 +3939,7 @@
         $('tree-panel').classList.remove('is-open');
         $('scope-toggle').setAttribute('aria-expanded', 'false');
       }
+      if (!skipRoute) commitGalleryRoute();
       fetchFolderImages({ reset: true });
     }
 
@@ -3932,13 +4014,16 @@
       $('query-info').textContent = `浏览「${data.folder_name || state.browseName}」· ${shown} / ${total} 张图${order}${more}`;
     }
 
-    async function fetchResults({ reset }) {
-      const query = $('query').value.trim();
-      if (!query && !state.references.length) {
+    async function fetchResults({ reset, skipRoute = false }) {
+      const frozen = !reset && state.searchRequest ? state.searchRequest : null;
+      const query = frozen ? frozen.query : $('query').value.trim();
+      const libraryRefs = frozen ? frozen.references : librarySearchRefs();
+      const fileRefs = state.references.filter((ref) => ref.file);
+      if (!query && !libraryRefs.length && !fileRefs.length) {
         if (reset) $('query-info').textContent = '请先输入描述或添加参考图片。也可点击左侧目录名预览其中的图片。';
         return;
       }
-      if (!treeState.selected.size) {
+      if (!frozen && !treeState.selected.size) {
         if (reset) $('query-info').textContent = '请先勾选要检索的文件夹。新添加的目录默认不在查询范围内。';
         return;
       }
@@ -3950,8 +4035,10 @@
         state.collectionId = '';
         state.collectionName = '';
         state.collectionTotal = null;
+        state.searchSnapshotId = '';
         renderTree();
         renderCollectionList();
+        if (!skipRoute) commitGalleryRoute();
       }
       if (!reset && (state.loadingMore || !state.hasMore)) return;
       const seq = reset ? ++state.searchSeq : state.searchSeq;
@@ -3970,23 +4057,33 @@
       }
       try {
         let response;
-        const folderKeys = [...treeState.selected];
         const timeRange = currentTimeRange();
-        const limit = Number($('limit').value);
-        const libraryRefs = state.references.filter((ref) => ref.id).map((ref) => ({ id: ref.id, weight: ref.weight }));
-        const fileRefs = state.references.filter((ref) => ref.file);
-        const common = {
+        const common = frozen ? {
+          query: frozen.query,
+          text_weight: frozen.text_weight,
+          limit: frozen.limit,
+          offset,
+          expand: frozen.expand,
+          strict_tags: frozen.strict_tags,
+          dedupe: frozen.dedupe,
+          folder_keys: frozen.folder_keys,
+          mtime_after: frozen.mtime_after,
+          mtime_before: frozen.mtime_before,
+          exclude_ids: state.results.map((item) => item.id),
+          snapshot_id: state.searchSnapshotId || '',
+        } : {
           query,
           text_weight: textWeight(),
-          limit,
-          offset: reset ? 0 : state.results.length,
+          limit: Number($('limit').value),
+          offset,
           expand: $('use-llm').checked,
           strict_tags: $('strict-tags').checked,
           dedupe: $('dedupe').checked,
-          folder_keys: folderKeys,
+          folder_keys: [...treeState.selected],
           mtime_after: timeRange.after || null,
           mtime_before: timeRange.before || null,
           exclude_ids: reset ? [] : state.results.map((item) => item.id),
+          snapshot_id: reset ? '' : (state.searchSnapshotId || ''),
         };
         if (fileRefs.length) {
           const form = new FormData();
@@ -3998,10 +4095,11 @@
           form.append('strict_tags', String(common.strict_tags));
           form.append('dedupe', String(common.dedupe));
           form.append('folder_keys', JSON.stringify(common.folder_keys));
-          form.append('mtime_after', timeRange.after || '');
-          form.append('mtime_before', timeRange.before || '');
+          form.append('mtime_after', common.mtime_after || '');
+          form.append('mtime_before', common.mtime_before || '');
           form.append('exclude_ids', JSON.stringify(common.exclude_ids));
           form.append('references', JSON.stringify(libraryRefs));
+          if (common.snapshot_id) form.append('snapshot_id', common.snapshot_id);
           fileRefs.forEach((ref) => form.append('files', ref.file, ref.file.name));
           form.append('file_weights', JSON.stringify(fileRefs.map((ref) => ref.weight)));
           response = await fetch('/api/search-upload', { method: 'POST', body: form });
@@ -4014,6 +4112,32 @@
         const data = await parseResponse(response);
         if (seq !== state.searchSeq) return;
         const incoming = data.results || [];
+        if (reset) {
+          state.searchRequest = {
+            query: common.query,
+            text_weight: common.text_weight,
+            references: libraryRefs,
+            expand: common.expand,
+            strict_tags: common.strict_tags,
+            dedupe: common.dedupe,
+            limit: common.limit,
+            folder_keys: common.folder_keys,
+            mtime_after: common.mtime_after,
+            mtime_before: common.mtime_before,
+          };
+        }
+        if (data.snapshot_id) {
+          state.searchSnapshotId = data.snapshot_id;
+          const next = {
+            kind: 'search',
+            query: common.query,
+            refs: libraryRefs,
+            snapshot: data.snapshot_id,
+          };
+          if (appRouteHref(next) !== currentHref()) {
+            commitRoute(next, { replace: true, overlay: (history.state && history.state.overlay) || 0 });
+          }
+        }
         if (reset) {
           state.results = incoming;
           renderGallery(state.results, { append: false });
@@ -4572,24 +4696,28 @@
       loadImageNotes();
     }
     function openViewer(item) {
+      const alreadyOpen = $('viewer').open;
       applyGalleryViewerState(item);
       resetView();
-      if (!$('viewer').open) $('viewer').showModal();
+      if (!alreadyOpen) $('viewer').showModal();
       fitViewerFrame();
       syncNeighborImages();
       if (viewerSlots.current.complete && viewerSlots.current.naturalWidth) applyLoadedFit();
       prefetchViewerAhead();
+      if (item && item.id) syncOpenOverlayRoute({ replace: alreadyOpen });
     }
     function openReferenceViewer(key) {
       const ref = state.references.find((item) => item.key === key);
       if (!ref) return;
+      const alreadyOpen = $('viewer').open;
       applyReferenceViewerState(ref);
       resetView();
-      if (!$('viewer').open) $('viewer').showModal();
+      if (!alreadyOpen) $('viewer').showModal();
       fitViewerFrame();
       syncNeighborImages();
       if (viewerSlots.current.complete && viewerSlots.current.naturalWidth) applyLoadedFit();
       prefetchViewerAhead();
+      if (ref.id) syncOpenOverlayRoute({ replace: alreadyOpen });
     }
     function canStepViewer(delta) {
       if (state.viewerSource === 'reference') {
@@ -4606,6 +4734,7 @@
         const next = currentRefIndex() + delta;
         if (next < 0 || next >= state.references.length) return false;
         applyReferenceViewerState(state.references[next]);
+        if (state.references[next].id) syncOpenOverlayRoute({ replace: true });
         return true;
       }
       const index = currentIndex();
@@ -4613,6 +4742,7 @@
       const item = state.results[index + delta];
       if (!item) return false;
       applyGalleryViewerState(item);
+      if (item.id) syncOpenOverlayRoute({ replace: true });
       return true;
     }
     async function stepViewer(delta, { animate = false } = {}) {
@@ -4835,7 +4965,7 @@
         if (view.hitImage) {
           view.clickTimer = setTimeout(() => {
             view.clickTimer = 0;
-            $('viewer').close();
+            dismissViewer();
           }, 400);
           return;
         }
@@ -5476,18 +5606,386 @@
       if (!state.collectionId) return;
       state.collectionSearchTimer = setTimeout(() => fetchCollectionImages({ reset: true }), 180);
     });
+    function currentHref() {
+      return `${location.pathname}${location.search}`;
+    }
+    function parseAppRoute(url = window.location) {
+      const path = (url.pathname || '/').replace(/\/+$/, '') || '/';
+      const params = new URLSearchParams(url.search || '');
+      const parts = path.split('/').filter(Boolean);
+      if (parts[0] === 'i' && parts[1]) {
+        const imageId = parts[1];
+        if (parts[2] === 'notes') {
+          return { kind: 'notes', imageId, noteName: parts.slice(3).join('/') };
+        }
+        return { kind: 'image', imageId };
+      }
+      if (parts[0] === 'search') {
+        return {
+          kind: 'search',
+          query: params.get('q') || '',
+          refs: parseSearchRefs(params.get('ref') || ''),
+          snapshot: params.get('s') || '',
+        };
+      }
+      if (parts[0] === 'folder') return { kind: 'folder', key: params.get('key') || '' };
+      if (parts[0] === 'random') return { kind: 'random', seed: params.get('seed') || '' };
+      if (parts[0] === 'c' && parts[1]) return { kind: 'collection', id: parts[1] };
+      return { kind: 'home' };
+    }
+    function appRouteHref(route) {
+      if (!route || route.kind === 'home') return '/';
+      if (route.kind === 'search') {
+        const params = new URLSearchParams();
+        if (route.query) params.set('q', route.query);
+        const ref = formatSearchRefs(route.refs || []);
+        if (ref) params.set('ref', ref);
+        if (route.snapshot) params.set('s', route.snapshot);
+        const query = params.toString();
+        return query ? `/search?${query}` : '/search';
+      }
+      if (route.kind === 'folder') {
+        return `/folder?key=${encodeURIComponent(route.key || '')}`;
+      }
+      if (route.kind === 'random') {
+        return route.seed ? `/random?seed=${encodeURIComponent(route.seed)}` : '/random';
+      }
+      if (route.kind === 'collection') return `/c/${encodeURIComponent(route.id || '')}`;
+      if (route.kind === 'image') return `/i/${encodeURIComponent(route.imageId || '')}`;
+      if (route.kind === 'notes') {
+        const base = `/i/${encodeURIComponent(route.imageId || '')}/notes`;
+        return route.noteName ? `${base}/${encodeURIComponent(route.noteName)}` : base;
+      }
+      return '/';
+    }
+    function currentGalleryRoute() {
+      if (state.mode === 'search') {
+        return {
+          kind: 'search',
+          query: $('query').value.trim(),
+          refs: librarySearchRefs(),
+          snapshot: state.searchSnapshotId || '',
+        };
+      }
+      if (state.mode === 'browse' && state.browseKey) return { kind: 'folder', key: state.browseKey };
+      if (state.mode === 'collection' && state.collectionId) return { kind: 'collection', id: state.collectionId };
+      if (state.mode === 'random' && state.randomSeed != null) return { kind: 'random', seed: String(state.randomSeed) };
+      return { kind: 'home' };
+    }
+    function syncDocumentTitle(route = parseAppRoute()) {
+      if (route.kind === 'notes' || route.kind === 'image') {
+        const imageName = (state.current && state.current.name) || '图片';
+        if (route.kind === 'notes') {
+          const note = notes.list.find((item) => item.name === (notes.currentName || route.noteName));
+          const noteTitle = (note && note.title) || '笔记';
+          document.title = `${noteTitle} · ${imageName} · ArtSeek`;
+          return;
+        }
+        document.title = `${imageName} · ArtSeek`;
+        return;
+      }
+      if (route.kind === 'search' && (route.query || (route.refs && route.refs.length))) {
+        document.title = `${route.query || '以图搜图'} · ArtSeek`;
+        return;
+      }
+      if (route.kind === 'collection') {
+        document.title = `${state.collectionName || '收藏夹'} · ArtSeek`;
+        return;
+      }
+      if (route.kind === 'folder') {
+        document.title = `${state.browseName || '目录'} · ArtSeek`;
+        return;
+      }
+      if (route.kind === 'random') {
+        document.title = '随机浏览 · ArtSeek';
+        return;
+      }
+      document.title = 'ArtSeek · 本地插画检索';
+    }
+    function commitRoute(route, { replace = false, overlay = 0 } = {}) {
+      const href = appRouteHref(route);
+      const payload = { artseek: 1, overlay, kind: route.kind, ...route };
+      if (href === currentHref()) {
+        history.replaceState(payload, '', href);
+      } else if (replace) {
+        history.replaceState(payload, '', href);
+      } else {
+        history.pushState(payload, '', href);
+      }
+      syncDocumentTitle(route);
+    }
+    function commitGalleryRoute({ replace = false } = {}) {
+      if (routeCtl.applying) return;
+      const route = currentGalleryRoute();
+      const current = parseAppRoute();
+      commitRoute(route, { replace: replace || current.kind === route.kind, overlay: 0 });
+    }
+    function syncOpenOverlayRoute({ replace = false } = {}) {
+      if (routeCtl.applying) return;
+      const imageId = currentImageId();
+      if (!imageId) return;
+      const route = notes.open
+        ? { kind: 'notes', imageId, noteName: notes.currentName || notes.pendingName || '' }
+        : { kind: 'image', imageId };
+      const prev = (history.state && history.state.artseek) ? Number(history.state.overlay || 0) : 0;
+      const overlay = replace ? prev : prev + 1;
+      commitRoute(route, { replace, overlay });
+    }
+    function itemFromPayload(imageId, payload) {
+      return {
+        id: imageId,
+        score: null,
+        path: String((payload && payload.path) || ''),
+        name: String((payload && payload.name) || ''),
+        width: Number((payload && payload.width) || 0),
+        height: Number((payload && payload.height) || 0),
+        tags: (payload && payload.tags) || [],
+        tag_hits: [],
+        caption: payload && payload.caption,
+      };
+    }
+    async function ensureGalleryItem(imageId) {
+      const existing = state.results.find((item) => item.id === imageId);
+      if (existing) return existing;
+      if (state.current && state.current.id === imageId) return state.current;
+      try {
+        const payload = await parseResponse(await fetch(`/api/item/${encodeURIComponent(imageId)}`));
+        return itemFromPayload(imageId, payload);
+      } catch (error) {
+        const data = await parseResponse(await fetch(`/api/images/${encodeURIComponent(imageId)}/notes`));
+        return itemFromPayload(data.image.id, data.image);
+      }
+    }
+    function finishDismissViewer() {
+      routeCtl.dismissAll = false;
+      const current = parseAppRoute();
+      if (current.kind === 'image' || current.kind === 'notes') {
+        commitRoute(currentGalleryRoute(), { replace: true, overlay: 0 });
+      }
+      if ($('viewer').open) $('viewer').close();
+      syncDocumentTitle(parseAppRoute());
+    }
+    function dismissViewer() {
+      if (routeCtl.applying) {
+        if ($('viewer').open) $('viewer').close();
+        return;
+      }
+      const overlay = (history.state && history.state.artseek) ? Number(history.state.overlay || 0) : 0;
+      if (overlay > 0) {
+        routeCtl.dismissAll = true;
+        history.go(-overlay);
+        return;
+      }
+      finishDismissViewer();
+    }
+    function dismissNotes() {
+      if (routeCtl.applying) {
+        closeNotesPane({ skipRoute: true });
+        return;
+      }
+      const current = parseAppRoute();
+      const overlay = (history.state && history.state.artseek) ? Number(history.state.overlay || 0) : 0;
+      if (current.kind === 'notes' && overlay > 0) {
+        history.back();
+        return;
+      }
+      if (current.kind === 'notes' && current.imageId) {
+        commitRoute({ kind: 'image', imageId: current.imageId }, { replace: true, overlay: 0 });
+      }
+      closeNotesPane({ skipRoute: true });
+      syncDocumentTitle(parseAppRoute());
+    }
+    function isSpaUrl(url) {
+      if (url.origin !== location.origin) return false;
+      const path = url.pathname || '/';
+      if (path.startsWith('/api/') || path.startsWith('/static/') || path.startsWith('/thumb/') || path.startsWith('/image/')) {
+        return false;
+      }
+      return true;
+    }
+    function handleAppLink(event) {
+      const anchor = event.target.closest && event.target.closest('a[href]');
+      if (!anchor || event.defaultPrevented || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      if (anchor.target && anchor.target !== '_self') return;
+      const href = anchor.getAttribute('href');
+      if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('javascript:')) return;
+      let url;
+      try { url = new URL(href, location.href); } catch { return; }
+      if (!isSpaUrl(url)) return;
+      event.preventDefault();
+      const route = parseAppRoute(url);
+      const overlay = (route.kind === 'image' || route.kind === 'notes') ? 1 : 0;
+      commitRoute(route, { replace: false, overlay });
+      applyAppRoute(route);
+    }
+    function snapshotHasMore(data) {
+      if (!data.has_more) return false;
+      if (data.had_file_refs && !state.references.some((ref) => ref.file) && !(data.query || '').trim() && !(data.references || []).length) {
+        return false;
+      }
+      return true;
+    }
+    async function restoreSearchSnapshot(snapshotId) {
+      const data = await parseResponse(await fetch(
+        `/api/search-snapshots/${encodeURIComponent(snapshotId)}`,
+      ));
+      $('query').value = data.query || '';
+      if (typeof data.text_weight === 'number') $('text-weight').value = String(clampWeight(data.text_weight));
+      await restoreLibraryReferences(data.references || []);
+      state.mode = 'search';
+      state.browseKey = '';
+      state.browseName = '';
+      state.browseTotal = 0;
+      state.collectionId = '';
+      state.collectionName = '';
+      state.collectionTotal = null;
+      state.searchSnapshotId = data.id || snapshotId;
+      state.searchRequest = {
+        query: data.query || '',
+        text_weight: clampWeight(data.text_weight),
+        references: data.references || [],
+        expand: Boolean(data.expand),
+        strict_tags: Boolean(data.strict_tags),
+        dedupe: Boolean(data.dedupe),
+        limit: Number(data.limit) || Number($('limit').value),
+        folder_keys: data.folder_keys,
+        mtime_after: data.mtime_after || null,
+        mtime_before: data.mtime_before || null,
+      };
+      state.results = data.results || [];
+      state.hasMore = snapshotHasMore(data) && state.results.length > 0;
+      renderTree();
+      renderCollectionList();
+      renderGallery(state.results, { append: false });
+      $('load-more').hidden = !state.hasMore;
+      if (data.query_plan && Array.isArray(data.query_plan.positive_tags)) renderInfo(data, state.results.length);
+      else {
+        $('query-info').textContent = state.results.length
+          ? `已从检索快照还原 ${state.results.length} 个结果`
+          : '快照里没有结果。';
+      }
+      return true;
+    }
+    async function applySearchRoute(route) {
+      $('query').value = route.query || '';
+      const snapshotId = route.snapshot || '';
+      const sameSnapshot = Boolean(
+        snapshotId
+        && state.mode === 'search'
+        && state.searchSnapshotId === snapshotId
+        && state.results.length,
+      );
+      const sameQuery = Boolean(
+        !snapshotId
+        && state.mode === 'search'
+        && state.results.length
+        && $('query').value.trim() === (route.query || '')
+        && searchRefsEqual(librarySearchRefs(), route.refs || []),
+      );
+      if (sameSnapshot || sameQuery) return;
+      if (snapshotId) {
+        try {
+          await restoreSearchSnapshot(snapshotId);
+          return;
+        } catch {
+          /* cache miss: fall through and search from q + ref */
+        }
+      }
+      await restoreLibraryReferences(route.refs || []);
+      await fetchResults({ reset: true, skipRoute: true });
+    }
+    async function applyAppRoute(route) {
+      const seq = ++routeCtl.seq;
+      routeCtl.applying = true;
+      try {
+        if (routeCtl.dismissAll && (route.kind === 'image' || route.kind === 'notes')) {
+          finishDismissViewer();
+          return;
+        }
+        routeCtl.dismissAll = false;
+        if (route.kind === 'search') {
+          await applySearchRoute(route);
+        } else if (route.kind === 'folder' && route.key) {
+          if (!(state.mode === 'browse' && state.browseKey === route.key && state.results.length)) {
+            previewFolder(route.key, route.key, { skipRoute: true });
+          }
+        } else if (route.kind === 'collection' && route.id) {
+          const same = state.mode === 'collection' && state.collectionId === route.id;
+          if (!same) {
+            const collection = state.collections.find((item) => item.id === route.id);
+            if (collection) await selectCollection(collection, { skipRoute: true });
+            else $('query-info').textContent = '收藏夹不存在或尚未载入。';
+          }
+        } else if (route.kind === 'random') {
+          if (route.seed) {
+            const seed = Number(route.seed);
+            state.randomSeed = Number.isFinite(seed) ? seed : route.seed;
+          }
+          if (!(state.mode === 'random' && String(state.randomSeed) === String(route.seed || '') && state.results.length)) {
+            startRandomBrowse({ skipRoute: true });
+          }
+        }
+        if (seq !== routeCtl.seq) return;
+        if (route.kind === 'image' || route.kind === 'notes') {
+          if (!route.imageId) return;
+          notes.pendingName = route.kind === 'notes' ? (route.noteName || '') : '';
+          try {
+            const item = await ensureGalleryItem(route.imageId);
+            if (seq !== routeCtl.seq) return;
+            if (!($('viewer').open && state.current && state.current.id === item.id)) {
+              openViewer(item);
+            }
+            if (route.kind === 'notes') {
+              if (!notes.open) await openNotesPane({ skipRoute: true });
+              else if (route.noteName && notes.currentName !== route.noteName) {
+                await selectNote(route.noteName, { skipRoute: true });
+              }
+            } else if (notes.open) {
+              await closeNotesPane({ skipRoute: true });
+            }
+          } catch (error) {
+            if (seq !== routeCtl.seq) return;
+            $('query-info').textContent = `无法打开图片：${error.message}`;
+            if ($('viewer').open) $('viewer').close();
+          }
+        } else if ($('viewer').open || notes.open) {
+          if (notes.open) await closeNotesPane({ skipRoute: true });
+          if ($('viewer').open) $('viewer').close();
+        }
+        if (seq === routeCtl.seq) syncDocumentTitle(route);
+      } finally {
+        if (seq === routeCtl.seq) routeCtl.applying = false;
+      }
+    }
+    async function bootApp() {
+      await Promise.all([
+        loadLibraryTree(),
+        loadCollections().catch((error) => setCollectionStatus(`收藏夹不可用：${error.message}`)),
+        loadWebSearchSettings().catch((error) => {
+          $('model-hint').textContent = `查询设置未能读取：${error.message}`;
+        }),
+        loadStoragePaths().catch((error) => {
+          $('storage-hint').textContent = `存储路径未能读取：${error.message}`;
+        }),
+        fetchModelStatus().catch((error) => {
+          $('model-hint').textContent = modelApiErrorMessage(error);
+        }),
+      ]);
+      const route = parseAppRoute();
+      history.replaceState({ artseek: 1, overlay: 0, ...route }, '', currentHref());
+      if (route.kind !== 'home') await applyAppRoute(route);
+    }
+
     if (window.matchMedia('(pointer: fine)').matches) $('query').focus();
     bindGalleryReferenceDropTarget();
-    loadLibraryTree();
-    loadCollections().catch((error) => setCollectionStatus(`收藏夹不可用：${error.message}`));
-    loadWebSearchSettings().catch((error) => {
-      $('model-hint').textContent = `查询设置未能读取：${error.message}`;
+    window.addEventListener('popstate', () => {
+      const route = (history.state && history.state.artseek) ? history.state : parseAppRoute();
+      applyAppRoute(route);
     });
-    loadStoragePaths().catch((error) => {
-      $('storage-hint').textContent = `存储路径未能读取：${error.message}`;
-    });
-    fetchModelStatus().catch((error) => {
-      $('model-hint').textContent = modelApiErrorMessage(error);
+    document.addEventListener('click', handleAppLink, true);
+    bootApp().catch((error) => {
+      $('query-info').textContent = `页面未能还原：${error.message}`;
     });
   </script>
 </body>

@@ -117,6 +117,10 @@ class AppConfig:
         return self.cache_dir / "thumbnails"
 
     @property
+    def search_snapshot_dir(self) -> Path:
+        return self.cache_dir / "search-snapshots"
+
+    @property
     def folder_scope_path(self) -> Path:
         return self.index_dir / "folder_scope.json"
 
@@ -137,6 +141,7 @@ class AppConfig:
         self.index_dir.mkdir(parents=True, exist_ok=True)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+        self.search_snapshot_dir.mkdir(parents=True, exist_ok=True)
         self.notes_dir.mkdir(parents=True, exist_ok=True)
 
 

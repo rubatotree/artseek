@@ -47,6 +47,7 @@ from ..library import (
 )
 from ..notes import NoteError, NoteStore, resolve_content_hash
 from ..search import SearchEngine
+from ..search_cache import SearchSnapshotStore, is_snapshot_id
 from ..store import VectorStore
 
 
@@ -96,6 +97,7 @@ class TextSearchRequest(BaseModel):
     mtime_before: str | None = None
     exclude_ids: list[str] = Field(default_factory=list)
     dedupe: bool = False
+    snapshot_id: str | None = None
 
 
 class RandomBrowseRequest(BaseModel):
@@ -336,6 +338,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     app.state.index_lock = threading.Lock()
     app.state.collections = CollectionStore(config.collections_path)
     app.state.notes = NoteStore(config.notes_dir)
+    app.state.search_snapshots = SearchSnapshotStore(config.search_snapshot_dir)
     app.state.active_qdrant_path = config.qdrant_path
     app.state.storage_lock = threading.Lock()
     app.state.collection_index_empty = False
@@ -348,12 +351,37 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     def shutdown() -> None:
         app.state.engine.close()
 
-    @app.get("/", response_class=HTMLResponse)
-    def home() -> HTMLResponse:
+    def spa_page() -> HTMLResponse:
         return HTMLResponse(
             static_path.read_text(encoding="utf-8"),
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.get("/", response_class=HTMLResponse)
+    def home() -> HTMLResponse:
+        return spa_page()
+
+    @app.get("/search", response_class=HTMLResponse)
+    @app.get("/folder", response_class=HTMLResponse)
+    @app.get("/random", response_class=HTMLResponse)
+    def spa_gallery() -> HTMLResponse:
+        return spa_page()
+
+    @app.get("/c/{collection_id}", response_class=HTMLResponse)
+    def spa_collection(collection_id: str) -> HTMLResponse:
+        del collection_id
+        return spa_page()
+
+    @app.get("/i/{point_id}", response_class=HTMLResponse)
+    @app.get("/i/{point_id}/notes", response_class=HTMLResponse)
+    def spa_image(point_id: str) -> HTMLResponse:
+        del point_id
+        return spa_page()
+
+    @app.get("/i/{point_id}/notes/{name:path}", response_class=HTMLResponse)
+    def spa_note(point_id: str, name: str) -> HTMLResponse:
+        del point_id, name
+        return spa_page()
 
     def resolve_folder_keys(explicit: list[str] | None) -> list[str]:
         if explicit is not None:
@@ -813,6 +841,86 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         except Exception as exc:
             raise HTTPException(400, "references 格式无效") from exc
 
+    def persist_search_snapshot(
+        *,
+        snapshot_id: str | None,
+        query: str,
+        text_weight: float,
+        references: list[ReferenceSpec],
+        expand: bool,
+        strict_tags: bool,
+        dedupe: bool,
+        limit: int,
+        folder_keys: list[str] | None,
+        mtime_after: str | None,
+        mtime_before: str | None,
+        offset: int,
+        payload: dict[str, Any],
+        had_file_refs: bool = False,
+    ) -> dict[str, Any]:
+        store: SearchSnapshotStore = app.state.search_snapshots
+        refs = [{"id": spec.id, "weight": spec.weight} for spec in references]
+        results = list(payload.get("results") or [])
+        if offset <= 0:
+            payload["snapshot_id"] = store.create(
+                query=query,
+                text_weight=text_weight,
+                references=refs,
+                expand=expand,
+                strict_tags=strict_tags,
+                dedupe=dedupe,
+                limit=limit,
+                folder_keys=folder_keys,
+                mtime_after=mtime_after,
+                mtime_before=mtime_before,
+                query_plan=payload.get("query_plan")
+                if isinstance(payload.get("query_plan"), dict)
+                else {},
+                llm_warning=payload.get("llm_warning"),
+                results=results,
+                has_more=bool(payload.get("has_more")),
+                had_file_refs=had_file_refs,
+            )
+            return payload
+        if is_snapshot_id(snapshot_id) and store.append(
+            snapshot_id or "",
+            results,
+            has_more=bool(payload.get("has_more")),
+        ):
+            payload["snapshot_id"] = snapshot_id
+        elif snapshot_id:
+            payload["snapshot_id"] = snapshot_id
+        return payload
+
+    def materialize_snapshot_results(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        getter = getattr(app.state.engine.store, "get", None)
+        live: list[dict[str, Any]] = []
+        for row in rows:
+            point_id = str(row.get("id") or "")
+            if not point_id:
+                continue
+            payload = getter(point_id) if callable(getter) else None
+            if payload:
+                item = gallery_result(point_id, payload, fallback_name=str(row.get("name") or ""))
+                item["score"] = row.get("score")
+                item["tag_hits"] = list(row.get("tag_hits") or [])
+                item["visual_score"] = row.get("visual_score")
+                item["descriptor_score"] = row.get("descriptor_score")
+                live.append(item)
+            else:
+                live.append(row)
+        return live
+
+    @app.get("/api/search-snapshots/{snapshot_id}")
+    def read_search_snapshot(snapshot_id: str) -> dict:
+        if not is_snapshot_id(snapshot_id):
+            raise HTTPException(400, "检索快照编号不合法")
+        data = app.state.search_snapshots.get(snapshot_id)
+        if data is None:
+            raise HTTPException(404, "检索快照不存在或已过期")
+        data["results"] = materialize_snapshot_results(list(data.get("results") or []))
+        return data
+
     @app.post("/api/search")
     def search(request: TextSearchRequest) -> dict:
         if app.state.index_job.running:
@@ -839,7 +947,21 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        return dataclasses.asdict(response)
+        return persist_search_snapshot(
+            snapshot_id=request.snapshot_id,
+            query=request.query,
+            text_weight=request.text_weight,
+            references=specs,
+            expand=request.expand,
+            strict_tags=request.strict_tags,
+            dedupe=request.dedupe,
+            limit=request.limit,
+            folder_keys=resolve_folder_keys(request.folder_keys),
+            mtime_after=request.mtime_after,
+            mtime_before=request.mtime_before,
+            offset=request.offset,
+            payload=dataclasses.asdict(response),
+        )
 
     @app.post("/api/search-upload")
     async def search_upload(
@@ -857,12 +979,12 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         offset: int = Form(default=0),
         exclude_ids: str = Form(default=""),
         dedupe: bool = Form(default=False),
+        snapshot_id: str = Form(default=""),
     ) -> dict:
         if app.state.index_job.running:
             raise HTTPException(409, "正在索引图片，请稍后再检索")
-        library_paths, library_weights = resolve_library_references(
-            parse_reference_specs(references)
-        )
+        specs = parse_reference_specs(references)
+        library_paths, library_weights = resolve_library_references(specs)
         upload_weights = _parse_weight_list(file_weights, len(files))
         temps: list[Path] = []
         try:
@@ -871,6 +993,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
                     temps.append(Path(handle.name))
                     handle.write(await file.read())
+            folder_keys_list = resolve_folder_keys(parse_folder_keys(folder_keys))
             response = app.state.engine.search(
                 query,
                 images=library_paths + temps,
@@ -879,14 +1002,29 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 limit=max(1, min(limit, 200)),
                 expand=expand,
                 strict_tags=strict_tags,
-                folder_keys=resolve_folder_keys(parse_folder_keys(folder_keys)),
+                folder_keys=folder_keys_list,
                 mtime_after=mtime_after or None,
                 mtime_before=mtime_before or None,
                 offset=max(0, min(offset, 4000)),
                 exclude_ids=_parse_id_list(exclude_ids),
                 dedupe=dedupe,
             )
-            return dataclasses.asdict(response)
+            return persist_search_snapshot(
+                snapshot_id=snapshot_id or None,
+                query=query,
+                text_weight=max(0.0, min(text_weight, 8.0)),
+                references=specs,
+                expand=expand,
+                strict_tags=strict_tags,
+                dedupe=dedupe,
+                limit=max(1, min(limit, 200)),
+                folder_keys=folder_keys_list,
+                mtime_after=mtime_after or None,
+                mtime_before=mtime_before or None,
+                offset=max(0, min(offset, 4000)),
+                payload=dataclasses.asdict(response),
+                had_file_refs=bool(files),
+            )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         finally:
@@ -1222,6 +1360,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             config.ensure_dirs()
         if update_notes:
             app.state.notes.set_root(config.notes_dir)
+        if update_cache:
+            app.state.search_snapshots.set_root(config.search_snapshot_dir)
         if update_index:
             app.state.collections = CollectionStore(config.collections_path)
         return storage_paths_payload()
@@ -1263,6 +1403,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 except ValueError as exc:
                     raise HTTPException(400, str(exc)) from exc
                 config.ensure_dirs()
+                app.state.search_snapshots.set_root(config.search_snapshot_dir)
                 return {
                     **storage_paths_payload(),
                     "kind": "cache",
