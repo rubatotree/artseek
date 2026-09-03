@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sqlite3
 import threading
 import tomllib
 from dataclasses import dataclass, field
@@ -18,6 +19,19 @@ DEFAULT_WEB_SEARCH_LIMIT = 40
 MIN_WEB_SEARCH_LIMIT = 12
 MAX_WEB_SEARCH_LIMIT = 80
 WEB_SEARCH_LIMIT_STEP = 4
+INDEX_STATE_NAME = "index_state.sqlite3"
+INDEX_SIDECAR_FILES = (
+    INDEX_STATE_NAME,
+    "folder_catalog.json",
+    "folder_scope.json",
+    "collections.json",
+    "manifest.json",
+)
+INDEX_SQLITE_EXTRAS = (
+    f"{INDEX_STATE_NAME}-wal",
+    f"{INDEX_STATE_NAME}-shm",
+    f"{INDEX_STATE_NAME}-journal",
+)
 _RUNTIME_SETTINGS_LOCK = threading.RLock()
 
 
@@ -71,6 +85,7 @@ class AppConfig:
     cache_dir: Path = field(default_factory=lambda: Path(user_cache_dir(APP_NAME)))
     qdrant_path_override: Path | None = None
     notes_dir_override: Path | None = None
+    index_dir_override: Path | None = None
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     tagger: TaggerConfig = field(default_factory=TaggerConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -86,12 +101,16 @@ class AppConfig:
         return self.notes_dir_override or (self.data_dir / "notes")
 
     @property
+    def index_dir(self) -> Path:
+        return self.index_dir_override or self.data_dir
+
+    @property
     def manifest_path(self) -> Path:
-        return self.data_dir / "manifest.json"
+        return self.index_dir / "manifest.json"
 
     @property
     def index_state_path(self) -> Path:
-        return self.data_dir / "index_state.sqlite3"
+        return self.index_dir / INDEX_STATE_NAME
 
     @property
     def thumbnail_dir(self) -> Path:
@@ -99,11 +118,11 @@ class AppConfig:
 
     @property
     def folder_scope_path(self) -> Path:
-        return self.data_dir / "folder_scope.json"
+        return self.index_dir / "folder_scope.json"
 
     @property
     def folder_catalog_path(self) -> Path:
-        return self.data_dir / "folder_catalog.json"
+        return self.index_dir / "folder_catalog.json"
 
     @property
     def runtime_path(self) -> Path:
@@ -111,10 +130,11 @@ class AppConfig:
 
     @property
     def collections_path(self) -> Path:
-        return self.data_dir / "collections.json"
+        return self.index_dir / "collections.json"
 
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.index_dir.mkdir(parents=True, exist_ok=True)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.thumbnail_dir.mkdir(parents=True, exist_ok=True)
         self.notes_dir.mkdir(parents=True, exist_ok=True)
@@ -146,6 +166,9 @@ cache_dir = "{cache}"
 # 可选。默认是 data_dir 下的 qdrant 与 notes。网页「高级」改路径写入 runtime.json，并优先于这里。
 # qdrant_path = "D:/ArtSeek/qdrant"
 # notes_dir = "D:/ArtSeek/notes"
+# index_dir = "D:/ArtSeek/index"
+# cache_dir 也可在网页里改。索引数据库默认与 data_dir 相同，
+# 含增量 SQLite、目录树、勾选范围、收藏夹与 manifest。
 
 [embedding]
 # 轻量而且支持中文/日语/韩语的图文向量模型。
@@ -305,6 +328,53 @@ def migrate_storage_tree(source: Path, destination: Path | str) -> tuple[Path, b
     return dest, True
 
 
+def _checkpoint_sqlite(path: Path) -> None:
+    if not path.is_file():
+        return
+    try:
+        connection = sqlite3.connect(str(path))
+        try:
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            connection.close()
+    except sqlite3.Error:
+        return
+
+
+def migrate_index_sidecars(source_dir: Path, destination: Path | str) -> tuple[Path, bool]:
+    """Copy index sidecars into an empty-of-index destination. Source is kept.
+
+    Includes the incremental SQLite file (and WAL extras), folder catalog,
+    selected-folder scope, collections, and the embedding manifest. Does not
+    copy Qdrant, notes, cache, runtime.json, or config.toml.
+    """
+    dest = coerce_directory_path(destination, create=False)
+    if dest.exists() and not dest.is_dir():
+        raise ValueError("目标路径不是目录")
+    if source_dir.exists() and not source_dir.is_dir():
+        raise ValueError("当前路径不是目录")
+    if paths_equal(source_dir, dest):
+        raise ValueError("目标路径与当前路径相同")
+    if paths_overlap(source_dir, dest):
+        raise ValueError("不能迁到当前目录内部或其上级目录")
+    dest.mkdir(parents=True, exist_ok=True)
+    occupied = [name for name in INDEX_SIDECAR_FILES if (dest / name).exists()]
+    if occupied:
+        raise ValueError("目标目录已有索引文件，请另选路径以免覆盖")
+    copied = False
+    try:
+        for name in (*INDEX_SIDECAR_FILES, *INDEX_SQLITE_EXTRAS):
+            src = source_dir / name
+            if not src.is_file():
+                continue
+            shutil.copy2(src, dest / name)
+            copied = True
+    except OSError as exc:
+        raise ValueError(f"复制失败：{exc}") from exc
+    _checkpoint_sqlite(dest / INDEX_STATE_NAME)
+    return dest, copied
+
+
 def _optional_directory_path(value: Any) -> Path | None:
     if value is None:
         return None
@@ -325,6 +395,12 @@ def apply_runtime_paths(config: AppConfig) -> None:
     if "notes_dir" in data:
         override = _optional_directory_path(data.get("notes_dir"))
         config.notes_dir_override = override
+    if "cache_dir" in data:
+        override = _optional_directory_path(data.get("cache_dir"))
+        if override is not None:
+            config.cache_dir = override
+    if "index_dir" in data:
+        config.index_dir_override = _optional_directory_path(data.get("index_dir"))
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -335,11 +411,15 @@ def load_config(path: Path | None = None) -> AppConfig:
             raw = tomllib.load(handle)
         qdrant = raw.pop("qdrant_path", None)
         notes = raw.pop("notes_dir", None)
+        index_dir = raw.pop("index_dir", None)
+        raw.pop("index_state_path", None)
         _merge_dataclass(cfg, raw)
         if isinstance(qdrant, str) and qdrant.strip():
             cfg.qdrant_path_override = coerce_directory_path(qdrant, create=False)
         if isinstance(notes, str) and notes.strip():
             cfg.notes_dir_override = coerce_directory_path(notes, create=False)
+        if isinstance(index_dir, str) and index_dir.strip():
+            cfg.index_dir_override = coerce_directory_path(index_dir, create=False)
     apply_runtime_paths(cfg)
     cfg.ensure_dirs()
     return cfg
@@ -425,8 +505,12 @@ def save_storage_paths(
     *,
     qdrant_path: Path | str | None = None,
     notes_dir: Path | str | None = None,
+    cache_dir: Path | str | None = None,
+    index_dir: Path | str | None = None,
     update_qdrant: bool = False,
     update_notes: bool = False,
+    update_cache: bool = False,
+    update_index: bool = False,
 ) -> None:
     """Persist path overrides. Empty/None clears an override back to the default."""
     with _RUNTIME_SETTINGS_LOCK:
@@ -447,4 +531,19 @@ def save_storage_paths(
                 path = coerce_directory_path(notes_dir, create=True)
                 payload["notes_dir"] = str(path)
                 config.notes_dir_override = path
+        if update_cache:
+            if cache_dir in (None, ""):
+                payload.pop("cache_dir", None)
+            else:
+                path = coerce_directory_path(cache_dir, create=True)
+                payload["cache_dir"] = str(path)
+                config.cache_dir = path
+        if update_index:
+            if index_dir in (None, ""):
+                payload.pop("index_dir", None)
+                config.index_dir_override = None
+            else:
+                path = coerce_directory_path(index_dir, create=True)
+                payload["index_dir"] = str(path)
+                config.index_dir_override = path
         _save_runtime_data(config, payload)

@@ -204,6 +204,13 @@ immediately.
    path fields.
 5. Complete: cover sanitization, identity, API, and homepage fingerprints.
 6. Complete: persist per-image note order; drag tabs like a browser strip;
-   hide the editor scrollbar; sync the filename from the first ATX H1.
+   hide the editor scrollbar; name notes from the first line and keep
+   timestamp filenames.
 7. Complete: add per-path 「迁移」 controls that copy the live Qdrant or
    notes directory to the typed destination, then switch to it.
+8. Complete: add cache-directory migrate/save beside the other storage
+   paths. Config.toml stays at the platform location.
+9. Complete: treat the index database as a sidecar directory (SQLite,
+   folder catalog, folder scope, collections, manifest) with migrate/save.
+10. Complete: display titles from the first Markdown line; files use unique
+    UTC timestamps instead of 「笔记」/untitled names.

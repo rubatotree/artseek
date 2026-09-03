@@ -25,6 +25,7 @@ from ..config import (
     AppConfig,
     WebSearchSettings,
     load_web_search_settings,
+    migrate_index_sidecars,
     migrate_storage_tree,
     paths_equal,
     save_storage_paths,
@@ -235,12 +236,14 @@ class StoragePathsRequest(BaseModel):
 
     qdrant_path: str | None = None
     notes_dir: str | None = None
+    cache_dir: str | None = None
+    index_dir: str | None = None
 
 
 class StorageMigrateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["qdrant", "notes"]
+    kind: Literal["qdrant", "notes", "cache", "index"]
     destination: str
 
 
@@ -1119,6 +1122,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         return {
             "qdrant_path": str(config.qdrant_path),
             "notes_dir": str(config.notes_dir),
+            "cache_dir": str(config.cache_dir),
+            "index_dir": str(config.index_dir),
             "active_qdrant_path": str(active),
             "qdrant_restart_required": restart,
         }
@@ -1195,21 +1200,30 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     def update_storage_paths(request: StoragePathsRequest) -> dict:
         update_qdrant = request.qdrant_path is not None
         update_notes = request.notes_dir is not None
-        if not update_qdrant and not update_notes:
-            raise HTTPException(400, "请提供向量库或笔记库路径")
+        update_cache = request.cache_dir is not None
+        update_index = request.index_dir is not None
+        if not update_qdrant and not update_notes and not update_cache and not update_index:
+            raise HTTPException(400, "请提供要保存的存储路径")
         try:
             save_storage_paths(
                 config,
                 qdrant_path=request.qdrant_path,
                 notes_dir=request.notes_dir,
+                cache_dir=request.cache_dir,
+                index_dir=request.index_dir,
                 update_qdrant=update_qdrant,
                 update_notes=update_notes,
+                update_cache=update_cache,
+                update_index=update_index,
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        if update_notes:
+        if update_notes or update_cache or update_index:
             config.ensure_dirs()
+        if update_notes:
             app.state.notes.set_root(config.notes_dir)
+        if update_index:
+            app.state.collections = CollectionStore(config.collections_path)
         return storage_paths_payload()
 
     def _reopen_vector_store(path: Path) -> None:
@@ -1239,6 +1253,39 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                     "copied": copied,
                     "source": str(source),
                     "destination": str(config.notes_dir),
+                }
+
+            if request.kind == "cache":
+                source = Path(config.cache_dir)
+                try:
+                    dest, copied = migrate_storage_tree(source, request.destination)
+                    save_storage_paths(config, cache_dir=dest, update_cache=True)
+                except ValueError as exc:
+                    raise HTTPException(400, str(exc)) from exc
+                config.ensure_dirs()
+                return {
+                    **storage_paths_payload(),
+                    "kind": "cache",
+                    "copied": copied,
+                    "source": str(source),
+                    "destination": str(config.cache_dir),
+                }
+
+            if request.kind == "index":
+                source = Path(config.index_dir)
+                try:
+                    dest, copied = migrate_index_sidecars(source, request.destination)
+                    save_storage_paths(config, index_dir=dest, update_index=True)
+                except ValueError as exc:
+                    raise HTTPException(400, str(exc)) from exc
+                config.ensure_dirs()
+                app.state.collections = CollectionStore(config.collections_path)
+                return {
+                    **storage_paths_payload(),
+                    "kind": "index",
+                    "copied": copied,
+                    "source": str(source),
+                    "destination": str(config.index_dir),
                 }
 
             source = Path(app.state.active_qdrant_path)
@@ -1398,6 +1445,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             raise HTTPException(400, str(exc)) from exc
         media_type, _ = mimetypes.guess_type(path.name)
         return FileResponse(path, media_type=media_type or "application/octet-stream")
+
 
     static_dir = Path(__file__).with_name("static")
     app.mount("/static", StaticFiles(directory=static_dir), name="static")

@@ -78,7 +78,8 @@ class NotesApiTests(unittest.TestCase):
             "/api/images/img-1/notes",
             json={"title": "构图", "content": "keep"},
         ).json()
-        self.assertEqual(created["name"], "构图.md")
+        self.assertEqual(created["title"], "keep")
+        note_name = created["name"]
         original_notes = self.config.notes_dir
         moved_notes = Path(self._temporary_directory.name) / "vault-b"
         migrated = self.client.post(
@@ -87,10 +88,10 @@ class NotesApiTests(unittest.TestCase):
         ).json()
         self.assertTrue(migrated["copied"])
         self.assertEqual(Path(migrated["notes_dir"]).resolve(), moved_notes.resolve())
-        self.assertTrue((moved_notes / self.digest / "构图.md").is_file())
-        self.assertTrue((original_notes / self.digest / "构图.md").is_file())
+        self.assertTrue((moved_notes / self.digest / note_name).is_file())
+        self.assertTrue((original_notes / self.digest / note_name).is_file())
         listed = self.client.get("/api/images/img-1/notes").json()
-        self.assertEqual([item["name"] for item in listed["notes"]], ["构图.md"])
+        self.assertEqual([item["name"] for item in listed["notes"]], [note_name])
         marker = self.config.data_dir / "qdrant"
         marker.mkdir(parents=True, exist_ok=True)
         (marker / "meta.json").write_text("{}", encoding="utf-8")
@@ -112,6 +113,49 @@ class NotesApiTests(unittest.TestCase):
         )
         self.assertEqual(same.status_code, 400)
 
+    def test_storage_migrate_copies_cache_thumbnails(self) -> None:
+        original = self.config.cache_dir
+        original.mkdir(parents=True, exist_ok=True)
+        (original / "thumbnails").mkdir(exist_ok=True)
+        marker = original / "thumbnails" / "img-1.webp"
+        marker.write_bytes(b"webp")
+        moved = Path(self._temporary_directory.name) / "cache-b"
+        migrated = self.client.post(
+            "/api/storage-paths/migrate",
+            json={"kind": "cache", "destination": str(moved)},
+        ).json()
+        self.assertTrue(migrated["copied"])
+        self.assertEqual(Path(migrated["cache_dir"]).resolve(), moved.resolve())
+        self.assertTrue((moved / "thumbnails" / "img-1.webp").is_file())
+        self.assertTrue(marker.is_file())
+        saved = self.client.put("/api/storage-paths", json={"cache_dir": str(moved)}).json()
+        self.assertEqual(Path(saved["cache_dir"]).resolve(), moved.resolve())
+
+    def test_storage_migrate_copies_index_sidecars(self) -> None:
+        source = self.config.index_dir
+        source.mkdir(parents=True, exist_ok=True)
+        (source / "index_state.sqlite3").write_bytes(b"sqlite")
+        (source / "folder_catalog.json").write_text('{"folders":[]}', encoding="utf-8")
+        (source / "folder_scope.json").write_text("{}", encoding="utf-8")
+        (source / "collections.json").write_text("[]", encoding="utf-8")
+        (source / "manifest.json").write_text("{}", encoding="utf-8")
+        (source / "runtime.json").write_text("{}", encoding="utf-8")
+        moved = Path(self._temporary_directory.name) / "index-b"
+        migrated = self.client.post(
+            "/api/storage-paths/migrate",
+            json={"kind": "index", "destination": str(moved)},
+        ).json()
+        self.assertTrue(migrated["copied"])
+        self.assertEqual(Path(migrated["index_dir"]).resolve(), moved.resolve())
+        self.assertTrue((moved / "index_state.sqlite3").is_file())
+        self.assertTrue((moved / "folder_catalog.json").is_file())
+        self.assertTrue((moved / "folder_scope.json").is_file())
+        self.assertTrue((moved / "collections.json").is_file())
+        self.assertTrue((moved / "manifest.json").is_file())
+        self.assertFalse((moved / "runtime.json").exists())
+        listed = self.client.get("/api/collections").json()
+        self.assertIn("collections", listed)
+
     def test_note_crud_and_path_escape(self) -> None:
         listed = self.client.get("/api/images/img-1/notes").json()
         self.assertEqual(listed["image"]["content_hash"], self.digest)
@@ -120,15 +164,18 @@ class NotesApiTests(unittest.TestCase):
             "/api/images/img-1/notes",
             json={"title": "构图", "content": "# hi\n"},
         ).json()
-        self.assertEqual(created["name"], "构图.md")
+        note_name = created["name"]
+        self.assertRegex(note_name, r"^\d{8}T\d{6}(?:-\d+)?\.md$")
+        self.assertEqual(created["title"], "hi")
         self.assertEqual(created["content"], "# hi\n")
-        read = self.client.get("/api/images/img-1/notes/构图.md").json()
+        read = self.client.get(f"/api/images/img-1/notes/{note_name}").json()
         self.assertEqual(read["content"], "# hi\n")
         renamed = self.client.put(
-            "/api/images/img-1/notes/构图.md",
-            json={"title": "服装", "content": "袖"},
+            f"/api/images/img-1/notes/{note_name}",
+            json={"title": "服装"},
         ).json()
-        self.assertEqual(renamed["name"], "服装.md")
+        self.assertEqual(renamed["name"], note_name)
+        self.assertEqual(renamed["title"], "服装")
         missing = self.client.get("/api/images/img-1/notes/构图.md")
         self.assertEqual(missing.status_code, 404)
         escaped = self.client.get("/api/note-files/" + self.digest + "/../secret.txt")
@@ -141,42 +188,62 @@ class NotesApiTests(unittest.TestCase):
         fetched = self.client.get(upload["url"])
         self.assertEqual(fetched.status_code, 200)
         self.assertEqual(fetched.content, b"png-bytes")
-        deleted = self.client.delete("/api/images/img-1/notes/服装.md").json()
+        deleted = self.client.delete(f"/api/images/img-1/notes/{note_name}").json()
         self.assertTrue(deleted["deleted"])
         self.assertEqual(deleted["removed_assets"], [])
         self.assertEqual(self.client.get("/api/images/img-1/notes").json()["notes"], [])
 
     def test_note_order_api_persists_complete_permutation(self) -> None:
-        self.client.post("/api/images/img-1/notes", json={"title": "服装", "content": "a"})
-        self.client.post("/api/images/img-1/notes", json={"title": "构图", "content": "b"})
+        clothing = self.client.post(
+            "/api/images/img-1/notes", json={"title": "服装"}
+        ).json()
+        composition = self.client.post(
+            "/api/images/img-1/notes", json={"title": "构图"}
+        ).json()
         listed = self.client.get("/api/images/img-1/notes").json()["notes"]
-        self.assertEqual([item["name"] for item in listed], ["服装.md", "构图.md"])
+        self.assertEqual(
+            [item["name"] for item in listed],
+            [clothing["name"], composition["name"]],
+        )
+        self.assertEqual([item["title"] for item in listed], ["服装", "构图"])
         reordered = self.client.put(
             "/api/images/img-1/note-order",
-            json={"names": ["构图.md", "服装.md"]},
+            json={"names": [composition["name"], clothing["name"]]},
         )
         self.assertEqual(reordered.status_code, 200)
         self.assertEqual(
             [item["name"] for item in reordered.json()["notes"]],
-            ["构图.md", "服装.md"],
+            [composition["name"], clothing["name"]],
         )
         again = self.client.get("/api/images/img-1/notes").json()["notes"]
-        self.assertEqual([item["name"] for item in again], ["构图.md", "服装.md"])
-        stale = self.client.put("/api/images/img-1/note-order", json={"names": ["构图.md"]})
+        self.assertEqual(
+            [item["name"] for item in again],
+            [composition["name"], clothing["name"]],
+        )
+        stale = self.client.put(
+            "/api/images/img-1/note-order", json={"names": [composition["name"]]}
+        )
         self.assertEqual(stale.status_code, 400)
 
-    def test_saving_h1_first_line_renames_note(self) -> None:
+    def test_saving_first_line_updates_title_not_filename(self) -> None:
         created = self.client.post(
             "/api/images/img-1/notes",
-            json={"title": "笔记", "content": ""},
+            json={"content": ""},
         ).json()
-        self.assertEqual(created["name"], "笔记.md")
+        self.assertRegex(created["name"], r"^\d{8}T\d{6}(?:-\d+)?\.md$")
+        self.assertEqual(created["title"], "笔记")
         saved = self.client.put(
-            "/api/images/img-1/notes/笔记.md",
+            f"/api/images/img-1/notes/{created['name']}",
             json={"content": "# 构图\n说明\n"},
         ).json()
-        self.assertEqual(saved["name"], "构图.md")
+        self.assertEqual(saved["name"], created["name"])
         self.assertEqual(saved["title"], "构图")
+        plain = self.client.put(
+            f"/api/images/img-1/notes/{created['name']}",
+            json={"content": "服装层次\n说明\n"},
+        ).json()
+        self.assertEqual(plain["name"], created["name"])
+        self.assertEqual(plain["title"], "服装层次")
 
     def test_homepage_exposes_notes_and_storage_controls(self) -> None:
         html = self.client.get("/").text
@@ -186,6 +253,10 @@ class NotesApiTests(unittest.TestCase):
         self.assertIn('id="notes-dir"', html)
         self.assertIn('id="qdrant-migrate"', html)
         self.assertIn('id="notes-migrate"', html)
+        self.assertIn('id="cache-dir"', html)
+        self.assertIn('id="cache-migrate"', html)
+        self.assertIn('id="index-dir"', html)
+        self.assertIn('id="index-migrate"', html)
         self.assertIn("/api/storage-paths", html)
         self.assertIn("/api/storage-paths/migrate", html)
         self.assertIn("/static/vendor/vditor", html)
@@ -210,7 +281,9 @@ class NotesApiTests(unittest.TestCase):
         self.assertIn("scrollbar-width: thin", html)
         self.assertIn("scrollbar-width: none", html)
         self.assertIn("function tickNoteTabEdgeScroll", html)
-        self.assertIn("function firstHeadingTitle", html)
+        self.assertIn("function firstLineTitle", html)
+        self.assertIn("function applyFirstLineTitleToTab", html)
+        self.assertIn("JSON.stringify({ content: '' })", html)
         self.assertIn("function applySavedNote", html)
         self.assertIn("notes.saveLock", html)
         self.assertIn("pane.classList.add('is-open')", html)
@@ -221,6 +294,13 @@ class NotesApiTests(unittest.TestCase):
         self.assertIn("function applyNoteLinkBase", html)
         self.assertIn("function applyNoteImageSrcs", html)
         self.assertIn("markdown: { linkBase: noteLinkBase(), imageCaption: true }", html)
+        self.assertNotIn('id="agent-system-prompt"', html)
+        self.assertNotIn('id="agent-first-prompt"', html)
+        self.assertNotIn('id="notes-agent"', html)
+        self.assertNotIn("function sendNoteAgent", html)
+        self.assertNotIn("/api/agents", html)
+        self.assertNotIn("/api/agent-settings", html)
+        self.assertNotIn("/agent/ws", html)
         vditor_js = (
             Path(__file__).resolve().parents[1]
             / "src/artseek/web/static/vendor/vditor/dist/index.min.js"
@@ -236,11 +316,14 @@ class NotesApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_notes_survive_index_removal_and_folder_delete(self) -> None:
-        self.client.post("/api/images/img-1/notes", json={"title": "构图", "content": "keep"})
+        created = self.client.post(
+            "/api/images/img-1/notes", json={"content": "构图"}
+        ).json()
         self.engine.store.payloads.pop("img-1")
         surviving = self.client.get("/api/images/img-1/notes").json()
         self.assertEqual(surviving["image"]["content_hash"], self.digest)
-        self.assertEqual([item["name"] for item in surviving["notes"]], ["构图.md"])
+        self.assertEqual([item["name"] for item in surviving["notes"]], [created["name"]])
+        self.assertEqual(surviving["notes"][0]["title"], "构图")
         wiped = self.client.delete("/api/images/img-1/notes").json()
         self.assertTrue(wiped["deleted"])
         gone = self.client.get("/api/images/img-1/notes")

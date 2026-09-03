@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -11,6 +14,7 @@ from artseek.config import (
     AppConfig,
     apply_runtime_paths,
     load_config,
+    migrate_index_sidecars,
     migrate_storage_tree,
     save_storage_paths,
 )
@@ -18,11 +22,16 @@ from artseek.image_io import file_digest, perceptual_hash
 from artseek.notes import (
     NoteError,
     NoteStore,
-    first_heading_title,
+    apply_title_to_content,
+    display_title,
+    first_line_title,
     resolve_content_hash,
     sanitize_note_filename,
+    timestamp_note_filename,
     vault_asset_refs,
 )
+
+NOTE_TIMESTAMP_NAME = re.compile(r"^\d{8}T\d{6}(?:-\d+)?\.md$")
 
 
 class FilenameTests(unittest.TestCase):
@@ -34,14 +43,28 @@ class FilenameTests(unittest.TestCase):
         self.assertTrue(sanitize_note_filename(".." ).endswith(".md"))
         self.assertNotIn("..", sanitize_note_filename("../secret").split("."))
 
-    def test_first_heading_title_reads_only_leading_h1(self) -> None:
-        self.assertEqual(first_heading_title("# 构图观察\n\n正文"), "构图观察")
-        self.assertEqual(first_heading_title("# 服装 ##\n"), "服装")
-        self.assertEqual(first_heading_title("#构图\n"), "构图")
-        self.assertEqual(first_heading_title("# [链接](https://ex)\n"), "链接")
-        self.assertEqual(first_heading_title("## 二级\n# 一级\n"), "")
-        self.assertEqual(first_heading_title("\n# 空行之后\n"), "空行之后")
-        self.assertEqual(first_heading_title("正文\n# 构图\n"), "")
+    def test_timestamp_filename_is_utc_and_unique_shape(self) -> None:
+        name = timestamp_note_filename(datetime(2026, 9, 2, 14, 30, 52, tzinfo=UTC))
+        self.assertEqual(name, "20260902T143052.md")
+        self.assertRegex(timestamp_note_filename(), NOTE_TIMESTAMP_NAME)
+
+    def test_first_line_title_uses_any_leading_line(self) -> None:
+        self.assertEqual(first_line_title("# 构图观察\n\n正文"), "构图观察")
+        self.assertEqual(first_line_title("# 服装 ##\n"), "服装")
+        self.assertEqual(first_line_title("#构图\n"), "构图")
+        self.assertEqual(first_line_title("# [链接](https://ex)\n"), "链接")
+        self.assertEqual(first_line_title("## 二级\n# 一级\n"), "二级")
+        self.assertEqual(first_line_title("\n# 空行之后\n"), "空行之后")
+        self.assertEqual(first_line_title("正文\n# 构图\n"), "正文")
+        self.assertEqual(first_line_title("构图观察\n下一段"), "构图观察")
+        self.assertEqual(first_line_title(""), "")
+        self.assertEqual(display_title("", "20260902T143052.md"), "笔记")
+        self.assertEqual(display_title("", "构图.md"), "构图")
+        self.assertEqual(
+            apply_title_to_content("# 构图观察\n\n草稿\n", "服装层次"),
+            "# 服装层次\n\n草稿\n",
+        )
+        self.assertEqual(apply_title_to_content("", "构图"), "构图\n")
 
 
 class ContentHashTests(unittest.TestCase):
@@ -80,74 +103,126 @@ class NoteStoreTests(unittest.TestCase):
             path="D:/pics/girl.png",
             point_id="point-1",
         )
-        self.assertEqual(created.name, "构图.md")
+        self.assertRegex(created.name, NOTE_TIMESTAMP_NAME)
+        self.assertNotEqual(created.name, "笔记.md")
+        self.assertEqual(created.title, "观察")
         self.assertEqual(created.content, "# 观察\n")
         listed = self.store.list_notes(self.digest, name="girl.png", point_id="point-1")
-        self.assertEqual([item.name for item in listed], ["构图.md"])
+        self.assertEqual([item.name for item in listed], [created.name])
+        self.assertEqual(listed[0].title, "观察")
         second = self.store.create_note(self.digest, title="构图", content="dup")
-        self.assertEqual(second.name, "构图-2.md")
-        renamed = self.store.write_note(self.digest, "构图.md", title="服装层次", content="袖型")
-        self.assertEqual(renamed.name, "服装层次.md")
-        self.assertEqual(renamed.content, "袖型")
-        with self.assertRaises(FileNotFoundError):
-            self.store.read_note(self.digest, "构图.md")
-        self.store.delete_note(self.digest, "服装层次.md")
+        self.assertRegex(second.name, NOTE_TIMESTAMP_NAME)
+        self.assertNotEqual(second.name, created.name)
+        self.assertEqual(second.title, "dup")
+        updated = self.store.write_note(self.digest, created.name, content="袖型")
+        self.assertEqual(updated.name, created.name)
+        self.assertEqual(updated.title, "袖型")
+        renamed = self.store.write_note(self.digest, created.name, title="服装层次")
+        self.assertEqual(renamed.name, created.name)
+        self.assertEqual(renamed.title, "服装层次")
+        self.assertEqual(self.store.read_note(self.digest, created.name).title, "服装层次")
+        self.store.delete_note(self.digest, created.name)
         names = [item.name for item in self.store.list_notes(self.digest)]
-        self.assertEqual(names, ["构图-2.md"])
+        self.assertEqual(names, [second.name])
         index = json.loads((self.root / ".artseek-index.json").read_text(encoding="utf-8"))
         self.assertEqual(index["images"][self.digest]["note_count"], 1)
         self.assertEqual(index["images"][self.digest]["name"], "girl.png")
 
-    def test_h1_on_first_line_renames_note_and_skips_conflicts(self) -> None:
-        created = self.store.create_note(
-            self.digest, title="笔记", content="# 构图观察\n\n草稿\n"
-        )
-        self.assertEqual(created.name, "构图观察.md")
-        draft = self.store.create_note(self.digest, title="草稿", content="旧")
+    def test_empty_notes_use_unique_timestamps_not_default_filename(self) -> None:
+        first = self.store.create_note(self.digest)
+        second = self.store.create_note(self.digest)
+        self.assertRegex(first.name, NOTE_TIMESTAMP_NAME)
+        self.assertRegex(second.name, NOTE_TIMESTAMP_NAME)
+        self.assertNotEqual(first.name, second.name)
+        self.assertEqual(first.title, "笔记")
+        self.assertEqual(second.title, "笔记")
+        self.assertNotIn(first.name, {"笔记.md", "未命名.md"})
+        with patch("artseek.notes.timestamp_note_filename", return_value="20260902T143052.md"):
+            collided = self.store.create_note(self.digest)
+            again = self.store.create_note(self.digest)
+        self.assertEqual(collided.name, "20260902T143052.md")
+        self.assertEqual(again.name, "20260902T143052-2.md")
+        self.assertEqual(collided.title, "笔记")
+
+    def test_first_line_is_display_title_without_renaming_file(self) -> None:
+        created = self.store.create_note(self.digest, content="# 构图观察\n\n草稿\n")
+        self.assertRegex(created.name, NOTE_TIMESTAMP_NAME)
+        self.assertEqual(created.title, "构图观察")
+        draft = self.store.create_note(self.digest, content="旧")
         renamed = self.store.write_note(
             self.digest, draft.name, content="# 服装层次\n继续\n"
         )
-        self.assertEqual(renamed.name, "服装层次.md")
+        self.assertEqual(renamed.name, draft.name)
         self.assertEqual(renamed.title, "服装层次")
-        conflicted = self.store.write_note(
-            self.digest, "服装层次.md", content="# 构图观察\n仍保存\n"
+        same_title = self.store.write_note(
+            self.digest, renamed.name, content="# 构图观察\n仍保存\n"
         )
-        self.assertEqual(conflicted.name, "服装层次.md")
-        self.assertEqual(conflicted.content, "# 构图观察\n仍保存\n")
+        self.assertEqual(same_title.name, draft.name)
+        self.assertEqual(same_title.title, "构图观察")
+        self.assertEqual(same_title.content, "# 构图观察\n仍保存\n")
         kept = self.store.write_note(
-            self.digest, "构图观察.md", title="手动标题", content="# 构图观察\n"
+            self.digest, created.name, title="手动标题", content="# 构图观察\n"
         )
-        self.assertEqual(kept.name, "手动标题.md")
-        leading = self.store.create_note(self.digest, title="草稿二", content="x")
+        self.assertEqual(kept.name, created.name)
+        self.assertEqual(kept.title, "构图观察")
+        retitled = self.store.write_note(self.digest, created.name, title="手动标题")
+        self.assertEqual(retitled.name, created.name)
+        self.assertEqual(retitled.title, "手动标题")
+        self.assertTrue(retitled.content.startswith("# 手动标题"))
+        leading = self.store.create_note(self.digest, content="x")
         synced = self.store.write_note(
-            self.digest, leading.name, content="\n# 镜头\n正文\n"
+            self.digest, leading.name, content="\n镜头\n正文\n"
         )
-        self.assertEqual(synced.name, "镜头.md")
+        self.assertEqual(synced.name, leading.name)
+        self.assertEqual(synced.title, "镜头")
+        seeded = self.store.create_note(self.digest, title="服装")
+        self.assertEqual(seeded.title, "服装")
+        self.assertEqual(seeded.content, "服装\n")
 
     def test_insertion_order_reorder_and_rename_keep_position(self) -> None:
-        self.store.create_note(self.digest, title="服装", content="a")
-        self.store.create_note(self.digest, title="构图", content="b")
-        self.store.create_note(self.digest, title="观察", content="c")
+        clothing = self.store.create_note(self.digest, title="服装")
+        composition = self.store.create_note(self.digest, title="构图")
+        observation = self.store.create_note(self.digest, title="观察")
         names = [item.name for item in self.store.list_notes(self.digest)]
-        self.assertEqual(names, ["服装.md", "构图.md", "观察.md"])
-        reordered = self.store.reorder_notes(self.digest, ["观察.md", "服装.md", "构图.md"])
-        self.assertEqual([item.name for item in reordered], ["观察.md", "服装.md", "构图.md"])
+        self.assertEqual(names, [clothing.name, composition.name, observation.name])
+        self.assertEqual(
+            [item.title for item in self.store.list_notes(self.digest)],
+            ["服装", "构图", "观察"],
+        )
+        reordered = self.store.reorder_notes(
+            self.digest, [observation.name, clothing.name, composition.name]
+        )
+        self.assertEqual(
+            [item.name for item in reordered],
+            [observation.name, clothing.name, composition.name],
+        )
         self.assertEqual(
             [item.name for item in self.store.list_notes(self.digest)],
-            ["观察.md", "服装.md", "构图.md"],
+            [observation.name, clothing.name, composition.name],
         )
-        renamed = self.store.write_note(self.digest, "服装.md", title="配色")
-        self.assertEqual(renamed.name, "配色.md")
+        renamed = self.store.write_note(self.digest, clothing.name, title="配色")
+        self.assertEqual(renamed.name, clothing.name)
+        self.assertEqual(renamed.title, "配色")
         self.assertEqual(
             [item.name for item in self.store.list_notes(self.digest)],
-            ["观察.md", "配色.md", "构图.md"],
+            [observation.name, clothing.name, composition.name],
+        )
+        self.assertEqual(
+            [item.title for item in self.store.list_notes(self.digest)],
+            ["观察", "配色", "构图"],
         )
         with self.assertRaises(NoteError):
-            self.store.reorder_notes(self.digest, ["观察.md", "构图.md"])
+            self.store.reorder_notes(self.digest, [observation.name, composition.name])
         with self.assertRaises(NoteError):
-            self.store.reorder_notes(self.digest, ["观察.md", "配色.md", "构图.md", "构图.md"])
+            self.store.reorder_notes(
+                self.digest,
+                [observation.name, clothing.name, composition.name, composition.name],
+            )
         meta = json.loads((self.root / self.digest / ".artseek.json").read_text(encoding="utf-8"))
-        self.assertEqual(meta["note_order"], ["观察.md", "配色.md", "构图.md"])
+        self.assertEqual(
+            meta["note_order"],
+            [observation.name, clothing.name, composition.name],
+        )
 
     def test_legacy_folder_lists_alphabetically_until_reordered(self) -> None:
         folder = self.store.image_dir(self.digest)
@@ -185,26 +260,24 @@ class NoteStoreTests(unittest.TestCase):
     def test_delete_note_only_removes_unreferenced_vault_images(self) -> None:
         shared = self.store.save_asset(self.digest, "shared.png", b"shared")
         owned = self.store.save_asset(self.digest, "only.png", b"only")
-        self.store.create_note(
+        first = self.store.create_note(
             self.digest,
-            title="甲",
-            content=f"![]({shared})\n![]({owned})\n![](https://example.com/x.png)\n",
+            content=f"甲\n![]({shared})\n![]({owned})\n![](https://example.com/x.png)\n",
             point_id="point-1",
         )
-        self.store.create_note(
+        second = self.store.create_note(
             self.digest,
-            title="乙",
-            content=f"![]({shared})\n",
+            content=f"乙\n![]({shared})\n",
             point_id="point-1",
         )
-        removed = self.store.delete_note(self.digest, "甲.md")
+        removed = self.store.delete_note(self.digest, first.name)
         self.assertEqual(removed, [owned])
         self.assertFalse((self.root / self.digest / owned).exists())
         self.assertTrue((self.root / self.digest / shared).exists())
-        self.assertTrue((self.root / self.digest / "乙.md").exists())
+        self.assertTrue((self.root / self.digest / second.name).exists())
 
     def test_delete_folder_keeps_notes_until_explicit_and_survives_point_lookup(self) -> None:
-        self.store.create_note(self.digest, title="构图", content="ok", point_id="point-9")
+        self.store.create_note(self.digest, content="构图", point_id="point-9")
         self.assertEqual(self.store.lookup_by_point_id("point-9"), self.digest)
         self.store.delete_folder(self.digest)
         self.assertFalse((self.root / self.digest).exists())
@@ -225,8 +298,7 @@ class NoteStoreTests(unittest.TestCase):
         self.assertNotEqual(small_hash, large_hash)
         created = self.store.create_note(
             small_hash,
-            title="构图",
-            content="same picture",
+            content="构图",
             phash=perceptual_hash(small),
             width=96,
             height=64,
@@ -240,14 +312,15 @@ class NoteStoreTests(unittest.TestCase):
             point_id="point-large",
         )
         self.assertEqual(created.content_hash, small_hash)
-        self.assertEqual([item.name for item in listed], ["构图.md"])
+        self.assertEqual([item.name for item in listed], [created.name])
+        self.assertEqual(listed[0].title, "构图")
         self.assertEqual(self.store.resolve_canonical(
             large_hash,
             phash=perceptual_hash(large),
             width=384,
             height=256,
         ), small_hash)
-        self.assertTrue((self.root / small_hash / "构图.md").is_file())
+        self.assertTrue((self.root / small_hash / created.name).is_file())
         self.assertFalse((self.root / large_hash).exists())
 
     def test_vault_asset_refs_ignore_external_urls(self) -> None:
@@ -306,6 +379,30 @@ class StoragePathTests(unittest.TestCase):
             apply_runtime_paths(cfg)
             self.assertEqual(cfg.qdrant_path, cfg.data_dir / "qdrant")
 
+    def test_runtime_cache_dir_wins_over_toml(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            data_dir = root / "data"
+            cache_dir = root / "cache"
+            runtime_cache = root / "runtime-cache"
+            config_path = root / "config.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        f'data_dir = "{data_dir.as_posix()}"',
+                        f'cache_dir = "{cache_dir.as_posix()}"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            cfg = AppConfig(data_dir=data_dir, cache_dir=cache_dir)
+            cfg.ensure_dirs()
+            save_storage_paths(cfg, cache_dir=runtime_cache, update_cache=True)
+            loaded = load_config(config_path)
+            self.assertEqual(loaded.cache_dir.resolve(), runtime_cache.resolve())
+            self.assertTrue(runtime_cache.is_dir())
+
     def test_migrate_storage_tree_copies_and_skips_lock(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -342,3 +439,59 @@ class StoragePathTests(unittest.TestCase):
             empty, copied = migrate_storage_tree(root / "missing", root / "fresh")
             self.assertFalse(copied)
             self.assertTrue(empty.is_dir())
+
+    def test_migrate_index_sidecars_copies_cluster_not_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = root / "data"
+            dest = root / "index-b"
+            source.mkdir()
+            (source / "index_state.sqlite3").write_bytes(b"sqlite")
+            (source / "index_state.sqlite3-wal").write_bytes(b"wal")
+            (source / "folder_catalog.json").write_text("{}", encoding="utf-8")
+            (source / "folder_scope.json").write_text("{}", encoding="utf-8")
+            (source / "collections.json").write_text("[]", encoding="utf-8")
+            (source / "manifest.json").write_text("{}", encoding="utf-8")
+            (source / "runtime.json").write_text("{}", encoding="utf-8")
+            (source / "qdrant").mkdir()
+            (source / "qdrant" / "meta.json").write_text("{}", encoding="utf-8")
+            path, copied = migrate_index_sidecars(source, dest)
+            self.assertTrue(copied)
+            self.assertEqual(path.resolve(), dest.resolve())
+            self.assertTrue((dest / "index_state.sqlite3").is_file())
+            self.assertTrue((source / "index_state.sqlite3-wal").is_file())
+            self.assertTrue((dest / "folder_catalog.json").is_file())
+            self.assertTrue((dest / "folder_scope.json").is_file())
+            self.assertTrue((dest / "collections.json").is_file())
+            self.assertTrue((dest / "manifest.json").is_file())
+            self.assertFalse((dest / "runtime.json").exists())
+            self.assertFalse((dest / "qdrant").exists())
+            self.assertTrue((source / "index_state.sqlite3").is_file())
+            with self.assertRaisesRegex(ValueError, "索引文件"):
+                migrate_index_sidecars(source, dest)
+
+    def test_runtime_index_dir_wins_over_default(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            data_dir = root / "data"
+            cache_dir = root / "cache"
+            index_dir = root / "index-b"
+            config_path = root / "config.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        f'data_dir = "{data_dir.as_posix()}"',
+                        f'cache_dir = "{cache_dir.as_posix()}"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            cfg = AppConfig(data_dir=data_dir, cache_dir=cache_dir)
+            cfg.ensure_dirs()
+            save_storage_paths(cfg, index_dir=index_dir, update_index=True)
+            loaded = load_config(config_path)
+            self.assertEqual(loaded.index_dir.resolve(), index_dir.resolve())
+            self.assertEqual(loaded.index_state_path, index_dir / "index_state.sqlite3")
+            self.assertEqual(loaded.collections_path, index_dir / "collections.json")
+            self.assertEqual(loaded.runtime_path, data_dir / "runtime.json")

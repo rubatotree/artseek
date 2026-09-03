@@ -1025,6 +1025,20 @@
                 <button class="secondary" id="notes-migrate" type="button" title="把当前笔记库复制到输入的目录，原目录保留">迁移</button>
               </div>
             </div>
+            <div class="storage-field">
+              <label for="cache-dir">缓存目录</label>
+              <div class="storage-path-row">
+                <input id="cache-dir" type="text" spellcheck="false" autocomplete="off" placeholder="缩略图等本地缓存">
+                <button class="secondary" id="cache-migrate" type="button" title="把当前缓存目录复制到输入的目录，原目录保留">迁移</button>
+              </div>
+            </div>
+            <div class="storage-field">
+              <label for="index-dir">索引数据库</label>
+              <div class="storage-path-row">
+                <input id="index-dir" type="text" spellcheck="false" autocomplete="off" placeholder="增量索引、目录树、勾选范围与收藏夹">
+                <button class="secondary" id="index-migrate" type="button" title="把增量索引、目录树、勾选范围、收藏夹和 manifest 复制到输入的目录，原目录保留">迁移</button>
+              </div>
+            </div>
             <div class="storage-actions">
               <button class="secondary" id="storage-save" type="button">保存路径</button>
             </div>
@@ -1275,18 +1289,26 @@
         });
       }, 180);
     }
+    const STORAGE_FIELDS = {
+      qdrant: { input: 'qdrant-path', label: '向量库' },
+      notes: { input: 'notes-dir', label: '笔记库' },
+      cache: { input: 'cache-dir', label: '缓存目录' },
+      index: { input: 'index-dir', label: '索引数据库' },
+    };
     function applyStoragePaths(data) {
       $('qdrant-path').value = data.qdrant_path || '';
       $('notes-dir').value = data.notes_dir || '';
+      $('cache-dir').value = data.cache_dir || '';
+      $('index-dir').value = data.index_dir || '';
       if (data.qdrant_restart_required) {
-        $('storage-hint').textContent = '向量库路径已保存，重启 ArtSeek 后才会切换。笔记库立即生效，不会写入原图目录。';
+        $('storage-hint').textContent = '向量库路径已保存，重启 ArtSeek 后才会切换。笔记库与缓存立即生效，不会写入原图目录。';
       }
     }
     async function loadStoragePaths() {
       applyStoragePaths(await parseResponse(await fetch('/api/storage-paths')));
     }
     function setStorageBusy(busy) {
-      ['storage-save', 'qdrant-migrate', 'notes-migrate'].forEach((id) => {
+      ['storage-save', 'qdrant-migrate', 'notes-migrate', 'cache-migrate', 'index-migrate'].forEach((id) => {
         $(id).disabled = busy;
       });
     }
@@ -1294,6 +1316,8 @@
       const payload = {
         qdrant_path: $('qdrant-path').value.trim(),
         notes_dir: $('notes-dir').value.trim(),
+        cache_dir: $('cache-dir').value.trim(),
+        index_dir: $('index-dir').value.trim(),
       };
       const data = await parseResponse(await fetch('/api/storage-paths', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -1301,14 +1325,14 @@
       }));
       applyStoragePaths(data);
       $('storage-hint').textContent = data.qdrant_restart_required
-        ? '向量库路径已保存，重启 ArtSeek 后才会切换。笔记库已立即生效。'
-        : '存储路径已保存。笔记库立即生效，不会写入原图目录。';
+        ? '向量库路径已保存，重启 ArtSeek 后才会切换。笔记库与缓存已立即生效。'
+        : '存储路径已保存。笔记库与缓存立即生效，不会写入原图目录。';
       return data;
     }
     async function migrateStoragePath(kind) {
-      const input = kind === 'qdrant' ? $('qdrant-path') : $('notes-dir');
-      const destination = input.value.trim();
-      const label = kind === 'qdrant' ? '向量库' : '笔记库';
+      const field = STORAGE_FIELDS[kind];
+      const destination = $(field.input).value.trim();
+      const label = field.label;
       if (!destination) {
         $('storage-hint').textContent = `请填写${label}的目标路径`;
         return;
@@ -1560,7 +1584,7 @@
           },
           input: () => {
             notes.dirty = true;
-            applyHeadingTitleToTab(notes.editor.getValue());
+            applyFirstLineTitleToTab(notes.editor.getValue());
             scheduleNoteSave();
           },
         });
@@ -1620,7 +1644,7 @@
         saveCurrentNote().catch((error) => setNotesStatus(`保存失败：${error.message}`));
       }, 500);
     }
-    function firstHeadingTitle(markdown) {
+    function firstLineTitle(markdown) {
       const lines = String(markdown || '').replace(/^\uFEFF/, '').split(/\r?\n/);
       let first = '';
       for (const line of lines) {
@@ -1629,17 +1653,17 @@
           break;
         }
       }
-      const match = first.match(/^ {0,3}#(?!#)[ \t]*(.+?)(?:[ \t]+#+)?[ \t]*$/);
-      if (!match) return '';
-      let title = match[1].replace(/\s+#+\s*$/, '').trim();
+      if (!first) return '';
+      const match = first.match(/^ {0,3}#{1,6}(?!#)[ \t]*(.*?)(?:[ \t]+#+)?[ \t]*$/);
+      let title = match ? match[1] : first.trim();
       title = title.replace(/!\[[^\]]*]\([^)]*\)/g, '');
       title = title.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
       title = title.replace(/[*_`]+/g, '').trim();
       return title;
     }
-    function applyHeadingTitleToTab(markdown) {
-      const heading = firstHeadingTitle(markdown);
-      if (!heading || !notes.currentName) return;
+    function applyFirstLineTitleToTab(markdown) {
+      const heading = firstLineTitle(markdown) || '笔记';
+      if (!notes.currentName) return;
       const row = notes.list.find((item) => item.name === notes.currentName);
       if (!row || row.title === heading) return;
       row.title = heading;
@@ -1649,8 +1673,8 @@
     }
     function applySavedNote(previousName, saved) {
       const row = notes.list.find((item) => item.name === previousName || item.name === saved.name);
-      const live = notes.editor ? firstHeadingTitle(notes.editor.getValue()) : '';
-      const nextTitle = live || saved.title;
+      const live = notes.editor ? firstLineTitle(notes.editor.getValue()) : '';
+      const nextTitle = live || saved.title || '笔记';
       notes.currentName = saved.name;
       if (!row) return;
       const changed = row.name !== saved.name || row.title !== nextTitle;
@@ -1676,9 +1700,7 @@
           const imageId = notes.imageId;
           const previousName = notes.currentName;
           const content = markdownForSave(notes.editor.getValue());
-          const heading = firstHeadingTitle(content);
           const payload = { content };
-          if (heading) payload.title = heading;
           let saved;
           try {
             saved = await parseResponse(await fetch(
@@ -1715,7 +1737,7 @@
       applyNoteLinkBase();
       notes.editor.setValue(doc.content || '');
       applyNoteImageSrcs();
-      applyHeadingTitleToTab(doc.content || '');
+      applyFirstLineTitleToTab(doc.content || '');
       notes.dirty = false;
       clearTimeout(notes.saveTimer);
       setNotesStatus('已载入');
@@ -1736,6 +1758,13 @@
         },
       ));
       applySavedNote(row.name, saved);
+      if (notes.currentName === saved.name && notes.editor) {
+        notes.editor.setValue(saved.content || '');
+        applyNoteImageSrcs();
+        applyFirstLineTitleToTab(saved.content || '');
+        notes.dirty = false;
+        clearTimeout(notes.saveTimer);
+      }
       setNotesStatus('已重命名');
     }
     async function createNote() {
@@ -1743,7 +1772,7 @@
       await flushNoteSave();
       const created = await parseResponse(await fetch(`/api/images/${encodeURIComponent(notes.imageId)}/notes`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: '笔记', content: '' }),
+        body: JSON.stringify({ content: '' }),
       }));
       notes.list.push({ name: created.name, title: created.title, updated_at: created.updated_at, size_bytes: 0 });
       updateNotesButton();
@@ -1752,7 +1781,9 @@
     }
     async function deleteCurrentNote() {
       if (!notes.imageId || !notes.currentName) return;
-      if (!window.confirm(`删除「${notes.currentName}」？仅移除本篇引用、且存放在笔记库中的图片，原图不受影响。`)) return;
+      const current = notes.list.find((item) => item.name === notes.currentName);
+      const label = (current && current.title) || '笔记';
+      if (!window.confirm(`删除「${label}」？仅移除本篇引用、且存放在笔记库中的图片，原图不受影响。`)) return;
       const result = await parseResponse(await fetch(
         `/api/images/${encodeURIComponent(notes.imageId)}/notes/${encodeURIComponent(notes.currentName)}`,
         { method: 'DELETE' },
@@ -2214,6 +2245,7 @@
     }
     function handleNotesKeys(event) {
       if (!event.altKey || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+      if (event.target.closest('textarea, input, select')) return;
       if (notes.editing && event.target.closest('.vditor')) return;
       event.preventDefault();
       moveCurrentNote(event.key === 'ArrowLeft' ? -1 : 1);
@@ -2401,6 +2433,12 @@
     });
     $('notes-migrate').addEventListener('click', () => {
       migrateStoragePath('notes').catch(() => {});
+    });
+    $('cache-migrate').addEventListener('click', () => {
+      migrateStoragePath('cache').catch(() => {});
+    });
+    $('index-migrate').addEventListener('click', () => {
+      migrateStoragePath('index').catch(() => {});
     });
     $('viewer-reference').addEventListener('click', () => {
       if (!state.current) return;

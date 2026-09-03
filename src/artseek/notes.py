@@ -30,9 +30,12 @@ PHASH_RE = re.compile(rf"^[0-9a-f]{{{PHASH_LENGTH}}}$")
 IMAGE_MARKDOWN_RE = re.compile(r"!\[[^\]]*]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 IMAGE_HTML_RE = re.compile(r"<img\b[^>]*\bsrc=['\"]([^'\"]+)['\"]", re.IGNORECASE)
 FORBIDDEN_NAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
-ATX_H1_RE = re.compile(r"^ {0,3}#(?!#)[ \t]*(.+?)(?:[ \t]+#+)?[ \t]*$")
+ATX_HEADING_RE = re.compile(
+    r"^( {0,3}#{1,6})(?!#)([ \t]*)(.*?)([ \t]+#+)?[ \t]*$"
+)
 INLINE_LINK_RE = re.compile(r"!\[([^\]]*)\]\([^)]*\)|\[([^\]]+)\]\([^)]*\)")
 INLINE_MARK_RE = re.compile(r"[*_`]+")
+NOTE_TIMESTAMP_RE = re.compile(r"^\d{8}T\d{6}(?:-\d+)?$")
 RESERVED_DEVICE_NAMES = frozenset(
     {
         "con",
@@ -100,25 +103,76 @@ def title_from_filename(filename: str) -> str:
     return Path(filename).stem
 
 
-def first_heading_title(markdown: str) -> str:
-    """Return the ATX H1 on the first non-empty line, or empty if that line is not H1."""
-    first = ""
-    for line in (markdown or "").splitlines():
+def timestamp_note_filename(when: datetime | None = None) -> str:
+    """Stable, unique-enough Markdown name that never depends on the title."""
+    stamp = (when or datetime.now(UTC)).strftime("%Y%m%dT%H%M%S")
+    return f"{stamp}.md"
+
+
+def is_timestamp_note_name(filename: str) -> bool:
+    return bool(NOTE_TIMESTAMP_RE.fullmatch(Path(filename).stem))
+
+
+def first_nonempty_line(markdown: str) -> str:
+    for line in (markdown or "").lstrip("\ufeff").splitlines():
         if line.strip():
-            first = line
-            break
+            return line
+    return ""
+
+
+def first_line_title(markdown: str) -> str:
+    """Display title from the first non-empty line; ATX hashes are stripped."""
+    first = first_nonempty_line(markdown)
     if not first:
         return ""
-    match = ATX_H1_RE.match(first)
-    if not match:
-        return ""
+    match = ATX_HEADING_RE.match(first)
+    raw = match.group(3) if match else first.strip()
 
     def _link_text(item: re.Match[str]) -> str:
         return item.group(1) or item.group(2) or ""
 
-    text = INLINE_LINK_RE.sub(_link_text, match.group(1))
+    text = INLINE_LINK_RE.sub(_link_text, raw)
     text = INLINE_MARK_RE.sub("", text).strip()
+    if len(text) > MAX_NOTE_TITLE_LENGTH:
+        text = text[:MAX_NOTE_TITLE_LENGTH].rstrip()
     return text
+
+
+def display_title(markdown: str, filename: str) -> str:
+    """Prefer the first line; fall back to a legacy stem, never a timestamp."""
+    text = first_line_title(markdown)
+    if text:
+        return text
+    stem = title_from_filename(filename)
+    if not stem or is_timestamp_note_name(stem):
+        return DEFAULT_NOTE_TITLE
+    return stem
+
+
+def apply_title_to_content(markdown: str, title: str) -> str:
+    """Replace the first non-empty line, keeping an ATX prefix if one is there."""
+    heading = str(title or "").strip() or DEFAULT_NOTE_TITLE
+    if len(heading) > MAX_NOTE_TITLE_LENGTH:
+        heading = heading[:MAX_NOTE_TITLE_LENGTH].rstrip()
+    text = markdown or ""
+    if not text.strip():
+        return heading + "\n"
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        stripped = line.rstrip("\r\n")
+        ending = line[len(stripped) :]
+        if not stripped.strip():
+            continue
+        match = ATX_HEADING_RE.match(stripped)
+        if match:
+            mark = match.group(1)
+            space = match.group(2) or " "
+            closer = match.group(4) or ""
+            lines[index] = f"{mark}{space}{heading}{closer}{ending}"
+        else:
+            lines[index] = f"{heading}{ending}"
+        return "".join(lines)
+    return heading + "\n" + text
 
 
 def vault_asset_refs(markdown: str, content_hash: str) -> set[str]:
@@ -197,6 +251,7 @@ class NoteInfo:
     title: str
     updated_at: str
     size_bytes: int
+    mtime_ns: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -204,6 +259,7 @@ class NoteInfo:
             "title": self.title,
             "updated_at": self.updated_at,
             "size_bytes": self.size_bytes,
+            "mtime_ns": self.mtime_ns,
         }
 
 
@@ -245,6 +301,33 @@ class NoteStore:
     def image_dir(self, content_hash: str) -> Path:
         digest = normalize_content_hash(content_hash)
         return self.root / digest
+
+    def ensure_image_dir(
+        self,
+        content_hash: str,
+        *,
+        name: str = "",
+        path: str = "",
+        point_id: str = "",
+        phash: str = "",
+        width: int = 0,
+        height: int = 0,
+    ) -> Path:
+        """Create the per-image notes folder if it does not exist."""
+        digest = normalize_content_hash(content_hash)
+        with self._lock:
+            canonical = self._resolve_canonical_locked(
+                digest,
+                phash=phash,
+                width=width,
+                height=height,
+                name=name,
+                path=path,
+                point_id=point_id,
+            )
+            return self._ensure_image_dir(
+                canonical, name=name, path=path, point_id=point_id
+            )
 
     def lookup_by_point_id(self, point_id: str) -> str | None:
         key = str(point_id or "").strip()
@@ -353,15 +436,10 @@ class NoteStore:
     ) -> NoteDocument:
         digest = normalize_content_hash(content_hash)
         body = content if content is not None else ""
+        chosen = str(title or "").strip()
+        if not first_nonempty_line(body) and chosen and chosen != DEFAULT_NOTE_TITLE:
+            body = apply_title_to_content(body, chosen)
         self._check_content_size(body)
-        chosen = title if str(title or "").strip() else None
-        if chosen is None or sanitize_note_filename(chosen) == sanitize_note_filename(
-            DEFAULT_NOTE_TITLE
-        ):
-            heading = first_heading_title(body)
-            if heading:
-                chosen = heading
-        filename = sanitize_note_filename(chosen or DEFAULT_NOTE_TITLE)
         with self._lock:
             canonical = self._resolve_canonical_locked(
                 digest,
@@ -375,7 +453,7 @@ class NoteStore:
             directory = self._ensure_image_dir(
                 canonical, name=name, path=path, point_id=point_id
             )
-            filename = self._unique_name(directory, filename)
+            filename = self._unique_name(directory, timestamp_note_filename())
             note_path = directory / filename
             _atomic_write_text(note_path, body)
             notes = self._list_markdown(directory)
@@ -434,31 +512,17 @@ class NoteStore:
             note_path = self._note_path(canonical, filename, directory=directory)
             if not note_path.is_file():
                 raise FileNotFoundError("笔记不存在")
-            auto_title = False
-            next_title = title
-            heading = first_heading_title(content) if content is not None else ""
-            if next_title is None and heading:
-                next_title = heading
-                auto_title = True
-            elif (
-                next_title is not None
-                and heading
-                and sanitize_note_filename(next_title) == sanitize_note_filename(heading)
-            ):
-                auto_title = True
-            if next_title is not None:
-                next_name = sanitize_note_filename(next_title)
-                destination = directory / next_name
-                if destination.name != note_path.name:
-                    if destination.exists():
-                        if not auto_title:
-                            raise NoteError("已有同名笔记")
-                    else:
-                        self._rename_note_order(directory, note_path.name, destination.name)
-                        note_path.replace(destination)
-                        note_path = destination
             if content is not None:
-                _atomic_write_text(note_path, content)
+                body = content
+            else:
+                try:
+                    body = note_path.read_text(encoding="utf-8")
+                except OSError:
+                    body = ""
+                if title is not None:
+                    body = apply_title_to_content(body, title)
+            self._check_content_size(body)
+            _atomic_write_text(note_path, body)
             notes = self._list_markdown(directory)
             self._remember_note_order(directory, notes)
             self._update_index(
@@ -678,14 +742,6 @@ class NoteStore:
             return
         self._write_note_order(directory, names)
 
-    def _rename_note_order(self, directory: Path, old_name: str, new_name: str) -> None:
-        meta = self._read_meta(directory)
-        raw = meta.get("note_order")
-        if not isinstance(raw, list):
-            return
-        meta["note_order"] = [new_name if str(item) == old_name else str(item) for item in raw]
-        self._write_meta(directory, meta)
-
     def _ordered_names(self, directory: Path, names: list[str]) -> list[str]:
         known = set(names)
         stored = self._read_meta(directory).get("note_order")
@@ -712,15 +768,16 @@ class NoteStore:
             if entry.name.startswith(".") or entry.name.endswith(".tmp"):
                 continue
             try:
-                size = entry.stat().st_size
+                info = entry.stat()
             except OSError:
                 continue
             notes.append(
                 NoteInfo(
                     name=entry.name,
-                    title=title_from_filename(entry.name),
+                    title=display_title(self._peek_markdown(entry), entry.name),
                     updated_at=_iso_mtime(entry),
-                    size_bytes=size,
+                    size_bytes=info.st_size,
+                    mtime_ns=int(getattr(info, "st_mtime_ns", int(info.st_mtime * 1e9))),
                 )
             )
         return notes
@@ -739,11 +796,18 @@ class NoteStore:
             raise NoteError("笔记名称不合法")
         return path
 
+    def _peek_markdown(self, path: Path) -> str:
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                return handle.read(4096)
+        except OSError:
+            return ""
+
     def _read_document(self, digest: str, path: Path) -> NoteDocument:
         content = path.read_text(encoding="utf-8")
         return NoteDocument(
             name=path.name,
-            title=title_from_filename(path.name),
+            title=display_title(content, path.name),
             content=content,
             updated_at=_iso_mtime(path),
             content_hash=digest,
