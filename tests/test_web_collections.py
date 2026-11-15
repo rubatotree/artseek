@@ -583,6 +583,26 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn('class="card-hits"', card_source)
         self.assertIn('class="card-remove"', card_source)
         self.assertIn('>♡</button>', card_source)
+        self.assertIn("function startCardActionPress(event, card)", html)
+        self.assertIn("if (event.pointerType === 'mouse') return;", html)
+        self.assertIn("performance.now() < state.cardActionClickUntil", html)
+        self.assertIn("setTimeout(() => activateCardActionPress(gesture), 380)", html)
+        self.assertIn("is-action-active", html)
+        self.assertIn("is-action-hover", html)
+        self.assertIn("is-action-dragging", html)
+        self.assertIn("拖动图片到「移除」上松开即可移出收藏夹。", html)
+        self.assertIn("event.clientX >= bounds.left", html)
+        self.assertIn("card.classList.add('is-action-dragging')", html)
+        self.assertIn(
+            ".card-favorite {\n      position: absolute; right: 8px; bottom: 8px; z-index: 3;",
+            html,
+        )
+        self.assertIn("opacity: 0; pointer-events: none; touch-action: none;", html)
+        self.assertIn(
+            ".card-list-actions {\n      display: flex; align-items: center; gap: 6px;\n"
+            "      opacity: 0;",
+            html,
+        )
         self.assertIn('data-gallery-drag', card_source)
         self.assertIn('draggable="true"', card_source)
         self.assertIn('draggable="false"', card_source)

@@ -290,3 +290,12 @@ columns for natural/square views, six for compact, while phones use two
 4. Complete: persisted view modes, compact mode without favourites, list rows,
    plus full pytest, Ruff, JS syntax, and live browser checks at
    390/768/834/1024/1366px.
+
+### Guarded card actions
+
+Favourite and removal controls stay hidden until a fine-pointer hover or a
+380ms touch/pen press. Touch keeps the gesture alive for quick drag: onto the
+heart opens the collection panel and can continue to a collection tile; onto
+removal and release removes. Desktop removal is drag-only (clicking only shows
+a hint), preventing accidental loss. List rows reveal their action group on
+hover, long-press, drag, or focus-within.
