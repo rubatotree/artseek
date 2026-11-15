@@ -1234,8 +1234,7 @@
             <div id="collection-sort-menu" class="collection-sort-menu" role="dialog" aria-label="收藏夹排序" hidden></div>
           </div>
           <div id="gallery-view" class="collection-sort gallery-view" hidden>
-            <button class="collection-sort-toggle" id="gallery-view-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="gallery-view-menu" aria-label="查看形式" title="查看形式"></button>
-            <div id="gallery-view-menu" class="collection-sort-menu" role="dialog" aria-label="查看形式" hidden></div>
+            <button class="collection-sort-toggle" id="gallery-view-toggle" type="button" aria-label="查看形式" title="查看形式"></button>
           </div>
         </div>
         <main id="gallery" class="gallery"></main>
@@ -1353,8 +1352,8 @@
       return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="${paths[mode] || paths.natural}"/></svg>`;
     }
     const COLLECTION_SORT_OPTIONS = [
-      { value: 'added_asc', label: '加入顺序 · 旧→新' },
       { value: 'added_desc', label: '加入顺序 · 新→旧' },
+      { value: 'added_asc', label: '加入顺序 · 旧→新' },
       { value: 'mtime_desc', label: '修改日期 · 新→旧' },
       { value: 'mtime_asc', label: '修改日期 · 旧→新' },
       { value: 'name_asc', label: '名称 · A→Z' },
@@ -3040,7 +3039,7 @@
     }
     function savedCollectionSort() {
       const collection = state.collections.find((item) => item.id === state.collectionId);
-      return collection?.sort || 'added_asc';
+      return collection?.sort || 'added_desc';
     }
     function effectiveCollectionSort() {
       return state.collectionViewSort || savedCollectionSort();
@@ -3164,68 +3163,27 @@
       if ($('collection-sort-menu').hidden) openCollectionSortMenu();
       else closeCollectionSortMenu({ restoreFocus: true });
     }
-    function closeGalleryViewMenu({ restoreFocus = false } = {}) {
-      const menu = $('gallery-view-menu');
-      if (menu.hidden) return;
-      menu.hidden = true;
-      $('gallery-view-toggle').setAttribute('aria-expanded', 'false');
-      if (restoreFocus) $('gallery-view-toggle').focus();
-    }
-    function renderGalleryViewMenu() {
-      const menu = $('gallery-view-menu');
-      const view = state.galleryView;
-      menu.innerHTML = `<div class="collection-sort-title">查看形式</div>${GALLERY_VIEWS.map((option) => `
-        <button class="collection-sort-option" type="button" role="menuitemradio" aria-checked="${option.value === view}" data-view-value="${option.value}">
-          ${galleryViewIcon(option.value)}
-          <span>${option.label}</span>
-          <span class="collection-sort-check" aria-hidden="true">${option.value === view ? '✓' : ''}</span>
-        </button>`).join('')}`;
-      menu.querySelectorAll('[data-view-value]').forEach((button) => {
-        button.addEventListener('click', () => applyGalleryView(button.dataset.viewValue));
-      });
-    }
-    function syncGalleryViewMenuChecks() {
-      const menu = $('gallery-view-menu');
-      if (menu.hidden) return;
-      const view = state.galleryView;
-      menu.querySelectorAll('[data-view-value]').forEach((button) => {
-        const selected = button.dataset.viewValue === view;
-        button.setAttribute('aria-checked', String(selected));
-        const check = button.querySelector('.collection-sort-check');
-        if (check) check.textContent = selected ? '✓' : '';
-      });
-    }
-    function openGalleryViewMenu() {
-      renderGalleryViewMenu();
-      $('gallery-view-menu').hidden = false;
-      $('gallery-view-toggle').setAttribute('aria-expanded', 'true');
-      requestAnimationFrame(() => {
-        $('gallery-view-menu').querySelector('[aria-checked="true"]')?.focus();
-      });
-    }
-    function toggleGalleryViewMenu() {
-      if ($('gallery-view-menu').hidden) openGalleryViewMenu();
-      else closeGalleryViewMenu({ restoreFocus: true });
+    function cycleGalleryView() {
+      const index = GALLERY_VIEWS.findIndex((option) => option.value === state.galleryView);
+      const next = GALLERY_VIEWS[(index + 1) % GALLERY_VIEWS.length];
+      applyGalleryView(next.value);
     }
     function renderGalleryView() {
       const bar = $('gallery-view');
       const active = state.mode !== 'idle';
       bar.hidden = !active;
-      if (!active) {
-        closeGalleryViewMenu();
-        return;
-      }
+      if (!active) return;
       const view = state.galleryView;
+      const index = GALLERY_VIEWS.findIndex((option) => option.value === view);
+      const nextLabel = GALLERY_VIEWS[(index + 1) % GALLERY_VIEWS.length].label;
       const toggle = $('gallery-view-toggle');
       toggle.innerHTML = galleryViewIcon(view);
-      const title = `查看形式：${GALLERY_VIEW_LABELS[view] || view}`;
+      const title = `查看形式：${GALLERY_VIEW_LABELS[view] || view}（点击切换到${nextLabel}）`;
       toggle.setAttribute('aria-label', title);
       toggle.title = title;
-      syncGalleryViewMenuChecks();
     }
     function applyGalleryView(value) {
       if (!GALLERY_VIEW_LABELS[value]) return;
-      closeGalleryViewMenu({ restoreFocus: true });
       if (state.galleryView === value) return;
       state.galleryView = value;
       try {
@@ -3803,13 +3761,7 @@
         if (session === state.cardMenuSession) setCollectionStatus(`无法读取收藏夹：${error.message}`);
       });
     }
-    $('gallery-view-toggle').addEventListener('click', () => toggleGalleryViewMenu());
-    $('gallery-view-menu').addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        closeGalleryViewMenu({ restoreFocus: true });
-      }
-    });
+    $('gallery-view-toggle').addEventListener('click', () => cycleGalleryView());
     $('collection-sort-toggle').addEventListener('click', () => toggleCollectionSortMenu());
     $('collection-sort-pin').addEventListener('click', () => {
       applyCollectionSort(effectiveCollectionSort(), { temporary: false });
@@ -3845,10 +3797,6 @@
       if (!sortMenu.hidden && !$('collection-sort').contains(event.target)) {
         closeCollectionSortMenu({ restoreFocus: false });
       }
-      const viewMenu = $('gallery-view-menu');
-      if (!viewMenu.hidden && !$('gallery-view').contains(event.target)) {
-        closeGalleryViewMenu({ restoreFocus: false });
-      }
     });
     function renderCollectionList() {
       const list = $('collection-list');
@@ -3870,8 +3818,8 @@
             </form>
           </div>`;
         }
-        const sort = collection.sort || 'added_asc';
-        const sortBadge = sort !== 'added_asc'
+        const sort = collection.sort || 'added_desc';
+        const sortBadge = sort !== 'added_desc'
           ? `<span class="collection-sort-badge" title="排序：${escapeHtml(COLLECTION_SORT_LABELS[sort] || sort)}">${collectionSortIcon(sort)}</span>`
           : '';
         return `<div class="collection-row collection-tile${selected ? ' is-selected' : ''}${dragging ? ' is-reordering' : ''}" data-collection-id="${escapeHtml(collection.id)}" data-collection-tile data-collection-index="${pageStart + index}">

@@ -59,10 +59,10 @@ class CollectionStoreTests(unittest.TestCase):
         for point_id in ("a", "b", "c"):
             self.store.add_item(first.id, point_id)
 
-        self.assertEqual(self.store.get(second.id).sort, "added_asc")
+        self.assertEqual(self.store.get(second.id).sort, "added_desc")
         sorted_collection = self.store.update(first.id, sort="mtime_desc")
         self.assertEqual(sorted_collection.sort, "mtime_desc")
-        self.assertEqual(self.store.get(second.id).sort, "added_asc")
+        self.assertEqual(self.store.get(second.id).sort, "added_desc")
         # A view preference is not a reversible content mutation.
         self.assertEqual(self.store.snapshot()[1]["undo_label"], "收藏到「灵感」")
         with self.assertRaises(ValueError):

@@ -243,10 +243,11 @@ directory migration.
 ## 收藏夹排序（Collection sorting）
 
 Each collection owns a persistent `sort` preference and an optional manual
-permutation. `item_ids` stays the immutable insertion sequence, so switching
-between "added order" and "manual order" never loses either one. A request-level
-`sort` query parameter previews another order without persisting it; the
-sidebar tile badge and gallery control show the saved mode.
+permutation; the default is `added_desc` (newest addition first). `item_ids`
+stays the immutable insertion sequence, so switching between "added order"
+and "manual order" never loses either one. A request-level `sort` query
+parameter previews another order without persisting it; the sidebar tile badge
+and gallery control show the saved mode.
 
 ### Risks and safeguards
 
@@ -277,9 +278,10 @@ very wide images have their display aspect ratio clamped to `0.6…3` and are
 cropped with `object-fit: cover`; the masonry height estimate uses the same
 value.
 
-A view control beside the collection sort control switches between natural
-masonry, square masonry, compact square masonry, and a one-row-per-image list.
-The choice persists in `localStorage`. Tablet portrait/landscape use four
+A view control beside the collection sort control cycles on click through
+natural masonry, square masonry, compact square masonry, and a
+one-row-per-image list. Its tooltip names the current and next mode, and the
+choice persists in `localStorage`. Tablet portrait/landscape use four
 columns for natural/square views, six for compact, while phones use two
 (three when compact) and list always uses one.
 

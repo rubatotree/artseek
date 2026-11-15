@@ -248,7 +248,7 @@ class CollectionsApiTests(unittest.TestCase):
         )
         self.assertEqual(first_page.status_code, 200)
         data = first_page.json()
-        self.assertEqual([item["id"] for item in data["results"]], ["c", "a"])
+        self.assertEqual([item["id"] for item in data["results"]], ["b", "a"])
         self.assertEqual(data["total"], 3)
         self.assertTrue(data["has_more"])
         self.assertEqual(
@@ -258,12 +258,12 @@ class CollectionsApiTests(unittest.TestCase):
         second_page = self.client.get(
             f"/api/collections/{collection['id']}/images", params={"limit": 2, "offset": 2}
         )
-        self.assertEqual([item["id"] for item in second_page.json()["results"]], ["b"])
+        self.assertEqual([item["id"] for item in second_page.json()["results"]], ["c"])
 
         query = self.client.get(
             f"/api/collections/{collection['id']}/images", params={"query": "BLUE"}
         ).json()
-        self.assertEqual([item["id"] for item in query["results"]], ["c", "a"])
+        self.assertEqual([item["id"] for item in query["results"]], ["a", "c"])
 
         removed = self.client.delete(f"{endpoint}/a")
         self.assertTrue(removed.json()["removed"])
@@ -283,12 +283,13 @@ class CollectionsApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             return [item["id"] for item in response.json()["results"]]
 
-        self.assertEqual(ids(), ["a", "b", "c"])
+        self.assertEqual(ids(), ["c", "b", "a"])
+        self.assertEqual(ids(sort="added_asc"), ["a", "b", "c"])
         self.assertEqual(ids(sort="mtime_desc"), ["a", "c", "b"])
         self.assertEqual(ids(sort="mtime_asc"), ["b", "c", "a"])
         self.assertEqual(ids(sort="name_desc"), ["c", "b", "a"])
         self.assertEqual(ids(sort="added_desc"), ["c", "b", "a"])
-        self.assertEqual(ids(sort="unknown"), ["a", "b", "c"])
+        self.assertEqual(ids(sort="unknown"), ["c", "b", "a"])
 
         first = self.client.get(
             f"/api/collections/{collection['id']}/images",
@@ -372,9 +373,9 @@ class CollectionsApiTests(unittest.TestCase):
         undone = self.client.post("/api/collections/undo")
         self.assertEqual(undone.status_code, 200)
         self.assertEqual(undone.json()["applied"]["kind"], "reorder_items")
-        self.assertEqual(undone.json()["collection"]["sort"], "added_asc")
+        self.assertEqual(undone.json()["collection"]["sort"], "added_desc")
         images = self.client.get(f"/api/collections/{collection['id']}/images").json()
-        self.assertEqual([item["id"] for item in images["results"]], ["a", "b", "c"])
+        self.assertEqual([item["id"] for item in images["results"]], ["c", "b", "a"])
         redone = self.client.post("/api/collections/redo")
         self.assertEqual(redone.json()["collection"]["sort"], "manual")
         images = self.client.get(f"/api/collections/{collection['id']}/images").json()
@@ -482,11 +483,14 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn("function applyCollectionSort", html)
         self.assertIn("仅本次查看，不保存", html)
         self.assertIn('id="gallery-view-toggle"', html)
-        self.assertIn('id="gallery-view-menu"', html)
+        self.assertNotIn('id="gallery-view-menu"', html)
         self.assertIn("const GALLERY_VIEW_STORAGE_KEY = 'artseek.galleryView';", html)
         self.assertIn("function loadGalleryView()", html)
         self.assertIn("function renderGalleryView()", html)
         self.assertIn("function applyGalleryView(value)", html)
+        self.assertIn("function cycleGalleryView()", html)
+        self.assertIn("GALLERY_VIEWS[(index + 1) % GALLERY_VIEWS.length]", html)
+        self.assertIn("点击切换到", html)
         self.assertIn("gallery.classList.toggle('view-list'", html)
         self.assertIn(".gallery.view-list .card {", html)
         self.assertIn("缩小的正方形瀑布流", html)
