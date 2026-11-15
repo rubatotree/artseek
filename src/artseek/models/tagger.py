@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import torch
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download, try_to_load_from_cache
 from PIL import Image
 
 from ..compute import configure_inference, release_accelerator, resolve_device, resolve_dtype
@@ -17,6 +17,28 @@ from ..config import EmbeddingConfig, TaggerConfig
 class PredictedTags:
     tags: list[str]
     scores: dict[str, float]
+
+
+def _cached_tagger_snapshot(model_id: str) -> Path | None:
+    """Use a complete cached revision without making Hub metadata requests."""
+    cached: dict[str, Path] = {}
+    for filename in ("config.json", "selected_tags.csv"):
+        location = try_to_load_from_cache(model_id, filename)
+        if not isinstance(location, str) or not Path(location).is_file():
+            return None
+        cached[filename] = Path(location)
+    if cached["config.json"].parent != cached["selected_tags.csv"].parent:
+        return None
+    snapshot = cached["config.json"].parent
+    for filename in ("model.safetensors", "pytorch_model.bin"):
+        location = try_to_load_from_cache(model_id, filename)
+        if (
+            isinstance(location, str)
+            and Path(location).is_file()
+            and Path(location).parent == snapshot
+        ):
+            return snapshot
+    return None
 
 
 class WDTagger:
@@ -31,11 +53,15 @@ class WDTagger:
         self.device = resolve_device(runtime.device)
         self.dtype = resolve_dtype(runtime.dtype, self.device)
         configure_inference(self.device)
-        self.model = timm.create_model(f"hf_hub:{config.model}", pretrained=True).eval()
+        snapshot = _cached_tagger_snapshot(config.model)
+        source = f"local-dir:{snapshot}" if snapshot is not None else f"hf_hub:{config.model}"
+        self.model = timm.create_model(source, pretrained=True).eval()
         self.model.to(device=self.device, dtype=self.dtype)
         data_config = resolve_model_data_config(self.model)
         self.transform = create_transform(**data_config, is_training=False)
-        labels_path = hf_hub_download(config.model, "selected_tags.csv")
+        labels_path = snapshot / "selected_tags.csv" if snapshot is not None else Path(
+            hf_hub_download(config.model, "selected_tags.csv")
+        )
         self.names, self.categories = self._load_labels(Path(labels_path))
 
     def close(self) -> None:
@@ -86,4 +112,3 @@ class WDTagger:
                 )
             )
         return results
-
