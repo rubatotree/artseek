@@ -301,3 +301,22 @@ heart opens the collection panel and can continue to a collection tile; onto
 removal and release removes. Desktop removal is drag-only (clicking only shows
 a hint), preventing accidental loss. List rows reveal their action group on
 hover, long-press, drag, or focus-within.
+
+## Image provenance
+
+Source metadata is user-owned state, not index state. A new
+`provenance.sqlite3` sidecar in `index_dir` will map each point (and its
+`content_hash`) to a Pixiv work, an X/Twitter status, or an unresolved record,
+plus a cross-platform author group. Filename and embedded XMP parsing run
+offline; only explicit enrichment jobs touch the network. See
+`docs/image-provenance.md` for the verified filename rules, data model, rate
+limits, and failure handling.
+
+1. Planned: offline parser and dry-run statistics.
+2. Planned: provenance sidecar, manual URL editing, and sidecar migration.
+3. Planned: Pixiv/FxTwitter fetchers behind one per-domain scheduler with
+   persistent budgets, negative caching, and circuit breakers.
+4. Planned: viewer source panel and author-group filtering across existing
+   scopes.
+5. Planned: budgeted SauceNAO/ascii2d reverse search with manual paste-back.
+6. Planned: optional post-index auto-enrichment for newly stored images.
