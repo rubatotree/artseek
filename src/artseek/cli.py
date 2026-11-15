@@ -21,6 +21,7 @@ from .library import index_roots_from_scope, load_catalog, load_scope, root_imag
 from .llm import OllamaClient
 from .model_manager import pull_models
 from .search import SearchEngine
+from .server_output import server_output
 from .store import VectorStore
 
 app = typer.Typer(
@@ -257,27 +258,28 @@ def serve_command(
     ] = False,
 ) -> None:
     """启动只监听本机的可视化图库界面。模型在首次检索时载入。"""
-    try:
-        import uvicorn
-    except ImportError as exc:
-        raise typer.BadParameter('缺少网页依赖，请执行：pip install -e ".[web]"') from exc
-    from .web.app import create_app
-
     cfg = _config(config)
-    mismatch = cuda_mismatch_hint()
-    if mismatch:
-        console.print(f"[yellow]{mismatch}[/yellow]")
-    console.print("正在启动本地图库……")
-    application = create_app(cfg)
-    console.print(f"推理设备：{describe_runtime(cfg.embedding.device)}")
-    console.print("图文向量模型将在首次检索时载入，闲置后自动卸载以释放显存。")
-    console.print(f"[green]已就绪。[/green] 即将监听 http://{host}:{port}")
-    if open_browser:
-        import threading
-        import webbrowser
+    with server_output(cfg.data_dir):
+        try:
+            import uvicorn
+        except ImportError as exc:
+            raise typer.BadParameter('缺少网页依赖，请执行：pip install -e ".[web]"') from exc
+        from .web.app import create_app
 
-        threading.Timer(1.5, lambda: webbrowser.open(f"http://{host}:{port}")).start()
-    uvicorn.run(application, host=host, port=port, log_level="info")
+        mismatch = cuda_mismatch_hint()
+        if mismatch:
+            console.print(f"[yellow]{mismatch}[/yellow]")
+        console.print("正在启动本地图库……")
+        application = create_app(cfg)
+        console.print(f"推理设备：{describe_runtime(cfg.embedding.device)}")
+        console.print("图文向量模型将在首次检索时载入，闲置后自动卸载以释放显存。")
+        console.print(f"[green]已就绪。[/green] 即将监听 http://{host}:{port}")
+        if open_browser:
+            import threading
+            import webbrowser
+
+            threading.Timer(1.5, lambda: webbrowser.open(f"http://{host}:{port}")).start()
+        uvicorn.run(application, host=host, port=port, log_level="info")
 
 
 def _print_root_counts(rows: list[tuple[str, int]]) -> None:
