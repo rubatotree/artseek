@@ -20,8 +20,10 @@ MIN_WEB_SEARCH_LIMIT = 12
 MAX_WEB_SEARCH_LIMIT = 80
 WEB_SEARCH_LIMIT_STEP = 4
 INDEX_STATE_NAME = "index_state.sqlite3"
+PROVENANCE_NAME = "provenance.sqlite3"
 INDEX_SIDECAR_FILES = (
     INDEX_STATE_NAME,
+    PROVENANCE_NAME,
     "folder_catalog.json",
     "folder_scope.json",
     "collections.json",
@@ -31,6 +33,9 @@ INDEX_SQLITE_EXTRAS = (
     f"{INDEX_STATE_NAME}-wal",
     f"{INDEX_STATE_NAME}-shm",
     f"{INDEX_STATE_NAME}-journal",
+    f"{PROVENANCE_NAME}-wal",
+    f"{PROVENANCE_NAME}-shm",
+    f"{PROVENANCE_NAME}-journal",
 )
 _RUNTIME_SETTINGS_LOCK = threading.RLock()
 
@@ -80,6 +85,18 @@ class IndexingConfig:
 
 
 @dataclass(slots=True)
+class ProvenanceConfig:
+    """Rate and automation policy for source metadata enrichment."""
+
+    auto_enrich: bool = True
+    pixiv_min_interval: float = 2.0
+    twitter_min_interval: float = 1.0
+    pixiv_daily_limit: int = 2000
+    twitter_daily_limit: int = 5000
+    author_ttl_days: int = 30
+
+
+@dataclass(slots=True)
 class AppConfig:
     data_dir: Path = field(default_factory=lambda: Path(user_data_dir(APP_NAME)))
     cache_dir: Path = field(default_factory=lambda: Path(user_cache_dir(APP_NAME)))
@@ -91,6 +108,7 @@ class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
     indexing: IndexingConfig = field(default_factory=IndexingConfig)
+    provenance: ProvenanceConfig = field(default_factory=ProvenanceConfig)
 
     @property
     def qdrant_path(self) -> Path:
@@ -135,6 +153,10 @@ class AppConfig:
     @property
     def collections_path(self) -> Path:
         return self.index_dir / "collections.json"
+
+    @property
+    def provenance_path(self) -> Path:
+        return self.index_dir / PROVENANCE_NAME
 
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -212,6 +234,16 @@ default_limit = 40
 # 目录 mtime 无法可靠捕捉文件原地改写，故定期完整扫描；仍只比较文件 mtime/大小。
 # 同大小且人为恢复 mtime 的内容改写无法在不逐文件哈希的前提下被检测；0 表示每次校验。
 full_verification_interval_seconds = 86400
+
+[provenance]
+# 索引完成后自动为能识别的 Pixiv/X 文件名补全来源；不自动调用反向搜图。
+auto_enrich = true
+# 单并发、按域名限速。提高额度前请先了解 pixiv 的限流与风控。
+pixiv_min_interval = 2.0
+twitter_min_interval = 1.0
+pixiv_daily_limit = 2000
+twitter_daily_limit = 5000
+author_ttl_days = 30
 '''
 
 
@@ -377,6 +409,7 @@ def migrate_index_sidecars(source_dir: Path, destination: Path | str) -> tuple[P
     except OSError as exc:
         raise ValueError(f"复制失败：{exc}") from exc
     _checkpoint_sqlite(dest / INDEX_STATE_NAME)
+    _checkpoint_sqlite(dest / PROVENANCE_NAME)
     return dest, copied
 
 

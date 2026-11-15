@@ -170,6 +170,23 @@ class SearchFusionTests(unittest.TestCase):
         empty = engine.search("衬衫", expand=False, folder_keys=[], limit=10)
         self.assertEqual(empty.results, [])
 
+    def test_restrict_ids_filters_candidates_outside_a_folder_scope(self) -> None:
+        engine = object.__new__(SearchEngine)
+        engine.config = AppConfig()
+        engine.config.llm.enabled = False
+        engine.embedder = FakeEmbedder()
+        engine.store = FakeStore()
+
+        restricted = engine.search(
+            "姬袖", expand=False, restrict_ids=["b"], limit=10
+        )
+        self.assertEqual([item.id for item in restricted.results], ["b"])
+
+        empty = engine.search(
+            "姬袖", expand=False, restrict_ids=[], limit=10
+        )
+        self.assertEqual(empty.results, [])
+
     def test_mtime_range_filters_candidates(self) -> None:
         engine = object.__new__(SearchEngine)
         engine.config = AppConfig()

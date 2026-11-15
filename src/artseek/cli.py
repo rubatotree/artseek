@@ -20,6 +20,14 @@ from .indexer import ImageIndexer
 from .library import index_roots_from_scope, load_catalog, load_scope, root_image_counts
 from .llm import OllamaClient
 from .model_manager import pull_models
+from .provenance import (
+    PIXIV_DOMAIN,
+    TWITTER_DOMAIN,
+    ProvenanceService,
+    ProvenanceStore,
+    RateLimiter,
+    scan_payloads,
+)
 from .search import SearchEngine
 from .server_output import server_output
 from .store import VectorStore
@@ -30,6 +38,8 @@ app = typer.Typer(
     help="面向本地插画收藏的自然语言与以图搜图工具。",
 )
 console = Console()
+provenance_app = typer.Typer(help="扫描与补全图片的来源元信息。")
+app.add_typer(provenance_app, name="provenance")
 
 
 def _config(path: Path | None) -> AppConfig:
@@ -187,6 +197,119 @@ def _print_results(response: object) -> None:
             ", ".join(result["tag_hits"]),
         )
     console.print(table)
+
+
+@provenance_app.command("scan")
+def provenance_scan_command(
+    config: Annotated[Path | None, typer.Option("--config", "-c")] = None,
+    deep: Annotated[
+        bool, typer.Option("--deep", help="打开所有图片读取嵌入元信息（较慢）")
+    ] = False,
+    only_new: Annotated[
+        bool, typer.Option("--only-new", help="只处理尚未登记的点")
+    ] = False,
+) -> None:
+    """只读扫描文件名和嵌入元信息，不访问网络。"""
+    cfg = _config(config)
+    store = ProvenanceStore(cfg.provenance_path)
+    vectors = VectorStore(cfg)
+    try:
+        with Progress(
+            TextColumn("{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("扫描来源", total=max(vectors.count(), 1))
+            summary = scan_payloads(
+                store,
+                vectors.iter_payloads(),
+                total=vectors.count(),
+                deep=deep,
+                only_new=only_new,
+                progress=lambda done, total, label: progress.update(
+                    task,
+                    completed=done,
+                    total=max(total, 1),
+                    description=f"扫描 {Path(label).name or ''}",
+                ),
+            )
+    finally:
+        vectors.close()
+    table = Table(title="来源扫描完成")
+    table.add_column("扫描")
+    table.add_column("识别")
+    table.add_column("未识别")
+    table.add_column("新增")
+    table.add_column("失效")
+    table.add_row(
+        str(summary["scanned"]),
+        str(summary["identified"]),
+        str(summary["unresolved"]),
+        str(summary["new"]),
+        str(summary["stale"]),
+    )
+    console.print(table)
+
+
+@provenance_app.command("enrich")
+def provenance_enrich_command(
+    config: Annotated[Path | None, typer.Option("--config", "-c")] = None,
+    platform: Annotated[
+        list[str] | None, typer.Option("--platform", help="pixiv 或 twitter，可重复")
+    ] = None,
+    limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="只显示待补全数量")] = False,
+) -> None:
+    """按域名限速补全已识别的 Pixiv/X 来源。"""
+    cfg = _config(config)
+    store = ProvenanceStore(cfg.provenance_path)
+    platforms = tuple(platform or ("pixiv", "twitter"))
+    records = store.pending_records(platforms=platforms, limit=limit)
+    if dry_run:
+        console.print(f"待补全：{len(records)} 条")
+        return
+    if not records:
+        console.print("没有待补全的来源。先运行 `artseek provenance scan`。")
+        return
+    service = ProvenanceService(
+        store,
+        pixiv_limiter=RateLimiter(
+            store,
+            PIXIV_DOMAIN,
+            min_interval=max(0.0, cfg.provenance.pixiv_min_interval),
+            daily_limit=max(1, cfg.provenance.pixiv_daily_limit),
+        ),
+        twitter_limiter=RateLimiter(
+            store,
+            TWITTER_DOMAIN,
+            min_interval=max(0.0, cfg.provenance.twitter_min_interval),
+            daily_limit=max(1, cfg.provenance.twitter_daily_limit),
+        ),
+    )
+    try:
+        with Progress(
+            TextColumn("{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("补全来源", total=len(records))
+            summary = service.enrich_records(
+                records,
+                limit=limit,
+                progress=lambda done, total, label: progress.update(
+                    task, completed=done, total=max(total, 1), description=f"补全 {label or ''}"
+                ),
+            )
+    finally:
+        service.close()
+    console.print(
+        f"完成：成功 {summary['ok']}，失败 {summary['failed']}"
+        + ("，已暂停" if summary.get("stopped") else "")
+    )
 
 
 @app.command("search")

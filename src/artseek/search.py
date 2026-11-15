@@ -428,6 +428,13 @@ class SearchEngine:
             item["rrf"] += weight / (60.0 + rank)
             item["raw"][channel] = neighbor.score
 
+    def _library_count(self) -> int:
+        counter = getattr(self.store, "count", None)
+        try:
+            return int(counter()) if callable(counter) else 0
+        except (TypeError, ValueError):
+            return 0
+
     def search(
         self,
         text: str = "",
@@ -445,6 +452,7 @@ class SearchEngine:
         offset: int = 0,
         exclude_ids: Sequence[str] | None = None,
         dedupe: bool = False,
+        restrict_ids: Sequence[str] | None = None,
     ) -> SearchResponse:
         refs: list[Path] = []
         if images:
@@ -482,7 +490,20 @@ class SearchEngine:
             selected = folder_keys if folder_keys is not None else list(catalog.all_keys())
             point_ids = catalog.point_ids(selected, after_ns=after_ns, before_ns=before_ns)
             universe = sum(len(folder.ids) for folder in catalog.folders.values())
+            if restrict_ids is not None:
+                allowed = set(restrict_ids)
+                if point_ids is None:
+                    point_ids = list(allowed)
+                    universe = max(self._library_count(), len(point_ids), 1)
+                else:
+                    point_ids = [item_id for item_id in point_ids if item_id in allowed]
+                    universe = min(universe, len(allowed))
             if point_ids is not None and not point_ids:
+                return SearchResponse(plan, [], llm_warning, has_more=False, offset=offset)
+        elif restrict_ids is not None:
+            point_ids = list(dict.fromkeys(restrict_ids))
+            universe = max(self._library_count(), len(point_ids), 1)
+            if not point_ids:
                 return SearchResponse(plan, [], llm_warning, has_more=False, offset=offset)
 
         with self.hold_model() as embedder:

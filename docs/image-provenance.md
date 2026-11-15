@@ -1,11 +1,13 @@
 # 插画来源元信息追溯
 
-本文记录对现有收藏目录的实测结果、可自动追溯的规则、数据模型、限速与风控设计，以及分阶段实现计划。结论先行：
+本文记录对现有收藏目录的实测结果、可自动追溯的规则、数据模型、限速与风控设计，以及实现状态。结论先行：
 
 - 文件名规则可靠，可无网络解析出约 **66%** 的图源（Pixiv 作品 + X/Twitter 推文）。
 - 剩余约 **34%** 是 Twitter CDN 短哈希名或自由命名，只能靠嵌入备注、画师目录或反向搜图。
 - pixiv / X 的元信息抓取本身不难，真正的瓶颈是 **SauceNAO 的免费额度** 和 **pixiv 的反自动化策略**。
 - 因此「一键补全所有图」必须做成 **有预算、可暂停、可续跑的任务队列**，而不是一个同步按钮。
+
+> **实施状态（2026-11-16）**：解析器、`provenance.sqlite3`、Pixiv/FxTwitter 抓取、按域名限速与预算、查看器来源面板、作者筛选、索引后自动补全、CLI 与 API 均已实现。SauceNAO/ascii2d 按用户要求只做手动打开与 URL 粘贴，不配置 API key，也不使用 Pixiv 登录 Cookie。
 
 ---
 
@@ -59,6 +61,7 @@ URL 归一化：
 | `https://twitter.com/user/status/123` | `twitter:123`, photo=unknown |
 | `https://vxtwitter.com/...` / `fxtwitter.com/...` | 按 `x.com` 处理 |
 | `https://mobile.twitter.com/...` | 按 `x.com` 处理 |
+| 其他 `http(s)://...` | `other`，原样保存，不自动补全 |
 
 X 的嵌入备注通常只写 `.../status/{id}`，不写 `/photo/N`。实测样本中的备注 URL 普遍没有 photo 序号，因此：
 
@@ -92,66 +95,67 @@ X 的嵌入备注通常只写 `.../status/{id}`，不写 `/photo/N`。实测样�
 
 ```sql
 CREATE TABLE image_source (
-    point_id      TEXT PRIMARY KEY,
-    content_hash  TEXT,
-    platform      TEXT NOT NULL,        -- pixiv | twitter | other
-    source_id     TEXT NOT NULL,
-    page          INTEGER NOT NULL,
-    url           TEXT NOT NULL,
-    status        TEXT NOT NULL,        -- pending | ok | not_found | protected | rate_limited | error
-    confidence    REAL NOT NULL,        -- 1.0 = 精确尺寸匹配；0.6 = 仅 ID；0.3 = 目录提示
-    title         TEXT,
-    description   TEXT,
-    author_key    TEXT,
-    posted_at     TEXT,
-    width         INTEGER,
-    height        INTEGER,
-    page_count    INTEGER,
-    tags_json     TEXT,
-    raw_json      TEXT,                 -- 原始响应，便于以后重新解析
-    source_origin TEXT NOT NULL,        -- filename | embedded | manual | saucenao | ascii2d
-    fetched_at    INTEGER,
-    updated_at    INTEGER NOT NULL
+    point_id        TEXT PRIMARY KEY,
+    content_hash    TEXT,
+    path_key        TEXT,
+    platform        TEXT NOT NULL,      -- pixiv | twitter | other
+    source_id       TEXT NOT NULL,
+    page            INTEGER,            -- Pixiv 0 起；X 1 起；NULL = 未知
+    url             TEXT NOT NULL,
+    candidates_json TEXT,               -- 文件名/嵌入 URL 冲突时的候选
+    status          TEXT NOT NULL,      -- pending | ok | not_found | protected |
+                                        -- rate_limited | error | unresolved | stale
+    confidence      REAL NOT NULL,
+    title           TEXT,
+    description     TEXT,
+    author_key      TEXT,
+    posted_at       TEXT,
+    width           INTEGER,
+    height          INTEGER,
+    page_count      INTEGER,
+    tags_json       TEXT,
+    raw_json        TEXT,
+    source_origin   TEXT NOT NULL,      -- filename | embedded | manual
+    manual_fields   TEXT,               -- 手动覆盖的字段名数组
+    fetched_at      INTEGER,
+    error           TEXT,
+    updated_at      INTEGER NOT NULL
 );
 
 CREATE INDEX idx_source_hash ON image_source(content_hash);
 CREATE INDEX idx_source_author ON image_source(author_key);
+CREATE INDEX idx_source_platform_status ON image_source(platform, status);
 
 CREATE TABLE author (
-    key          TEXT PRIMARY KEY,      -- pixiv:1554775 / twitter:yoneyamai
-    platform     TEXT NOT NULL,
-    platform_id  TEXT NOT NULL,
-    name         TEXT,
-    handle       TEXT,
-    profile_url  TEXT,
-    avatar_url   TEXT,
-    updated_at   INTEGER NOT NULL
+    key             TEXT PRIMARY KEY,  -- pixiv:1554775 / twitter:yoneyamai
+    platform        TEXT NOT NULL,
+    platform_id     TEXT NOT NULL,
+    name            TEXT,
+    handle          TEXT,
+    profile_url     TEXT,
+    avatar_url      TEXT,
+    social_json     TEXT,
+    profile_fetched INTEGER NOT NULL DEFAULT 0,
+    updated_at      INTEGER NOT NULL,
+    UNIQUE(platform, platform_id)
 );
 
 CREATE TABLE author_alias (
-    alias_key     TEXT PRIMARY KEY,     -- 另一平台的 key
+    alias_key     TEXT PRIMARY KEY,
     canonical_key TEXT NOT NULL,
-    evidence      TEXT,                 -- pixiv_social / twitter_bio / folder / manual
-    confidence    REAL NOT NULL
+    evidence      TEXT,                 -- pixiv_social / twitter_bio / manual
+    confidence    REAL NOT NULL,
+    updated_at    INTEGER NOT NULL
 );
 
 CREATE TABLE fetch_state (
-    domain         TEXT PRIMARY KEY,    -- pixiv.net / api.fxtwitter.com / saucenao.com / ascii2d.net
+    domain         TEXT PRIMARY KEY,    -- pixiv.net / api.fxtwitter.com
     blocked_until  INTEGER,
-    last_request   INTEGER,
+    last_request   REAL,
     day            TEXT,
     day_count      INTEGER,
     long_remaining INTEGER,
     last_error     TEXT
-);
-
-CREATE TABLE fetch_queue (
-    point_id   TEXT PRIMARY KEY,
-    platform   TEXT NOT NULL,
-    priority   INTEGER NOT NULL DEFAULT 0,
-    attempts   INTEGER NOT NULL DEFAULT 0,
-    next_at    INTEGER,
-    last_error TEXT
 );
 ```
 
@@ -278,11 +282,16 @@ POST /api/images/{point_id}/provenance/resolve  # 粘贴 URL / 重新解析
 POST /api/provenance/scan                       # 本地扫描
 POST /api/provenance/enrich                     # 入队/启动任务
 GET  /api/provenance/job                        # 进度、预算、blocked_until
+GET  /api/provenance/stats                      # 统计 + 任务状态
 POST /api/provenance/job/pause
 POST /api/provenance/job/resume
+POST /api/provenance/job/stop
 GET  /api/authors?q=...                         # 作者搜索
-GET  /api/authors/{key}/images                  # 作者组下的图
+GET  /api/authors/{key}                         # 作者组详情
+GET  /api/authors/{key}/images                  # 作者组下的图（分页）
 ```
+
+SPA 路由增加 `/author/{key}`，直接打开作者页时也能看到该作者的全部图。
 
 现有搜索/目录/收藏/随机接口增加可选 `author_key` 参数。实现上复用现有的 `point_ids` 子集路径：sidecar 返回该作者组的 point ID 列表，再与目录/收藏范围求交，交给 `VectorStore` 的 subset/postfilter 逻辑。
 
@@ -291,19 +300,20 @@ GET  /api/authors/{key}/images                  # 作者组下的图
 在现有「笔记」旁增加「来源」按钮，打开右侧信息栏：
 
 - 来源徽标（Pixiv / X）、标题、作者（可点击）、发布时间、页数/图数；
-- 标签 chips（点击追加到搜索）；
-- 原图/推文链接；
-- 状态：`ok / 已删除 / 受保护 / 限流中 / 待补全`；
-- URL 输入框 + 「解析」；
-- 「刷新元信息」「在 SauceNAO 查找」「在 ascii2d 查找」；
-- 手动覆盖开关。
+- 标签 chips；
+- 原图/推文链接、发布时间；
+- 状态：`已补全 / 已删除 / 受保护 / 限流中 / 待补全 / 未识别`；
+- URL 输入框 + 「解析 URL 并补全」；Pixiv/X 会自动抓取，其他 `http(s)` 来源原样保存；
+- 「重新抓取」「打开原图」「SauceNAO」「ascii2d」「复制原图路径」；
+- 「保存来源」「恢复自动」。
 
 ### 6.3 图库
 
 - 查看器里的作者名点击后，当前范围（搜索结果/目录/收藏/随机）追加 `author` 过滤 chip；
+- 没有图库范围（直接打开 `/i/{id}`）时，自动进入 `/author/{key}` 作者页；
 - chip 可移除，URL 持久化；
-- 批量菜单显示每个平台的预计耗时和剩余额度；
-- 任务面板显示暂停/继续、当前域名、`blocked_until`、今日已用。
+- 批量菜单显示各平台文件数、作者组、今日额度；
+- 任务面板显示暂停/继续/停止、当前域名、`blocked_until`、今日已用。
 
 ---
 
@@ -325,53 +335,54 @@ GET  /api/authors/{key}/images                  # 作者组下的图
 
 ## 8. 分阶段实现
 
-### Phase 0：解析器 + 离线报告（无网络）
+### Phase 0：解析器 + 离线报告（无网络）— 已完成
 
 - `provenance.parser`：文件名/URL/XMP 解析，纯函数。
-- CLI：`artseek provenance scan --dry-run` 输出平台/唯一 ID/未识别统计。
+- CLI：`artseek provenance scan [--deep] [--only-new]` 输出识别/未识别/新增/失效统计。
 - 单测覆盖：Pixiv 多页、哈希后缀、`_master1200`、`(1)`、18/19 位推文、XMP URL、冲突。
 - 验收：对当前 <library-size> 张图复现本文统计。
 
-### Phase 1：sidecar + API + 手动粘贴
+### Phase 1：sidecar + API + 手动粘贴 — 已完成
 
 - SQLite schema、迁移、WAL、备份/迁移接入。
 - `GET/PUT /api/images/{point_id}/provenance`。
 - URL 归一化与手动编辑。
 - 验收：手动粘贴一条 pixiv/X URL，刷新后仍在；重启后仍在。
 
-### Phase 2：Pixiv / FxTwitter 抓取 + 调度器
+### Phase 2：Pixiv / FxTwitter 抓取 + 调度器 — 已完成
 
 - `FetchScheduler`、预算、退避、缓存。
 - Pixiv 作品/分页/作者；FxTwitter 推文/作者。
 - 作者组与 `author_alias`。
 - 验收：限速任务跑 50 条，记录耗时/429/404；断点续跑。
 
-### Phase 3：查看器 + 作者筛选
+### Phase 3：查看器 + 作者筛选 — 已完成
 
 - 来源面板、URL 编辑、刷新。
 - `author_key` 过滤接入搜索/目录/收藏/随机。
 - 验收：同一作者的 Pixiv + X 图能被一个 chip 筛出。
 
-### Phase 4：反向搜图
+### Phase 4：反向搜图 — 已完成（手动模式）
 
-- SauceNAO API（可选 key）、额度显示、单张/批量。
-- ascii2d 手动打开 + HTML 解析（best effort）。
-- 验收：额度耗尽后任务自动暂停；恢复后继续。
+- 按用户要求不配置 SauceNAO API key；查看器提供 SauceNAO / ascii2d 打开按钮和 URL 粘贴框。
+- 不自动上传图片；用户自行在浏览器中查找。
+- 粘贴作品/推文 URL 后立即解析并补全元信息。
 
-### Phase 5：索引后自动补全 + 文档
+### Phase 5：索引后自动补全 + 文档 — 已完成
 
-- `run_index_job` 后置本地扫描 + 可选网络队列。
-- 文档、迁移、故障排查。
+- `run_index_job` 完成后启动 `only_new` 本地扫描；`auto_enrich=true` 时自动进入低速网络队列。
+- 支持 `artseek provenance scan|enrich`、侧车迁移、WAL checkpoint。
 - 验收：新放入一张 `{pid}_p0.jpg`，索引完成后自动出现来源记录。
 
 ---
 
-## 9. 需要拍板的点
+## 9. 已确定的策略
 
-1. **是否配置 SauceNAO API key**：没有 key 时只能手动打开浏览器；有 key 才能自动批量，但免费额度约 100/天。
-2. **是否使用 Pixiv 登录 Cookie**：不建议。公开作品不登录也能取；登录会提高账号风险。
-3. **作者筛选的默认范围**：建议默认「当前范围」，而不是全库；否则在 收藏 中筛一个作者可能只有 1 张图。
-4. **自动补全默认值**：建议「索引后自动补全 Pixiv/X」默认开启，「自动反向搜图」默认关闭。
+1. **SauceNAO**：不配置 API key，只手动打开并粘贴 URL。
+2. **Pixiv Cookie**：不使用登录 Cookie；公开作品直接读取元信息。
+3. **作者筛选**：有图库范围时在当前范围内过滤；直接打开图片时进入 `/author/{key}` 作者页。
+4. **自动补全**：`[provenance] auto_enrich = true` 默认开启，只自动补 Pixiv/X；不自动反向搜图。
+5. **限速**：Pixiv 2 秒/请求、2000/天；FxTwitter 1 秒/请求、5000/天；可在 `config.toml` 调整。
 
 ---
 

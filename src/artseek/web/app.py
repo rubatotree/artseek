@@ -6,6 +6,7 @@ import mimetypes
 import random
 import tempfile
 import threading
+import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,6 +56,21 @@ from ..library import (
     save_scope,
 )
 from ..notes import NoteError, NoteStore, resolve_content_hash
+from ..provenance import (
+    PIXIV_DOMAIN,
+    TWITTER_DOMAIN,
+    BudgetExhausted,
+    FetchError,
+    FxTwitterClient,
+    PixivClient,
+    ProvenanceService,
+    ProvenanceStore,
+    RateLimiter,
+    manual_author_key,
+    parse_payload_path,
+    parse_source_text,
+    scan_payloads,
+)
 from ..search import SearchEngine
 from ..search_cache import SearchSnapshotStore, is_snapshot_id
 from ..store import VectorStore
@@ -107,6 +123,7 @@ class TextSearchRequest(BaseModel):
     exclude_ids: list[str] = Field(default_factory=list)
     dedupe: bool = False
     snapshot_id: str | None = None
+    author_key: str | None = None
 
 
 class RandomBrowseRequest(BaseModel):
@@ -118,6 +135,7 @@ class RandomBrowseRequest(BaseModel):
     seed: int | None = None
     limit: int = Field(default=40, ge=1, le=200)
     offset: int = Field(default=0, ge=0, le=50_000)
+    author_key: str | None = None
 
 
 class FolderScopeRequest(BaseModel):
@@ -324,6 +342,34 @@ class NoteOrderRequest(BaseModel):
         return value
 
 
+class ProvenanceScanRequest(BaseModel):
+    deep: bool = False
+    only_new: bool = False
+    auto_enrich: bool | None = None
+
+
+class ProvenanceEnrichRequest(BaseModel):
+    platforms: list[Literal["pixiv", "twitter"]] = Field(
+        default_factory=lambda: ["pixiv", "twitter"]
+    )
+    limit: int | None = Field(default=None, ge=1, le=100_000)
+    point_ids: list[str] = Field(default_factory=list)
+
+
+class ProvenanceUrlRequest(BaseModel):
+    url: str = Field(default="", max_length=2000)
+
+
+class ProvenanceManualRequest(BaseModel):
+    url: str | None = Field(default=None, max_length=2000)
+    title: str | None = Field(default=None, max_length=500)
+    description: str | None = Field(default=None, max_length=20_000)
+    author_name: str | None = Field(default=None, max_length=200)
+    author_handle: str | None = Field(default=None, max_length=100)
+    tags: list[str] | None = None
+    clear_manual: bool = False
+
+
 class CollectionItemRequest(BaseModel):
     image_id: str
 
@@ -345,6 +391,20 @@ class IndexJob:
     message: str = ""
     error: str | None = None
     summary: dict[str, Any] | None = None
+
+
+@dataclass(slots=True)
+class ProvenanceJob:
+    running: bool = False
+    paused: bool = False
+    kind: str = ""
+    done: int = 0
+    total: int = 0
+    message: str = ""
+    error: str | None = None
+    summary: dict[str, Any] | None = None
+    stop_event: threading.Event = field(default_factory=threading.Event)
+    pause_event: threading.Event = field(default_factory=threading.Event)
 
 
 COLLECTION_SCAN_BATCH_SIZE = 256
@@ -395,6 +455,9 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     app.state.index_lock = threading.Lock()
     app.state.collections = CollectionStore(config.collections_path)
     app.state.notes = NoteStore(config.notes_dir)
+    app.state.provenance = ProvenanceStore(config.provenance_path)
+    app.state.provenance_job = ProvenanceJob()
+    app.state.provenance_lock = threading.RLock()
     app.state.search_snapshots = SearchSnapshotStore(config.search_snapshot_dir)
     app.state.active_qdrant_path = config.qdrant_path
     app.state.storage_lock = threading.Lock()
@@ -407,6 +470,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
 
     @app.on_event("shutdown")
     def shutdown() -> None:
+        app.state.provenance_job.stop_event.set()
+        app.state.provenance_job.pause_event.clear()
         app.state.engine.close()
 
     def spa_page() -> HTMLResponse:
@@ -428,6 +493,11 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     @app.get("/c/{collection_id}", response_class=HTMLResponse)
     def spa_collection(collection_id: str) -> HTMLResponse:
         del collection_id
+        return spa_page()
+
+    @app.get("/author/{author_key}", response_class=HTMLResponse)
+    def spa_author(author_key: str) -> HTMLResponse:
+        del author_key
         return spa_page()
 
     @app.get("/i/{point_id}", response_class=HTMLResponse)
@@ -706,6 +776,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         sort: str = DEFAULT_SORT,
         limit: int = 40,
         offset: int = 0,
+        author_key: str | None = None,
     ) -> dict:
         key = canonical_path(folder_key)
         catalog = app.state.engine.folder_catalog()
@@ -716,6 +787,9 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         page_size = max(1, min(limit, 200))
         start = max(0, offset)
         refs = catalog.list_folder_images(key, method)
+        if author_key:
+            allowed = set(app.state.provenance.point_ids_for_author(author_key))
+            refs = [item for item in refs if item[0] in allowed]
         total = len(refs)
         page = refs[start : start + page_size]
         payloads = app.state.engine.store.retrieve_payloads([point_id for point_id, _, _ in page])
@@ -906,6 +980,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         sort: str = "",
         limit: int = 40,
         offset: int = Query(default=0, ge=0, le=10_000),
+        author_key: str | None = None,
     ) -> dict[str, Any]:
         collection = require_collection(collection_id)
         # A query-level sort is a temporary view override. It never persists.
@@ -915,8 +990,15 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         needle = query.strip().casefold()
         page_size = max(1, min(limit, 200))
         start = offset
+        allowed = (
+            set(app.state.provenance.point_ids_for_author(author_key))
+            if author_key
+            else None
+        )
 
-        def matches(payload: dict[str, Any]) -> bool:
+        def matches(point_id: str, payload: dict[str, Any]) -> bool:
+            if allowed is not None and point_id not in allowed:
+                return False
             if not needle:
                 return True
             tags = payload.get("tags") or []
@@ -928,7 +1010,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             ]
             return needle in "\n".join(searchable).casefold()
 
-        if needle:
+        if needle or allowed is not None:
             filtered: list[tuple[str, dict[str, Any]]] = []
             for batch_start in range(0, len(collection.item_ids), 256):
                 batch = list(collection.item_ids[batch_start : batch_start + 256])
@@ -938,7 +1020,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                     for point_id in batch
                     if point_id in payloads
                     and isinstance(payloads[point_id], dict)
-                    and matches(payloads[point_id])
+                    and matches(point_id, payloads[point_id])
                 )
             if method in PAYLOAD_SORT_KEYS:
                 filtered.sort(
@@ -1005,6 +1087,9 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             # `None` is an optimization for vector search meaning every point.
             # Random browse needs concrete IDs but only retains the requested page.
             point_ids = [point_id for acc in catalog.folders.values() for point_id in acc.ids]
+        if request.author_key:
+            allowed = set(app.state.provenance.point_ids_for_author(request.author_key))
+            point_ids = [point_id for point_id in point_ids if point_id in allowed]
 
         total = len(point_ids)
         start = min(request.offset, total)
@@ -1170,6 +1255,11 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         if request.reference_id:
             specs.append(ReferenceSpec(id=request.reference_id, weight=1.0))
         paths, weights = resolve_library_references(specs)
+        restrict_ids = (
+            app.state.provenance.point_ids_for_author(request.author_key)
+            if request.author_key
+            else None
+        )
         try:
             response = app.state.engine.search(
                 request.query,
@@ -1185,6 +1275,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 offset=request.offset,
                 exclude_ids=request.exclude_ids,
                 dedupe=request.dedupe,
+                restrict_ids=restrict_ids,
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
@@ -1221,6 +1312,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         exclude_ids: str = Form(default=""),
         dedupe: bool = Form(default=False),
         snapshot_id: str = Form(default=""),
+        author_key: str = Form(default=""),
     ) -> dict:
         if app.state.index_job.running:
             raise HTTPException(409, "正在索引图片，请稍后再检索")
@@ -1249,6 +1341,11 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 offset=max(0, min(offset, 4000)),
                 exclude_ids=_parse_id_list(exclude_ids),
                 dedupe=dedupe,
+                restrict_ids=(
+                    app.state.provenance.point_ids_for_author(author_key)
+                    if author_key
+                    else None
+                ),
             )
             return persist_search_snapshot(
                 snapshot_id=snapshot_id or None,
@@ -1298,6 +1395,465 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     def item(point_id: str) -> dict:
         payload, _ = resolve_item(point_id)
         return payload
+
+    # --------------------------------------------------------------- provenance
+
+    def provenance_budgets() -> list[dict[str, Any]]:
+        store: ProvenanceStore = app.state.provenance
+        cfg = config.provenance
+        return [
+            RateLimiter(
+                store,
+                PIXIV_DOMAIN,
+                min_interval=max(0.0, cfg.pixiv_min_interval),
+                daily_limit=max(1, cfg.pixiv_daily_limit),
+            ).snapshot().as_dict(),
+            RateLimiter(
+                store,
+                TWITTER_DOMAIN,
+                min_interval=max(0.0, cfg.twitter_min_interval),
+                daily_limit=max(1, cfg.twitter_daily_limit),
+            ).snapshot().as_dict(),
+        ]
+
+    def provenance_job_payload() -> dict[str, Any]:
+        job: ProvenanceJob = app.state.provenance_job
+        return {
+            "running": job.running,
+            "paused": job.paused,
+            "kind": job.kind,
+            "done": job.done,
+            "total": job.total,
+            "message": job.message,
+            "error": job.error,
+            "summary": job.summary,
+            "budgets": provenance_budgets(),
+        }
+
+    def ensure_provenance_record(point_id: str, payload: dict[str, Any], path: Path):
+        store: ProvenanceStore = app.state.provenance
+        record = store.get(point_id)
+        if record is not None:
+            return record
+        parsed = parse_payload_path(path, deep=True)
+        if parsed is not None:
+            store.upsert_scan(
+                point_id,
+                payload,
+                parsed,
+                path_key=str(payload.get("path_key") or ""),
+                origin=parsed.primary.origin,
+            )
+        else:
+            store.upsert_unresolved(
+                point_id, payload, path_key=str(payload.get("path_key") or "")
+            )
+        return store.get(point_id)
+
+    def provenance_payload(
+        point_id: str,
+        payload: dict[str, Any],
+        path: Path,
+    ) -> dict[str, Any]:
+        store: ProvenanceStore = app.state.provenance
+        record = ensure_provenance_record(point_id, payload, path)
+        if record is None:
+            return {"point_id": point_id, "record": None, "author": None}
+        author = None
+        if record.get("author_key"):
+            author = store.author_summary(str(record["author_key"]))
+        page = record.get("page")
+        count = record.get("page_count")
+        if record.get("platform") == "pixiv" and page is not None:
+            page_label = f"p{page}" + (f" / {count}" if count else "")
+        elif record.get("platform") == "twitter" and page is not None:
+            page_label = f"{page} / {count}" if count else str(page)
+        else:
+            page_label = ""
+        clean = dict(record)
+        clean.pop("raw_json", None)
+        return {
+            "point_id": point_id,
+            "record": clean,
+            "author": author,
+            "page_label": page_label,
+            "path": str(path),
+            "reverse_search": {
+                "saucenao": "https://saucenao.com/",
+                "ascii2d": "https://ascii2d.net/",
+            },
+        }
+
+    def make_service() -> ProvenanceService:
+        store: ProvenanceStore = app.state.provenance
+        cfg = config.provenance
+        return ProvenanceService(
+            store,
+            pixiv=PixivClient(),
+            twitter=FxTwitterClient(),
+            pixiv_limiter=RateLimiter(
+                store,
+                PIXIV_DOMAIN,
+                min_interval=max(0.0, cfg.pixiv_min_interval),
+                daily_limit=max(1, cfg.pixiv_daily_limit),
+            ),
+            twitter_limiter=RateLimiter(
+                store,
+                TWITTER_DOMAIN,
+                min_interval=max(0.0, cfg.twitter_min_interval),
+                daily_limit=max(1, cfg.twitter_daily_limit),
+            ),
+        )
+
+    def start_enrich_job(
+        *,
+        platforms: list[str],
+        limit: int | None = None,
+        point_ids: list[str] | None = None,
+        reset_stop: bool = True,
+    ) -> bool:
+        store: ProvenanceStore = app.state.provenance
+        job: ProvenanceJob = app.state.provenance_job
+        clean_platforms = [item for item in platforms if item in {"pixiv", "twitter"}]
+        if not clean_platforms:
+            return False
+        if point_ids:
+            records = [
+                record
+                for point_id in dict.fromkeys(point_ids)
+                if (record := store.get(point_id)) is not None
+                and record.get("platform") in clean_platforms
+            ]
+        else:
+            records = store.pending_records(
+                platforms=tuple(clean_platforms), limit=limit
+            )
+        if limit is not None:
+            records = records[: max(0, int(limit))]
+        with app.state.provenance_lock:
+            if job.running:
+                return False
+            if not reset_stop and job.stop_event.is_set():
+                return False
+            job.running = True
+            job.paused = False
+            job.kind = "enrich"
+            job.done = 0
+            job.total = len(records)
+            job.message = (
+                f"待补全 {len(records)} 条来源"
+                if records
+                else "没有待补全的来源"
+            )
+            job.error = None
+            job.summary = None
+            if reset_stop:
+                job.stop_event.clear()
+            job.pause_event.clear()
+        if not records:
+            job.running = False
+            return True
+
+        def progress(done: int, total: int, label: str) -> None:
+            job.done = done
+            job.total = total
+            job.message = f"正在补全来源 {done}/{total}" + (f"：{label}" if label else "")
+
+        def run() -> None:
+            service = make_service()
+            try:
+                summary = service.enrich_records(records, progress=progress)
+                job.summary = summary
+                job.message = (
+                    f"来源补全完成：成功 {summary['ok']}，失败 {summary['failed']}"
+                    if not summary.get("stopped")
+                    else f"来源补全已暂停：成功 {summary['ok']}，失败 {summary['failed']}"
+                )
+            except BudgetExhausted as exc:
+                job.message = str(exc)
+            except Exception as exc:
+                job.error = str(exc)
+                job.message = "来源补全失败"
+            finally:
+                service.close()
+                job.running = False
+                job.paused = False
+
+        threading.Thread(target=run, daemon=True, name="artseek-provenance").start()
+        return True
+
+    def start_scan_job(
+        *,
+        deep: bool = False,
+        only_new: bool = False,
+        auto_enrich: bool | None = None,
+    ) -> bool:
+        store: ProvenanceStore = app.state.provenance
+        job: ProvenanceJob = app.state.provenance_job
+        with app.state.provenance_lock:
+            if job.running:
+                return False
+            job.running = True
+            job.paused = False
+            job.kind = "scan"
+            job.done = 0
+            job.total = 0
+            job.message = "正在扫描文件名与嵌入元信息…"
+            job.error = None
+            job.summary = None
+            job.stop_event.clear()
+            job.pause_event.clear()
+
+        def progress(done: int, total: int, label: str) -> None:
+            job.done = done
+            job.total = total
+            if label:
+                job.message = f"正在扫描来源 {done}/{total}：{Path(label).name}"
+
+        should_enrich = config.provenance.auto_enrich if auto_enrich is None else auto_enrich
+
+        def run() -> None:
+            summary: dict[str, Any] | None = None
+            try:
+                payloads = app.state.engine.store.iter_payloads()
+                total = app.state.engine.store.count()
+                summary = scan_payloads(
+                    store,
+                    payloads,
+                    total=total,
+                    deep=deep,
+                    only_new=only_new,
+                    progress=progress,
+                    stop_event=job.stop_event,
+                    pause_event=job.pause_event,
+                )
+                job.summary = summary
+                job.message = (
+                    f"本地扫描完成：识别 {summary['identified']}，"
+                    f"未识别 {summary['unresolved']}"
+                )
+            except Exception as exc:
+                job.error = str(exc)
+                job.message = "来源扫描失败"
+            finally:
+                job.running = False
+                job.paused = False
+                if should_enrich and not job.stop_event.is_set() and job.error is None:
+                    start_enrich_job(
+                        platforms=["pixiv", "twitter"], reset_stop=False
+                    )
+
+        threading.Thread(target=run, daemon=True, name="artseek-provenance-scan").start()
+        return True
+
+    @app.get("/api/provenance/stats")
+    def provenance_stats() -> dict[str, Any]:
+        stats = app.state.provenance.stats()
+        stats["job"] = provenance_job_payload()
+        return stats
+
+    @app.get("/api/provenance/job")
+    def provenance_job() -> dict[str, Any]:
+        return provenance_job_payload()
+
+    @app.post("/api/provenance/scan")
+    def provenance_scan(request: ProvenanceScanRequest) -> dict[str, Any]:
+        if app.state.index_job.running:
+            raise HTTPException(409, "正在索引图片，请稍后再扫描来源")
+        started = start_scan_job(
+            deep=request.deep,
+            only_new=request.only_new,
+            auto_enrich=request.auto_enrich,
+        )
+        if not started:
+            raise HTTPException(409, "已有来源任务在运行")
+        return provenance_job_payload()
+
+    @app.post("/api/provenance/enrich")
+    def provenance_enrich(request: ProvenanceEnrichRequest) -> dict[str, Any]:
+        if app.state.index_job.running:
+            raise HTTPException(409, "正在索引图片，请稍后再补全来源")
+        platforms = list(request.platforms)
+        if not request.point_ids and app.state.provenance.stats()["total"] == 0:
+            # First run: discover filename/embedded references, then
+            # automatically continue into the budgeted network queue.
+            started = start_scan_job(deep=False, only_new=True, auto_enrich=True)
+            if not started:
+                raise HTTPException(409, "已有来源任务在运行")
+            return provenance_job_payload()
+        started = start_enrich_job(
+            platforms=platforms,
+            limit=request.limit,
+            point_ids=list(request.point_ids),
+        )
+        if not started:
+            raise HTTPException(409, "已有来源任务在运行")
+        return provenance_job_payload()
+
+    @app.post("/api/provenance/job/pause")
+    def provenance_pause() -> dict[str, Any]:
+        job: ProvenanceJob = app.state.provenance_job
+        if job.running:
+            job.pause_event.set()
+            job.paused = True
+            job.message = "来源任务已暂停"
+        return provenance_job_payload()
+
+    @app.post("/api/provenance/job/resume")
+    def provenance_resume() -> dict[str, Any]:
+        job: ProvenanceJob = app.state.provenance_job
+        if job.running:
+            job.pause_event.clear()
+            job.paused = False
+            job.message = "来源任务已继续"
+        return provenance_job_payload()
+
+    @app.post("/api/provenance/job/stop")
+    def provenance_stop() -> dict[str, Any]:
+        job: ProvenanceJob = app.state.provenance_job
+        if job.running:
+            job.stop_event.set()
+            job.pause_event.clear()
+            job.paused = False
+            job.message = "正在停止来源任务…"
+        return provenance_job_payload()
+
+    @app.get("/api/images/{point_id}/provenance")
+    def image_provenance(point_id: str) -> dict[str, Any]:
+        payload, path = resolve_item(point_id)
+        return provenance_payload(point_id, payload, path)
+
+    @app.put("/api/images/{point_id}/provenance")
+    def update_image_provenance(point_id: str, request: ProvenanceManualRequest) -> dict[str, Any]:
+        payload, path = resolve_item(point_id)
+        store: ProvenanceStore = app.state.provenance
+        record = ensure_provenance_record(point_id, payload, path)
+        if record is None:
+            raise HTTPException(404, "图片不在索引中")
+        if request.clear_manual:
+            store.clear_manual(point_id)
+            parsed = parse_payload_path(path, deep=True)
+            if parsed is not None:
+                store.upsert_scan(
+                    point_id,
+                    payload,
+                    parsed,
+                    path_key=str(payload.get("path_key") or ""),
+                    origin=parsed.primary.origin,
+                )
+            record = store.get(point_id)
+            return provenance_payload(point_id, payload, path)
+        fields: dict[str, Any] = {}
+        ref = None
+        if request.url:
+            ref = parse_source_text(request.url)
+            if ref is None:
+                raise HTTPException(400, "请输入 Pixiv/X 作品 URL 或任意 http(s) 来源 URL")
+        if request.title is not None:
+            fields["title"] = request.title.strip() or None
+        if request.description is not None:
+            fields["description"] = request.description
+        if request.tags is not None:
+            fields["tags"] = [tag.strip() for tag in request.tags if tag.strip()]
+        if request.author_name is not None or request.author_handle is not None:
+            name = (request.author_name or "").strip()
+            handle = (request.author_handle or "").strip().lstrip("@")
+            if handle:
+                key = store.ensure_author(
+                    "twitter", handle, name=name or handle, handle=handle
+                )
+            elif name:
+                key = manual_author_key(name)
+                store.ensure_author("manual", key.split(":", 1)[1], name=name)
+            else:
+                key = ""
+            if key:
+                fields["author_key"] = key
+        if ref is not None:
+            store.set_manual(point_id, fields, ref=ref)
+            record = store.get(point_id)
+            if record is not None and record.get("platform") in {"pixiv", "twitter"}:
+                domain = PIXIV_DOMAIN if record["platform"] == "pixiv" else TWITTER_DOMAIN
+                state = store.domain_state(domain)
+                if int(state.get("blocked_until") or 0) > int(time.time()):
+                    return provenance_payload(point_id, payload, path)
+                service = make_service()
+                try:
+                    service.enrich_record(record)
+                except (FetchError, BudgetExhausted) as exc:
+                    store.set_status(point_id, getattr(exc, "status", "error"), str(exc))
+                finally:
+                    service.close()
+        elif fields:
+            store.set_manual(point_id, fields)
+        return provenance_payload(point_id, payload, path)
+
+    @app.post("/api/images/{point_id}/provenance/resolve")
+    def resolve_image_provenance(
+        point_id: str, request: ProvenanceUrlRequest
+    ) -> dict[str, Any]:
+        payload, path = resolve_item(point_id)
+        ref = parse_source_text(request.url)
+        if ref is None:
+            raise HTTPException(400, "无法识别该 URL")
+        store: ProvenanceStore = app.state.provenance
+        ensure_provenance_record(point_id, payload, path)
+        store.set_manual(point_id, {}, ref=ref)
+        record = store.get(point_id)
+        if record is not None:
+            domain = PIXIV_DOMAIN if ref.platform == "pixiv" else TWITTER_DOMAIN
+            state = store.domain_state(domain)
+            if int(state.get("blocked_until") or 0) <= int(time.time()):
+                service = make_service()
+                try:
+                    service.enrich_record(record)
+                except (FetchError, BudgetExhausted) as exc:
+                    store.set_status(point_id, getattr(exc, "status", "error"), str(exc))
+                finally:
+                    service.close()
+        return provenance_payload(point_id, payload, path)
+
+    @app.get("/api/authors")
+    def list_authors(q: str = "", limit: int = 40) -> dict[str, Any]:
+        limit = max(1, min(int(limit), 200))
+        return {"authors": app.state.provenance.list_authors(q, limit=limit)}
+
+    @app.get("/api/authors/{author_key}")
+    def get_author(author_key: str) -> dict[str, Any]:
+        summary = app.state.provenance.author_summary(author_key)
+        if summary is None:
+            raise HTTPException(404, "作者不存在")
+        ids = app.state.provenance.point_ids_for_author(author_key)
+        return {"author": summary, "point_ids": ids, "total": len(ids)}
+
+    @app.get("/api/authors/{author_key}/images")
+    def author_images(
+        author_key: str,
+        limit: int = 40,
+        offset: int = Query(default=0, ge=0, le=50_000),
+    ) -> dict[str, Any]:
+        store: ProvenanceStore = app.state.provenance
+        summary = store.author_summary(author_key)
+        if summary is None:
+            raise HTTPException(404, "作者不存在")
+        ids = store.point_ids_for_author(author_key)
+        total = len(ids)
+        page_size = max(1, min(int(limit), 200))
+        page_ids = ids[offset : offset + page_size]
+        payloads = retrieve_collection_payloads(page_ids)
+        results = [
+            gallery_result(point_id, payloads[point_id])
+            for point_id in page_ids
+            if isinstance(payloads.get(point_id), dict)
+        ]
+        return {
+            "author": summary,
+            "offset": offset,
+            "limit": page_size,
+            "total": total,
+            "has_more": offset + len(page_ids) < total,
+            "results": results,
+        }
 
     def ensure_tagger():
         if app.state.tagger is None and config.tagger.enabled:
@@ -1374,6 +1930,13 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             reset_collection_index_state()
             close_tagger()
             job.running = False
+            if job.error is None:
+                # Local parsing is cheap; network enrichment is gated by the
+                # provenance job's budgets and never blocks index completion.
+                try:
+                    start_scan_job(deep=False, only_new=True)
+                except Exception:
+                    pass
 
     @app.get("/api/index-status")
     def index_status() -> dict:

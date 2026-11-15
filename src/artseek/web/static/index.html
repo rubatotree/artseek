@@ -415,6 +415,91 @@
     .collection-sort-temp input { width: 14px; height: 14px; accent-color: #c97a98; }
     .chip { display: inline-block; margin: 3px 5px 3px 0; padding: 5px 9px; border-radius: 999px; background: var(--rose-soft); color: #8a5268; }
     .chip.negative { background: #eeeef2; color: #706d77; text-decoration: line-through; }
+    .author-filter {
+      display: flex; align-items: center; gap: 6px; max-width: 100%;
+      padding: 4px 6px 4px 10px; border-radius: 999px;
+      background: var(--rose-soft); color: #8a5268; font-size: 12px;
+    }
+    .author-filter[hidden] { display: none; }
+    .author-filter-label {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .author-filter button {
+      min-height: 0; padding: 3px 6px; border-radius: 999px;
+      background: transparent; color: #8a5268; font-size: 14px; line-height: 1;
+    }
+    .author-filter button:hover { transform: none; background: #efd6e0; }
+    .provenance-pane { --notes-width: 400px; }
+    .provenance-body {
+      flex: 1; min-height: 0; overflow: auto; padding: 12px 14px 20px;
+      background: #fff; font-size: 13px; line-height: 1.55;
+    }
+    .provenance-section { display: grid; gap: 8px; margin-bottom: 16px; }
+    .provenance-section > strong { color: #665866; font-size: 12px; letter-spacing: .04em; }
+    .provenance-title { color: var(--ink); font-size: 15px; font-weight: 700; line-height: 1.4; }
+    .provenance-description {
+      max-height: 9em; overflow: auto; white-space: pre-wrap; word-break: break-word;
+      color: #665866; font-size: 12px; line-height: 1.55;
+    }
+    .provenance-row {
+      display: flex; align-items: center; gap: 8px; min-width: 0;
+      color: var(--muted); font-size: 12px;
+    }
+    .provenance-row b { color: var(--ink); font-weight: 650; }
+    .provenance-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .provenance-author {
+      min-height: 0; padding: 2px 8px; border-radius: 999px;
+      background: var(--rose-soft); color: #8a5268; font-size: 12px;
+    }
+    .provenance-author:hover { transform: none; background: #efd6e0; }
+    .provenance-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+    .provenance-tag {
+      padding: 3px 8px; border-radius: 999px; background: #f6f1f5; color: #665866;
+      font-size: 11px;
+    }
+    .provenance-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .provenance-actions button, .provenance-form button {
+      min-height: 0; padding: 7px 10px; border-radius: 10px;
+      background: #f6f1f5; color: #665866; font-size: 12px;
+    }
+    .provenance-actions button:hover, .provenance-form button:hover {
+      transform: none; background: var(--rose-soft); color: #8a5268;
+    }
+    .provenance-form { display: grid; gap: 7px; }
+    .provenance-form input {
+      width: 100%; padding: 8px 10px; border: 1px solid var(--line);
+      border-radius: 10px; background: #fff; color: var(--ink);
+      font: inherit; font-size: 12px;
+    }
+    .provenance-form input:focus { outline: 2px solid #ddb2c2; outline-offset: 1px; }
+    .provenance-hint { color: var(--muted); font-size: 11px; line-height: 1.45; }
+    .provenance-dialog {
+      width: min(540px, calc(100vw - 24px)); max-height: min(720px, calc(100dvh - 24px));
+      padding: 0; border: 0; border-radius: 18px; background: #fff; color: var(--ink);
+      box-shadow: 0 24px 70px rgba(42, 28, 48, .28);
+    }
+    .provenance-dialog::backdrop { background: rgba(16, 13, 18, .32); }
+    .provenance-dialog-head {
+      display: flex; align-items: center; gap: 8px; padding: 12px 14px;
+      border-bottom: 1px solid var(--line); background: var(--paper);
+    }
+    .provenance-dialog-head strong { flex: 1; font-size: 14px; }
+    .provenance-dialog-body { display: grid; gap: 12px; padding: 14px; overflow: auto; }
+    .provenance-stat-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px;
+    }
+    .provenance-stat {
+      padding: 8px 10px; border-radius: 10px; background: #f8f4f7; font-size: 12px;
+    }
+    .provenance-stat b { display: block; font-size: 16px; color: #8a5268; }
+    .provenance-progress {
+      height: 6px; overflow: hidden; border-radius: 999px; background: #f1e7ec;
+    }
+    .provenance-progress i {
+      display: block; height: 100%; width: 0; border-radius: inherit;
+      background: linear-gradient(90deg, #cc7897, #b8759d);
+      transition: width .25s ease;
+    }
     .gallery {
       display: flex; align-items: flex-start; gap: 14px; padding: 8px 0 60px;
     }
@@ -1207,6 +1292,7 @@
           <div class="search-actions">
             <button class="primary" id="search" type="submit">查询</button>
             <button class="secondary random-browse" id="random-browse" type="button" title="在当前选定范围内随机翻阅">随机瀑布</button>
+            <button class="secondary" id="provenance-tools" type="button" title="扫描并补全来源元信息">来源</button>
           </div>
         </div>
         <div class="composer" id="composer">
@@ -1228,6 +1314,10 @@
       <div class="results-column">
         <div class="results-head">
           <div id="query-info" class="query-info">勾选目录后检索，或点击目录名在右侧预览图片。新出现的文件夹默认不在查询范围内。</div>
+          <div id="author-filter" class="author-filter" hidden>
+            <span id="author-filter-label" class="author-filter-label"></span>
+            <button id="author-filter-clear" type="button" aria-label="清除作者筛选" title="清除作者筛选">×</button>
+          </div>
           <div id="collection-sort" class="collection-sort" hidden>
             <button class="collection-sort-toggle" id="collection-sort-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="collection-sort-menu" aria-label="收藏夹排序" title="收藏夹排序"></button>
             <button class="collection-sort-pin" id="collection-sort-pin" type="button" aria-label="保存为收藏夹排序" title="保存为收藏夹排序" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 4h12v17l-6-4-6 4z"/></svg></button>
@@ -1267,6 +1357,13 @@
       <div class="notes-editor" id="notes-editor" hidden></div>
       <div class="notes-foot" id="notes-foot"></div>
     </aside>
+    <aside class="notes-pane provenance-pane" id="provenance-pane" hidden>
+      <div class="notes-head">
+        <strong style="flex:1">来源</strong>
+        <button id="provenance-close" type="button">返回图片</button>
+      </div>
+      <div class="provenance-body" id="provenance-body"></div>
+    </aside>
     </div>
     <div class="modal-bar">
       <span id="viewer-title"></span>
@@ -1279,6 +1376,7 @@
       </label>
       <button id="viewer-remove-ref" type="button" hidden>从参考中移除</button>
       <button id="viewer-reference" type="button">添加为参考</button>
+      <button id="viewer-provenance" type="button" aria-pressed="false" aria-controls="provenance-pane" hidden>来源</button>
       <button id="viewer-notes" type="button" aria-pressed="false" aria-controls="notes-pane" hidden>笔记</button>
       <button id="viewer-collection-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="viewer-collection-menu">收藏到…</button>
       <button id="viewer-remove-collection" type="button" hidden>移出收藏夹</button>
@@ -1286,6 +1384,13 @@
     <div id="viewer-collection-menu" class="viewer-collection-menu" role="dialog" aria-labelledby="viewer-collection-menu-title" hidden></div>
   </dialog>
   <div id="card-collection-menu" class="card-collection-menu" role="dialog" aria-labelledby="card-collection-menu-title" hidden></div>
+  <dialog id="provenance-dialog" class="provenance-dialog" aria-label="来源元信息任务">
+    <div class="provenance-dialog-head">
+      <strong>来源元信息</strong>
+      <button id="provenance-dialog-close" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="provenance-dialog-body" id="provenance-dialog-body"></div>
+  </dialog>
   <div id="drop-mask" class="drop-mask" aria-hidden="true">
     <div class="drop-card">松开以添加参考图</div>
   </div>
@@ -1398,6 +1503,9 @@
       cardOrderDrag: null,
       cardActionGesture: null, cardActionClickUntil: 0,
       galleryDragItem: null,
+      authorKey: '', authorName: '', authorTotal: 0,
+      provenance: { open: false, imageId: '', data: null, seq: 0, loading: false },
+      provenancePoll: 0, provenanceIdlePolls: 0,
       viewerMenuTrigger: null, viewerMenuSession: 0,
       cardMenuItem: null, cardMenuTrigger: null, cardMenuSession: 0,
     };
@@ -1688,6 +1796,365 @@
     }
     function currentImageId() {
       return state.current && state.current.id ? state.current.id : '';
+    }
+    function provenancePlainText(value) {
+      return String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+    function provenanceStatusLabel(status) {
+      return {
+        pending: '待补全',
+        ok: '已补全',
+        not_found: '原帖已删除',
+        protected: '受保护/需登录',
+        rate_limited: '限流中',
+        error: '抓取失败',
+        unresolved: '未识别来源',
+        stale: '文件已被替换',
+      }[status] || status || '未知';
+    }
+    function updateProvenanceButton() {
+      const button = $('viewer-provenance');
+      const imageId = currentImageId();
+      button.hidden = !imageId;
+      button.setAttribute('aria-pressed', String(state.provenance.open));
+    }
+    function renderProvenance(data) {
+      const body = $('provenance-body');
+      const record = (data && data.record) || {};
+      const author = data && data.author;
+      const platform = { pixiv: 'Pixiv', twitter: 'X/Twitter', other: '其他来源' }[record.platform] || '未识别';
+      const title = record.title || (record.platform === 'other' ? '其他来源' : provenancePlainText(record.description).slice(0, 80) || record.source_id || '未识别来源');
+      const tags = (record.tags || []).map((tag) => `<span class="provenance-tag">${escapeHtml(tag)}</span>`).join('');
+      const authorName = author ? (author.name || author.handle || author.key) : '';
+      const authorButton = author
+        ? `<button class="provenance-author" type="button" data-author-key="${escapeHtml(author.key)}" data-author-name="${escapeHtml(authorName)}">${escapeHtml(authorName)}</button>`
+        : '<span>未知作者</span>';
+      const url = record.url || '';
+      const status = provenanceStatusLabel(record.status);
+      const description = provenancePlainText(record.description);
+      const candidates = Array.isArray(record.candidates) ? record.candidates : [];
+      const conflict = candidates.length
+        ? `<div class="provenance-hint">其他候选：${candidates.map((item) => `${escapeHtml(item.platform)}:${escapeHtml(item.source_id)}${item.page != null ? `#${escapeHtml(String(item.page))}` : ''}`).join('；')}</div>`
+        : '';
+      const links = [];
+      if (url) links.push(`<a href="${escapeHtml(url)}" target="_blank" rel="noopener">打开原帖</a>`);
+      body.innerHTML = `
+        <div class="provenance-section">
+          <div class="provenance-title">${escapeHtml(title)}</div>
+          ${description ? `<div class="provenance-description">${escapeHtml(description)}</div>` : ''}
+          <div class="provenance-row"><b>${platform}</b><span>${escapeHtml(record.source_id || '')}</span><span>${escapeHtml(data.page_label || '')}</span></div>
+          <div class="provenance-row"><span>作者</span>${authorButton}</div>
+          <div class="provenance-row"><span>发布</span><span>${escapeHtml(record.posted_at || '')}</span></div>
+          <div class="provenance-row"><span>状态</span><b>${escapeHtml(status)}</b></div>
+          <div class="provenance-row"><span>${links.join(' ')}</span></div>
+          ${conflict}
+          <div class="provenance-tags">${tags}</div>
+          <div class="provenance-actions">
+            <button type="button" data-prov-action="refresh">重新抓取</button>
+            <button type="button" data-prov-action="open-image">打开原图</button>
+            <button type="button" data-prov-action="saucenao">SauceNAO</button>
+            <button type="button" data-prov-action="ascii2d">ascii2d</button>
+            <button type="button" data-prov-action="copy-path">复制原图路径</button>
+          </div>
+          <div class="provenance-hint">SauceNAO / ascii2d 只打开浏览器，不会自动上传。查找后把作品或推文 URL 粘贴到下面即可解析。</div>
+        </div>
+        <form class="provenance-form" id="provenance-form">
+          <strong>编辑来源</strong>
+          <input id="prov-url" placeholder="Pixiv/X 作品 URL，或任意来源 URL" value="${escapeHtml(url)}">
+          <input id="prov-title" placeholder="标题" value="${escapeHtml(record.title || '')}">
+          <div class="provenance-row">
+            <input id="prov-author-name" placeholder="作者名" value="${escapeHtml(author ? (author.name || '') : '')}" style="flex:1">
+            <input id="prov-author-handle" placeholder="@handle" value="${escapeHtml(author ? (author.handle || '') : '')}" style="flex:1">
+          </div>
+          <input id="prov-tags" placeholder="标签，用逗号分隔" value="${escapeHtml((record.tags || []).join(', '))}">
+          <div class="provenance-actions">
+            <button type="submit" id="prov-save">保存来源</button>
+            <button type="button" id="prov-resolve">解析 URL 并补全</button>
+            <button type="button" id="prov-clear">恢复自动</button>
+          </div>
+        </form>`;
+      body.querySelector('[data-prov-action="refresh"]')?.addEventListener('click', () => resolveProvenanceUrl(url, { silent: true }));
+      body.querySelector('[data-prov-action="open-image"]')?.addEventListener('click', () => {
+        if (data.point_id) window.open(`/image/${encodeURIComponent(data.point_id)}`, '_blank', 'noopener');
+      });
+      body.querySelector('[data-prov-action="saucenao"]')?.addEventListener('click', () => window.open((data.reverse_search && data.reverse_search.saucenao) || 'https://saucenao.com/', '_blank', 'noopener'));
+      body.querySelector('[data-prov-action="ascii2d"]')?.addEventListener('click', () => window.open((data.reverse_search && data.reverse_search.ascii2d) || 'https://ascii2d.net/', '_blank', 'noopener'));
+      body.querySelector('[data-prov-action="copy-path"]')?.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(data.path || ''); }
+        catch (_) { /* clipboard may be unavailable */ }
+      });
+      body.querySelector('.provenance-author')?.addEventListener('click', (event) => {
+        const button = event.currentTarget;
+        setAuthorFilter(button.dataset.authorKey || '', button.dataset.authorName || '');
+      });
+      body.querySelector('#provenance-form')?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveProvenanceForm(false);
+      });
+      body.querySelector('#prov-resolve')?.addEventListener('click', () => {
+        const value = $('prov-url').value.trim();
+        if (!value) { resolveProvenanceUrl('', { silent: false }); return; }
+        resolveProvenanceUrl(value, { silent: false });
+      });
+      body.querySelector('#prov-clear')?.addEventListener('click', async () => {
+        const pointId = currentImageId();
+        if (!pointId) return;
+        try {
+          const data = await parseResponse(await fetch(`/api/images/${encodeURIComponent(pointId)}/provenance`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clear_manual: true }),
+          }));
+          state.provenance.data = data;
+          renderProvenance(data);
+          if (data.record && data.record.url) {
+            await resolveProvenanceUrl(data.record.url, { silent: true });
+          }
+        } catch (error) {
+          $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">恢复失败：${escapeHtml(error.message)}</p>`);
+        }
+      });
+    }
+    async function loadProvenance(pointId = currentImageId()) {
+      if (!pointId) return;
+      const seq = ++state.provenance.seq;
+      state.provenance.imageId = pointId;
+      state.provenance.loading = true;
+      try {
+        const data = await parseResponse(await fetch(`/api/images/${encodeURIComponent(pointId)}/provenance`));
+        if (seq !== state.provenance.seq || state.provenance.imageId !== pointId) return;
+        state.provenance.data = data;
+        renderProvenance(data);
+      } catch (error) {
+        if (seq !== state.provenance.seq) return;
+        $('provenance-body').innerHTML = `<p class="provenance-hint">来源读取失败：${escapeHtml(error.message)}</p>`;
+      } finally {
+        if (seq === state.provenance.seq) state.provenance.loading = false;
+      }
+    }
+    async function resolveProvenanceUrl(url, { silent = false } = {}) {
+      const pointId = currentImageId();
+      if (!pointId) return;
+      if (!url) {
+        $('provenance-body').innerHTML = '<p class="provenance-hint">请先在 SauceNAO 或 ascii2d 找到作品页，再把 URL 粘贴到下方。</p>';
+        await loadProvenance(pointId);
+        return;
+      }
+      try {
+        const data = await parseResponse(await fetch(`/api/images/${encodeURIComponent(pointId)}/provenance/resolve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url }),
+        }));
+        state.provenance.data = data;
+        renderProvenance(data);
+      } catch (error) {
+        if (!silent) $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">解析失败：${escapeHtml(error.message)}</p>`);
+      }
+    }
+    async function saveProvenanceForm() {
+      const pointId = currentImageId();
+      if (!pointId) return;
+      const body = {
+        title: $('prov-title').value,
+        author_name: $('prov-author-name').value,
+        author_handle: $('prov-author-handle').value,
+        tags: $('prov-tags').value.split(',').map((item) => item.trim()).filter(Boolean),
+      };
+      const url = $('prov-url').value.trim();
+      if (url) body.url = url;
+      try {
+        const data = await parseResponse(await fetch(`/api/images/${encodeURIComponent(pointId)}/provenance`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }));
+        state.provenance.data = data;
+        renderProvenance(data);
+      } catch (error) {
+        $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">保存失败：${escapeHtml(error.message)}</p>`);
+      }
+    }
+    async function openProvenancePane() {
+      if (!currentImageId()) return;
+      if (notes.open) await closeNotesPane({ skipRoute: true });
+      const pane = $('provenance-pane');
+      state.provenance.open = true;
+      updateProvenanceButton();
+      pane.hidden = false;
+      pane.getBoundingClientRect();
+      pane.classList.add('is-open');
+      await loadProvenance();
+      if (typeof fitViewerFrame === 'function') fitViewerFrame();
+    }
+    async function closeProvenancePane() {
+      state.provenance.open = false;
+      updateProvenanceButton();
+      const pane = $('provenance-pane');
+      if (pane.hidden) return;
+      pane.classList.remove('is-open');
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      if (!state.provenance.open) pane.hidden = true;
+      if (typeof fitViewerFrame === 'function') fitViewerFrame();
+    }
+    async function toggleProvenancePane() {
+      if (state.provenance.open) await closeProvenancePane();
+      else await openProvenancePane();
+    }
+    function updateAuthorFilter() {
+      const bar = $('author-filter');
+      if (!state.authorKey) {
+        bar.hidden = true;
+        return;
+      }
+      bar.hidden = false;
+      $('author-filter-label').textContent = `作者：${state.authorName || state.authorKey}`;
+    }
+    function reloadCurrentGallery() {
+      if (state.mode === 'search') return fetchResults({ reset: true, skipRoute: true });
+      if (state.mode === 'browse') return fetchFolderImages({ reset: true });
+      if (state.mode === 'collection') return fetchCollectionImages({ reset: true });
+      if (state.mode === 'random') return fetchRandomBrowse({ reset: true });
+      if (state.mode === 'author') return fetchAuthorImages({ reset: true });
+      return Promise.resolve();
+    }
+    function setAuthorFilter(key, name = '') {
+      const next = key || '';
+      if (!next) {
+        clearAuthorFilter();
+        return;
+      }
+      state.authorKey = next;
+      state.authorName = name || '';
+      state.searchSnapshotId = '';
+      state.searchRequest = null;
+      updateAuthorFilter();
+      if (!['search', 'browse', 'collection', 'random', 'author'].includes(state.mode)) {
+        state.mode = 'author';
+        state.authorTotal = 0;
+        state.results = [];
+        renderGallery(state.results, { append: false });
+      }
+      if ($('viewer').open) finishDismissViewer();
+      commitGalleryRoute({ replace: true });
+      if (state.mode === 'author') fetchAuthorImages({ reset: true });
+      else reloadCurrentGallery();
+    }
+    function clearAuthorFilter() {
+      const wasAuthor = state.mode === 'author';
+      state.authorKey = '';
+      state.authorName = '';
+      state.authorTotal = 0;
+      updateAuthorFilter();
+      if (wasAuthor) {
+        state.mode = 'idle';
+        state.results = [];
+        state.hasMore = false;
+        renderGallery(state.results, { append: false });
+        $('query-info').textContent = '作者筛选已清除。';
+      }
+      if ($('viewer').open) finishDismissViewer();
+      commitGalleryRoute({ replace: true });
+      if (!wasAuthor) reloadCurrentGallery();
+    }
+    function formatBudgetTime(seconds) {
+      if (!seconds) return '';
+      try { return new Date(Number(seconds) * 1000).toLocaleString(); }
+      catch (_) { return ''; }
+    }
+    function renderProvenanceDialog(data) {
+      const body = $('provenance-dialog-body');
+      const job = data.job || {};
+      const platforms = data.by_platform || {};
+      const count = (platform) => Object.values(platforms[platform] || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+      const unresolved = Number((platforms.other || {}).unresolved || 0);
+      const done = Number(job.done || 0);
+      const total = Number(job.total || 0);
+      const percent = total > 0 ? Math.min(100, Math.round(done * 100 / total)) : 0;
+      const budgets = (job.budgets || []).map((budget) => {
+        const used = Number(budget.used_today || 0);
+        const limit = Number(budget.daily_limit || 0);
+        const blocked = Number(budget.blocked_until || 0);
+        const blockedHint = blocked > Date.now() / 1000 ? ` · 暂停到 ${formatBudgetTime(blocked)}` : '';
+        return `<div class="provenance-hint">${escapeHtml(budget.domain)}：今日 ${used}/${limit}${escapeHtml(blockedHint)}</div>`;
+      }).join('');
+      const controls = [];
+      controls.push('<button type="button" data-prov-job="scan">本地扫描</button>');
+      controls.push('<button type="button" data-prov-job="deep-scan">深度扫描</button>');
+      controls.push('<button type="button" data-prov-job="enrich">补全 Pixiv/X</button>');
+      if (job.running) {
+        controls.push(`<button type="button" data-prov-job="${job.paused ? 'resume' : 'pause'}">${job.paused ? '继续' : '暂停'}</button>`);
+        controls.push('<button type="button" data-prov-job="stop">停止</button>');
+      }
+      body.innerHTML = `
+        <div class="provenance-stat-grid">
+          <div class="provenance-stat"><b>${Number(data.total || 0).toLocaleString()}</b>已登记来源记录</div>
+          <div class="provenance-stat"><b>${unresolved.toLocaleString()}</b>未识别，需反向搜图</div>
+          <div class="provenance-stat"><b>${count('pixiv').toLocaleString()}</b>Pixiv 文件</div>
+          <div class="provenance-stat"><b>${count('twitter').toLocaleString()}</b>X/Twitter 文件</div>
+          <div class="provenance-stat"><b>${Number(data.authors || 0).toLocaleString()}</b>作者组</div>
+          <div class="provenance-stat"><b>${Number(data.with_metadata || 0).toLocaleString()}</b>已有标题/作者</div>
+        </div>
+        <div class="provenance-progress"><i style="width:${percent}%"></i></div>
+        <div class="provenance-row"><span>${escapeHtml(job.message || '空闲')}</span></div>
+        ${job.error ? `<div class="provenance-hint">错误：${escapeHtml(job.error)}</div>` : ''}
+        <div class="provenance-actions">${controls.join('')}</div>
+        <div>${budgets}</div>
+        <div class="provenance-hint">本地扫描只读文件名和嵌入元信息；「补全 Pixiv/X」按上面的每日额度慢速请求。SauceNAO 与 ascii2d 不自动调用，需在图片查看器里手动查找并粘贴 URL。</div>`;
+      body.querySelectorAll('[data-prov-job]').forEach((button) => {
+        button.addEventListener('click', () => runProvenanceJobAction(button.dataset.provJob));
+      });
+    }
+    async function refreshProvenanceDialog() {
+      if (!$('provenance-dialog').open) return;
+      try {
+        const data = await parseResponse(await fetch('/api/provenance/stats'));
+        renderProvenanceDialog(data);
+        clearTimeout(state.provenancePoll);
+        if (data.job && data.job.running) {
+          state.provenanceIdlePolls = 3;
+          state.provenancePoll = setTimeout(refreshProvenanceDialog, 1200);
+        } else if (state.provenanceIdlePolls > 0) {
+          state.provenanceIdlePolls -= 1;
+          state.provenancePoll = setTimeout(refreshProvenanceDialog, 1000);
+        }
+      } catch (error) {
+        $('provenance-dialog-body').innerHTML = `<p class="provenance-hint">来源统计读取失败：${escapeHtml(error.message)}</p>`;
+      }
+    }
+    async function openProvenanceDialog() {
+      const dialog = $('provenance-dialog');
+      if (!dialog.open) dialog.showModal();
+      state.provenanceIdlePolls = 2;
+      await refreshProvenanceDialog();
+    }
+    function closeProvenanceDialog() {
+      clearTimeout(state.provenancePoll);
+      state.provenancePoll = 0;
+      state.provenanceIdlePolls = 0;
+      const dialog = $('provenance-dialog');
+      if (dialog.open) dialog.close();
+    }
+    async function runProvenanceJobAction(action) {
+      const paths = {
+        scan: { url: '/api/provenance/scan', body: { deep: false, only_new: false, auto_enrich: true } },
+        'deep-scan': { url: '/api/provenance/scan', body: { deep: true, only_new: false, auto_enrich: true } },
+        enrich: { url: '/api/provenance/enrich', body: { platforms: ['pixiv', 'twitter'] } },
+        pause: { url: '/api/provenance/job/pause', body: {} },
+        resume: { url: '/api/provenance/job/resume', body: {} },
+        stop: { url: '/api/provenance/job/stop', body: {} },
+      }[action];
+      if (!paths) return;
+      try {
+        await parseResponse(await fetch(paths.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(paths.body),
+        }));
+      } catch (error) {
+        $('provenance-dialog-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">操作失败：${escapeHtml(error.message)}</p>`);
+      }
+      await refreshProvenanceDialog();
     }
     function updateNotesButton() {
       const button = $('viewer-notes');
@@ -2487,6 +2954,7 @@
     }
     async function openNotesPane({ skipRoute = false } = {}) {
       if (!currentImageId()) return;
+      if (state.provenance.open) await closeProvenancePane();
       const seq = ++notes.motionSeq;
       notes.open = true;
       if (!skipRoute) syncOpenOverlayRoute({ replace: false });
@@ -2641,6 +3109,16 @@
       syncRefSelection();
     });
     $('viewer-notes').addEventListener('click', () => toggleNotesPane());
+    $('viewer-provenance').addEventListener('click', () => toggleProvenancePane());
+    $('provenance-close').addEventListener('click', () => closeProvenancePane());
+    $('author-filter-clear').addEventListener('click', () => clearAuthorFilter());
+    $('provenance-tools').addEventListener('click', () => openProvenanceDialog());
+    $('provenance-dialog-close').addEventListener('click', () => closeProvenanceDialog());
+    $('provenance-dialog').addEventListener('close', () => {
+      clearTimeout(state.provenancePoll);
+      state.provenancePoll = 0;
+      state.provenanceIdlePolls = 0;
+    });
     $('notes-new').addEventListener('click', () => createNote().catch((error) => setNotesStatus(error.message)));
     $('notes-edit-toggle').addEventListener('click', () => setNotesEditing(!notes.editing));
     $('notes-delete').addEventListener('click', () => deleteCurrentNote().catch((error) => setNotesStatus(error.message)));
@@ -4140,6 +4618,62 @@
         state.loadingMore = false;
       }
     }
+    async function fetchAuthorImages({ reset }) {
+      if (!state.authorKey) return;
+      if (!reset && (state.loadingMore || !state.hasMore)) return;
+      const seq = reset ? ++state.searchSeq : state.searchSeq;
+      if (reset) {
+        state.hasMore = false;
+        $('panel').classList.add('loading');
+        $('query-info').textContent = '正在载入该作者的图片…';
+        $('load-more').hidden = true;
+      } else {
+        state.loadingMore = true;
+        $('load-more').textContent = '正在载入更多该作者的图片…';
+        $('load-more').hidden = false;
+      }
+      try {
+        const params = new URLSearchParams({
+          limit: String(Number($('limit').value) || 40),
+          offset: String(reset ? 0 : state.results.length),
+        });
+        const data = await parseResponse(await fetch(`/api/authors/${encodeURIComponent(state.authorKey)}/images?${params}`));
+        if (seq !== state.searchSeq) return;
+        const incoming = data.results || [];
+        const author = data.author || {};
+        state.authorName = author.name || state.authorName;
+        state.authorTotal = Number(data.total || 0);
+        updateAuthorFilter();
+        if (reset) {
+          state.results = incoming;
+          renderGallery(state.results, { append: false });
+        } else {
+          state.results = state.results.concat(incoming);
+          renderGallery(incoming, { append: true });
+        }
+        state.hasMore = Boolean(data.has_more) && incoming.length > 0;
+        $('load-more').hidden = !state.hasMore;
+        $('query-info').textContent = `作者「${state.authorName || state.authorKey}」· ${state.results.length} / ${state.authorTotal} 张图${state.hasMore ? ' · 下滑加载更多' : ''}`;
+        if ($('viewer').open) {
+          updateViewerNav();
+          updateProvenanceButton();
+          syncNeighborImages();
+          prefetchViewerAhead();
+        }
+      } catch (error) {
+        if (seq !== state.searchSeq) return;
+        if (reset) $('query-info').textContent = `作者图片载入失败：${error.message}`;
+        else $('load-more').textContent = `继续载入失败：${error.message}`;
+        if (!reset) state.hasMore = false;
+      } finally {
+        if (seq === state.searchSeq) {
+          $('panel').classList.remove('loading');
+          state.loadingMore = false;
+          if (!state.hasMore && state.results.length) $('load-more').hidden = true;
+        }
+      }
+    }
+
     async function fetchCollectionImages({ reset }) {
       const collectionId = state.collectionId;
       if (!collectionId || (!reset && (state.loadingMore || !state.hasMore))) return;
@@ -4161,6 +4695,7 @@
           offset: String(reset ? 0 : state.results.length),
         });
         if (state.collectionViewSort) params.set('sort', state.collectionViewSort);
+        if (state.authorKey) params.set('author_key', state.authorKey);
         const data = await parseResponse(await fetch(`/api/collections/${encodeURIComponent(collectionId)}/images?${params}`));
         if (seq !== state.searchSeq) return;
         const incoming = data.results || [];
@@ -4184,7 +4719,12 @@
         state.hasMore = Boolean(data.has_more) && incoming.length > 0;
         $('load-more').hidden = !state.hasMore;
         renderCollectionInfo(state.results.length);
-        if ($('viewer').open) { updateViewerNav(); syncNeighborImages(); prefetchViewerAhead(); }
+        if ($('viewer').open) {
+        updateViewerNav();
+        updateProvenanceButton();
+        syncNeighborImages();
+        prefetchViewerAhead();
+      }
       } catch (error) {
         if (seq !== state.searchSeq) return;
         if (reset) $('query-info').textContent = `无法读取收藏夹：${error.message}`;
@@ -4243,6 +4783,7 @@
       if (state.mode === 'browse') return fetchFolderImages({ reset: false });
       if (state.mode === 'random') return fetchRandomBrowse({ reset: false });
       if (state.mode === 'collection') return fetchCollectionImages({ reset: false });
+      if (state.mode === 'author') return fetchAuthorImages({ reset: false });
       if (state.mode === 'search') return fetchResults({ reset: false });
       return Promise.resolve();
     }
@@ -4300,6 +4841,7 @@
             seed: state.randomSeed,
             limit: Number($('limit').value) || 40,
             offset: reset ? 0 : state.results.length,
+            author_key: state.authorKey || null,
           }),
         });
         const data = await parseResponse(response);
@@ -4389,6 +4931,7 @@
           limit: String(Number($('limit').value) || 40),
           offset: String(reset ? 0 : state.results.length),
         });
+        if (state.authorKey) params.set('author_key', state.authorKey);
         const response = await fetch(`/api/folder-images?${params}`);
         const data = await parseResponse(response);
         if (seq !== state.searchSeq) return;
@@ -4493,6 +5036,7 @@
           folder_keys: frozen.folder_keys,
           mtime_after: frozen.mtime_after,
           mtime_before: frozen.mtime_before,
+          author_key: frozen.author_key || null,
           exclude_ids: state.results.map((item) => item.id),
           snapshot_id: state.searchSnapshotId || '',
         } : {
@@ -4506,6 +5050,7 @@
           folder_keys: [...treeState.selected],
           mtime_after: timeRange.after || null,
           mtime_before: timeRange.before || null,
+          author_key: state.authorKey || null,
           exclude_ids: reset ? [] : state.results.map((item) => item.id),
           snapshot_id: reset ? '' : (state.searchSnapshotId || ''),
         };
@@ -4522,6 +5067,7 @@
           form.append('mtime_after', common.mtime_after || '');
           form.append('mtime_before', common.mtime_before || '');
           form.append('exclude_ids', JSON.stringify(common.exclude_ids));
+          form.append('author_key', common.author_key || '');
           form.append('references', JSON.stringify(libraryRefs));
           if (common.snapshot_id) form.append('snapshot_id', common.snapshot_id);
           fileRefs.forEach((ref) => form.append('files', ref.file, ref.file.name));
@@ -4548,6 +5094,7 @@
             folder_keys: common.folder_keys,
             mtime_after: common.mtime_after,
             mtime_before: common.mtime_before,
+            author_key: common.author_key,
           };
         }
         if (data.snapshot_id) {
@@ -4557,6 +5104,7 @@
             query: common.query,
             refs: libraryRefs,
             snapshot: data.snapshot_id,
+            author: state.authorKey || '',
           };
           if (appRouteHref(next) !== currentHref()) {
             commitRoute(next, { replace: true, overlay: (history.state && history.state.overlay) || 0 });
@@ -5428,7 +5976,9 @@
       state.currentRefKey = null;
       $('viewer-title').textContent = item.path;
       updateViewerNav();
+      updateProvenanceButton();
       loadImageNotes();
+      if (state.provenance.open) loadProvenance(item.id);
     }
     function applyReferenceViewerState(ref) {
       closeViewerCollectionMenu({ restoreFocus: false });
@@ -6370,11 +6920,21 @@
           query: params.get('q') || '',
           refs: parseSearchRefs(params.get('ref') || ''),
           snapshot: params.get('s') || '',
+          author: params.get('author') || '',
         };
       }
-      if (parts[0] === 'folder') return { kind: 'folder', key: params.get('key') || '' };
-      if (parts[0] === 'random') return { kind: 'random', seed: params.get('seed') || '' };
-      if (parts[0] === 'c' && parts[1]) return { kind: 'collection', id: parts[1] };
+      if (parts[0] === 'folder') {
+        return { kind: 'folder', key: params.get('key') || '', author: params.get('author') || '' };
+      }
+      if (parts[0] === 'random') {
+        return { kind: 'random', seed: params.get('seed') || '', author: params.get('author') || '' };
+      }
+      if (parts[0] === 'c' && parts[1]) {
+        return { kind: 'collection', id: parts[1], author: params.get('author') || '' };
+      }
+      if (parts[0] === 'author' && parts[1]) {
+        return { kind: 'author', key: decodeURIComponent(parts[1]), author: params.get('author') || '' };
+      }
       return { kind: 'home' };
     }
     function appRouteHref(route) {
@@ -6385,16 +6945,28 @@
         const ref = formatSearchRefs(route.refs || []);
         if (ref) params.set('ref', ref);
         if (route.snapshot) params.set('s', route.snapshot);
+        if (route.author) params.set('author', route.author);
         const query = params.toString();
         return query ? `/search?${query}` : '/search';
       }
       if (route.kind === 'folder') {
-        return `/folder?key=${encodeURIComponent(route.key || '')}`;
+        const author = route.author ? `&author=${encodeURIComponent(route.author)}` : '';
+        return `/folder?key=${encodeURIComponent(route.key || '')}${author}`;
       }
       if (route.kind === 'random') {
-        return route.seed ? `/random?seed=${encodeURIComponent(route.seed)}` : '/random';
+        const params = new URLSearchParams();
+        if (route.seed) params.set('seed', route.seed);
+        if (route.author) params.set('author', route.author);
+        const query = params.toString();
+        return query ? `/random?${query}` : '/random';
       }
-      if (route.kind === 'collection') return `/c/${encodeURIComponent(route.id || '')}`;
+      if (route.kind === 'collection') {
+        const author = route.author ? `?author=${encodeURIComponent(route.author)}` : '';
+        return `/c/${encodeURIComponent(route.id || '')}${author}`;
+      }
+      if (route.kind === 'author') {
+        return `/author/${encodeURIComponent(route.key || '')}`;
+      }
       if (route.kind === 'image') return `/i/${encodeURIComponent(route.imageId || '')}`;
       if (route.kind === 'notes') {
         const base = `/i/${encodeURIComponent(route.imageId || '')}/notes`;
@@ -6409,11 +6981,21 @@
           query: $('query').value.trim(),
           refs: librarySearchRefs(),
           snapshot: state.searchSnapshotId || '',
+          author: state.authorKey || '',
         };
       }
-      if (state.mode === 'browse' && state.browseKey) return { kind: 'folder', key: state.browseKey };
-      if (state.mode === 'collection' && state.collectionId) return { kind: 'collection', id: state.collectionId };
-      if (state.mode === 'random' && state.randomSeed != null) return { kind: 'random', seed: String(state.randomSeed) };
+      if (state.mode === 'browse' && state.browseKey) {
+        return { kind: 'folder', key: state.browseKey, author: state.authorKey || '' };
+      }
+      if (state.mode === 'collection' && state.collectionId) {
+        return { kind: 'collection', id: state.collectionId, author: state.authorKey || '' };
+      }
+      if (state.mode === 'random' && state.randomSeed != null) {
+        return { kind: 'random', seed: String(state.randomSeed), author: state.authorKey || '' };
+      }
+      if (state.mode === 'author' && state.authorKey) {
+        return { kind: 'author', key: state.authorKey };
+      }
       return { kind: 'home' };
     }
     function syncDocumentTitle(route = parseAppRoute()) {
@@ -6434,6 +7016,10 @@
       }
       if (route.kind === 'collection') {
         document.title = `${state.collectionName || '收藏夹'} · ArtSeek`;
+        return;
+      }
+      if (route.kind === 'author') {
+        document.title = `${state.authorName || state.authorKey || '作者'} · ArtSeek`;
         return;
       }
       if (route.kind === 'folder') {
@@ -6502,6 +7088,7 @@
     }
     function finishDismissViewer() {
       routeCtl.dismissAll = false;
+      if (state.provenance.open) closeProvenancePane();
       const current = parseAppRoute();
       if (current.kind === 'image' || current.kind === 'notes') {
         commitRoute(currentGalleryRoute(), { replace: true, overlay: 0 });
@@ -6613,7 +7200,13 @@
     }
     async function applySearchRoute(route) {
       $('query').value = route.query || '';
-      const snapshotId = route.snapshot || '';
+      if (route.author !== undefined) {
+        const nextAuthor = route.author || '';
+        if (nextAuthor !== state.authorKey) state.authorName = '';
+        state.authorKey = nextAuthor;
+        updateAuthorFilter();
+      }
+      const snapshotId = route.author ? '' : (route.snapshot || '');
       const sameSnapshot = Boolean(
         snapshotId
         && state.mode === 'search'
@@ -6648,6 +7241,12 @@
           return;
         }
         routeCtl.dismissAll = false;
+        if (route.kind !== 'image' && route.kind !== 'notes' && route.author !== undefined) {
+          const nextAuthor = route.author || '';
+          if (nextAuthor !== state.authorKey) state.authorName = '';
+          state.authorKey = nextAuthor;
+          updateAuthorFilter();
+        }
         if (route.kind === 'search') {
           await applySearchRoute(route);
         } else if (route.kind === 'folder' && route.key) {
@@ -6661,6 +7260,11 @@
             if (collection) await selectCollection(collection, { skipRoute: true });
             else $('query-info').textContent = '收藏夹不存在或尚未载入。';
           }
+        } else if (route.kind === 'author' && route.key) {
+          state.authorKey = route.key;
+          state.mode = 'author';
+          updateAuthorFilter();
+          await fetchAuthorImages({ reset: true });
         } else if (route.kind === 'random') {
           if (route.seed) {
             const seed = Number(route.seed);
