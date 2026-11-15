@@ -53,6 +53,64 @@ class CollectionStoreTests(unittest.TestCase):
         self.assertIsNotNone(self.store.delete(collection.id, record_history=False))
         self.assertFalse(self.store.snapshot()[1]["can_undo"])
 
+    def test_collection_sort_is_per_collection_and_manual_order_is_undoable(self) -> None:
+        first = self.store.create("灵感")
+        second = self.store.create("参考")
+        for point_id in ("a", "b", "c"):
+            self.store.add_item(first.id, point_id)
+
+        self.assertEqual(self.store.get(second.id).sort, "added_asc")
+        sorted_collection = self.store.update(first.id, sort="mtime_desc")
+        self.assertEqual(sorted_collection.sort, "mtime_desc")
+        self.assertEqual(self.store.get(second.id).sort, "added_asc")
+        # A view preference is not a reversible content mutation.
+        self.assertEqual(self.store.snapshot()[1]["undo_label"], "收藏到「灵感」")
+        with self.assertRaises(ValueError):
+            self.store.update(first.id, sort="unknown")
+
+        moved, changed = self.store.reorder_item(first.id, "c", before_id="a")
+        self.assertTrue(changed)
+        self.assertEqual(moved.sort, "manual")
+        self.assertEqual(moved.ordered_item_ids(), ("c", "a", "b"))
+        self.assertEqual(
+            self.store.snapshot()[1]["undo_label"],
+            "调整「灵感」内的图片顺序",
+        )
+        self.assertEqual(
+            self.store.reorder_item(first.id, "c", before_id="missing"),
+            (None, False),
+        )
+        self.assertEqual(
+            self.store.reorder_item(first.id, "missing", before_id="a"),
+            (None, False),
+        )
+        self.assertFalse(self.store.reorder_item(first.id, "c", before_id="a")[1])
+
+        # New members append to the manual permutation instead of resetting it.
+        self.store.add_item(first.id, "d")
+        reloaded = CollectionStore(self.path).get(first.id)
+        self.assertEqual(reloaded.ordered_item_ids(), ("c", "a", "b", "d"))
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(raw["collections"][0]["sort"], "manual")
+        self.assertEqual(raw["collections"][0]["manual_order"], ["c", "a", "b"])
+
+        undone = self.store.undo()  # add d
+        self.assertEqual(undone.kind, "add_item")
+        undone = self.store.undo()  # manual reorder
+        self.assertEqual(undone.kind, "reorder_items")
+        restored = self.store.get(first.id)
+        self.assertEqual(restored.sort, "mtime_desc")
+        self.assertEqual(restored.manual_order, ())
+        self.assertEqual(restored.ordered_item_ids(), ("a", "b", "c"))
+        redone = self.store.redo()
+        self.assertEqual(redone.kind, "reorder_items")
+        self.assertEqual(self.store.get(first.id).ordered_item_ids(), ("c", "a", "b"))
+
+        self.store.update(second.id, sort="name_asc")
+        self.assertIsNotNone(self.store.delete(second.id))
+        self.assertEqual(self.store.undo().kind, "delete_collection")
+        self.assertEqual(self.store.get(second.id).sort, "name_asc")
+
     def test_corrupt_and_duplicate_on_disk_data_is_safe_to_load(self) -> None:
         self.path.write_text("not json", encoding="utf-8")
         self.assertEqual(self.store.list(), [])

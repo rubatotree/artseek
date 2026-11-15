@@ -214,6 +214,14 @@
       position: absolute; right: 6px; bottom: 5px; color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums;
       line-height: 1; pointer-events: none;
     }
+    .collection-sort-badge {
+      position: absolute; left: 6px; bottom: 5px; display: inline-flex; color: #a294a6;
+      line-height: 1; pointer-events: none;
+    }
+    .collection-sort-badge svg {
+      width: 11px; height: 11px; fill: none; stroke: currentColor;
+      stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.1;
+    }
     .collection-row.is-editing { display: block; }
     .collection-rename { position: absolute; inset: 7px; display: block; }
     .collection-rename input {
@@ -358,7 +366,53 @@
       width: 64px; border: 1px solid #3d3742; border-radius: 8px; padding: 6px 7px;
       background: #241f28; color: #eee8f0; font: inherit;
     }
-    .query-info { min-height: 24px; margin: 18px 2px 8px; color: var(--muted); font-size: 13px; }
+    .results-head {
+      position: relative; display: flex; align-items: center; gap: 8px;
+      min-height: 32px; margin: 18px 2px 8px;
+    }
+    .query-info { flex: 1 1 auto; min-width: 0; min-height: 24px; color: var(--muted); font-size: 13px; }
+    .collection-sort { position: relative; flex: 0 0 auto; display: flex; gap: 4px; }
+    .collection-sort[hidden], .collection-sort-pin[hidden] { display: none; }
+    .collection-sort-toggle, .collection-sort-pin {
+      display: inline-grid; place-items: center; width: 32px; height: 32px; min-height: 0; padding: 0;
+      border: 1px solid #eadce3; border-radius: 10px; background: #fff; color: #665866;
+      box-shadow: 0 2px 6px rgba(69, 51, 76, .05);
+    }
+    .collection-sort-toggle:hover, .collection-sort-pin:hover {
+      transform: none; border-color: #dfbdc9; background: var(--rose-soft); color: #8a5268;
+    }
+    .collection-sort-toggle.is-temporary {
+      border-color: #b6cbe0; background: var(--blue-soft); color: #496a8a;
+    }
+    .collection-sort svg {
+      width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-linecap: round;
+      stroke-linejoin: round; stroke-width: 1.9;
+    }
+    .collection-sort-menu {
+      position: absolute; z-index: 1200; top: calc(100% + 6px); right: 0;
+      display: grid; gap: 2px; width: min(250px, calc(100vw - 24px)); padding: 6px;
+      border: 1px solid #e2d6dd; border-radius: 12px; background: #fff;
+      box-shadow: 0 14px 30px rgba(69, 51, 76, .16);
+    }
+    .collection-sort-menu[hidden] { display: none; }
+    .collection-sort-title {
+      padding: 4px 8px 3px; color: var(--muted); font-size: 11px; font-weight: 650;
+    }
+    .collection-sort-option {
+      display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px;
+      border-radius: 8px; background: transparent; color: var(--ink);
+      font: 600 12px/1.2 inherit; text-align: left;
+    }
+    .collection-sort-option:hover { transform: none; background: #f8f2f6; }
+    .collection-sort-option[aria-checked="true"] { background: var(--rose-soft); color: #8a5268; }
+    .collection-sort-option.is-invalid { display: none; }
+    .collection-sort-option svg { flex: 0 0 auto; width: 16px; height: 16px; }
+    .collection-sort-check { margin-left: auto; color: #b07f92; font-size: 12px; }
+    .collection-sort-temp {
+      display: flex; align-items: center; gap: 7px; margin-top: 2px; padding: 8px 8px 3px;
+      border-top: 1px solid var(--line); color: var(--muted); font-size: 12px;
+    }
+    .collection-sort-temp input { width: 14px; height: 14px; accent-color: #c97a98; }
     .chip { display: inline-block; margin: 3px 5px 3px 0; padding: 5px 9px; border-radius: 999px; background: var(--rose-soft); color: #8a5268; }
     .chip.negative { background: #eeeef2; color: #706d77; text-decoration: line-through; }
     .gallery {
@@ -376,6 +430,25 @@
     .image-wrap[data-gallery-drag] { cursor: grab; }
     .image-wrap[data-gallery-drag]:active { cursor: grabbing; }
     .card.is-dragging { opacity: .55; }
+    .card-order-handle {
+      position: absolute; top: 8px; left: 8px; z-index: 2; display: grid; place-items: center;
+      width: 30px; height: 30px; min-height: 0; padding: 0; border: 1px solid #eadce3;
+      border-radius: 999px; background: rgba(255, 255, 255, .94); color: #665866;
+      box-shadow: 0 2px 8px rgba(69, 51, 76, .12); cursor: grab; touch-action: none;
+      opacity: 0; transition: opacity .15s ease, background .15s ease;
+    }
+    .card:hover .card-order-handle, .card-order-handle:focus-visible,
+    .gallery.is-ordering .card-order-handle { opacity: 1; }
+    .card-order-handle:hover { transform: none; background: var(--rose-soft); color: #8a5268; }
+    .card-order-handle svg {
+      width: 16px; height: 16px; fill: none; stroke: currentColor;
+      stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.4;
+    }
+    .card.is-order-dragging { opacity: .5; }
+    .card.is-order-dragging .card-order-handle { cursor: grabbing; }
+    .card.is-order-target {
+      box-shadow: 0 0 0 2px #d7aab9, 0 10px 24px rgba(86, 54, 68, .16);
+    }
     .image-wrap img { display: block; width: 100%; height: 100%; object-fit: cover; }
     .score { position: absolute; top: 9px; right: 9px; padding: 5px 8px; border-radius: 999px; background: rgba(31,27,35,.72); color: #fff; font-size: 12px; backdrop-filter: blur(8px); }
     .card-body { min-width: 0; padding: 10px 11px 11px; }
@@ -824,12 +897,16 @@
       .tree-actions { flex-wrap: wrap; }
       .index-add input, .tree-sort, .time-preset, .time-custom input,
       .advanced-options input[type="number"] { font-size: 16px; }
+      .results-head { margin: 6px var(--page-gutter) 4px; }
       .query-info {
-        margin: 6px var(--page-gutter) 4px;
+        margin: 0;
         min-height: 0;
         font-size: 12px;
         line-height: 1.4;
       }
+      .collection-sort-toggle, .collection-sort-pin { width: 40px; height: 40px; border-radius: 12px; }
+      .collection-sort-menu { width: min(270px, calc(100vw - 2 * var(--page-gutter))); }
+      .collection-sort-option { min-height: 40px; padding: 8px; }
       .chip { padding: 3px 7px; font-size: 11px; }
       .text-weight-card, .ref-add, .ref-card { width: 52px; height: 52px; border-radius: 10px; }
       .text-weight-card input { width: 44px; font-size: 14px; }
@@ -1074,7 +1151,14 @@
         </form>
       </section>
       <div class="results-column">
-        <div id="query-info" class="query-info">勾选目录后检索，或点击目录名在右侧预览图片。新出现的文件夹默认不在查询范围内。</div>
+        <div class="results-head">
+          <div id="query-info" class="query-info">勾选目录后检索，或点击目录名在右侧预览图片。新出现的文件夹默认不在查询范围内。</div>
+          <div id="collection-sort" class="collection-sort" hidden>
+            <button class="collection-sort-toggle" id="collection-sort-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="collection-sort-menu" aria-label="收藏夹排序" title="收藏夹排序"></button>
+            <button class="collection-sort-pin" id="collection-sort-pin" type="button" aria-label="保存为收藏夹排序" title="保存为收藏夹排序" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 4h12v17l-6-4-6 4z"/></svg></button>
+            <div id="collection-sort-menu" class="collection-sort-menu" role="dialog" aria-label="收藏夹排序" hidden></div>
+          </div>
+        </div>
         <main id="gallery" class="gallery"></main>
         <div id="load-more" class="load-more" hidden>正在载入更多相关图片…</div>
       </div>
@@ -1158,6 +1242,35 @@
     const CARD_MENU_DRAG_THRESHOLD_MOUSE = 8;
     const CARD_MENU_DRAG_THRESHOLD_TOUCH = 18;
     const GALLERY_ITEM_MIME = 'application/x-artseek-image-id';
+    const COLLECTION_SORT_OPTIONS = [
+      { value: 'added_asc', label: '加入顺序 · 旧→新' },
+      { value: 'added_desc', label: '加入顺序 · 新→旧' },
+      { value: 'mtime_desc', label: '修改日期 · 新→旧' },
+      { value: 'mtime_asc', label: '修改日期 · 旧→新' },
+      { value: 'name_asc', label: '名称 · A→Z' },
+      { value: 'name_desc', label: '名称 · Z→A' },
+      { value: 'manual', label: '手动排序' },
+    ];
+    const COLLECTION_SORT_LABELS = Object.fromEntries(
+      COLLECTION_SORT_OPTIONS.map((option) => [option.value, option.label])
+    );
+    function collectionSortIcon(value) {
+      const mode = String(value || 'added_asc');
+      const base = mode.startsWith('mtime')
+        ? '<circle cx="8" cy="12" r="5"/><path d="M8 9.2v3l2 1.2"/>'
+        : mode.startsWith('name')
+          ? '<path d="M4 17 7.5 8 11 17M5.4 13.6h4.2"/>'
+          : mode === 'manual'
+            ? '<path d="M6 8h.01M6 12h.01M6 16h.01M10 8h.01M10 12h.01M10 16h.01"/>'
+            : '<path d="M4 6h8M4 11h6M4 16h4"/>';
+      const arrow = mode.endsWith('_desc')
+        ? '<path d="M18 8v11m-2.6-2.6L18 19l2.6 2.6"/>'
+        : mode.endsWith('_asc')
+          ? '<path d="M18 19V8m-2.6 2.6L18 8l2.6 2.6"/>'
+          : '';
+      return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${base}${arrow}</svg>`;
+    }
+    const CARD_ORDER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01"/></svg>';
     const routeCtl = { applying: false, seq: 0, dismissAll: false };
     const state = {
       references: [], refSeq: 0, current: null, currentRefKey: null, viewerSource: 'gallery',
@@ -1171,6 +1284,8 @@
       collectionSidebarPage: 0, viewerCollectionMenuPage: 0, cardCollectionMenuPage: 0,
       collectionDrag: null, collectionOrderSave: 0, collectionReorderClickUntil: 0, collectionEditModeCancelUntil: 0, collectionHistoryBusy: false,
       collectionHistory: { canUndo: false, canRedo: false, undoLabel: '', redoLabel: '' },
+      collectionViewSort: '', collectionSortTemp: false, collectionSortBusy: false,
+      cardOrderDrag: null,
       galleryDragItem: null,
       viewerMenuTrigger: null, viewerMenuSession: 0,
       cardMenuItem: null, cardMenuTrigger: null, cardMenuSession: 0,
@@ -2811,6 +2926,132 @@
         <button class="collection-page-button" type="button" ${dataAttribute}="${page + 1}" aria-label="下一页收藏夹" ${page >= total - 1 ? 'disabled' : ''}>›</button>
       </div>`;
     }
+    function savedCollectionSort() {
+      const collection = state.collections.find((item) => item.id === state.collectionId);
+      return collection?.sort || 'added_asc';
+    }
+    function effectiveCollectionSort() {
+      return state.collectionViewSort || savedCollectionSort();
+    }
+    function closeCollectionSortMenu({ restoreFocus = false } = {}) {
+      const menu = $('collection-sort-menu');
+      if (menu.hidden) return;
+      menu.hidden = true;
+      $('collection-sort-toggle').setAttribute('aria-expanded', 'false');
+      if (restoreFocus) $('collection-sort-toggle').focus();
+    }
+    function renderCollectionSortMenu() {
+      const menu = $('collection-sort-menu');
+      const sort = effectiveCollectionSort();
+      menu.innerHTML = `<div class="collection-sort-title">排序方式</div>${COLLECTION_SORT_OPTIONS.map((option) => `
+        <button class="collection-sort-option" type="button" role="menuitemradio" aria-checked="${option.value === sort}" data-sort-value="${option.value}">
+          ${collectionSortIcon(option.value)}
+          <span>${option.label}</span>
+          <span class="collection-sort-check" aria-hidden="true">${option.value === sort ? '✓' : ''}</span>
+        </button>`).join('')}
+        <label class="collection-sort-temp"><input id="collection-sort-temp" type="checkbox" ${state.collectionSortTemp ? 'checked' : ''}> 仅本次查看，不保存</label>`;
+      menu.querySelectorAll('[data-sort-value]').forEach((button) => {
+        button.addEventListener('click', () => {
+          applyCollectionSort(button.dataset.sortValue, { temporary: state.collectionSortTemp });
+        });
+      });
+      menu.querySelector('#collection-sort-temp')?.addEventListener('change', async (event) => {
+        state.collectionSortTemp = event.currentTarget.checked;
+        if (!state.collectionSortTemp && state.collectionViewSort) {
+          state.collectionViewSort = '';
+          renderCollectionSort();
+          await fetchCollectionImages({ reset: true });
+          setCollectionStatus('已恢复收藏夹默认排序。');
+        }
+        if (!state.collectionSortTemp) renderCollectionSort();
+      });
+    }
+    function syncCollectionSortMenuChecks() {
+      const menu = $('collection-sort-menu');
+      if (menu.hidden) return;
+      const sort = effectiveCollectionSort();
+      menu.querySelectorAll('[data-sort-value]').forEach((button) => {
+        const selected = button.dataset.sortValue === sort;
+        button.setAttribute('aria-checked', String(selected));
+        const check = button.querySelector('.collection-sort-check');
+        if (check) check.textContent = selected ? '✓' : '';
+      });
+      const temp = menu.querySelector('#collection-sort-temp');
+      if (temp) temp.checked = state.collectionSortTemp;
+    }
+    function openCollectionSortMenu() {
+      renderCollectionSortMenu();
+      $('collection-sort-menu').hidden = false;
+      $('collection-sort-toggle').setAttribute('aria-expanded', 'true');
+      requestAnimationFrame(() => {
+        $('collection-sort-menu').querySelector('[aria-checked="true"]')?.focus();
+      });
+    }
+    function renderCollectionSort() {
+      const bar = $('collection-sort');
+      const active = state.mode === 'collection' && Boolean(state.collectionId);
+      bar.hidden = !active;
+      if (!active) {
+        closeCollectionSortMenu();
+        return;
+      }
+      const sort = effectiveCollectionSort();
+      const temporary = Boolean(state.collectionViewSort);
+      const toggle = $('collection-sort-toggle');
+      toggle.innerHTML = collectionSortIcon(sort);
+      toggle.classList.toggle('is-temporary', temporary);
+      toggle.disabled = state.collectionSortBusy;
+      const label = COLLECTION_SORT_LABELS[sort] || sort;
+      const title = `排序：${label}${temporary ? '（仅本次查看）' : ''}`;
+      toggle.setAttribute('aria-label', title);
+      toggle.title = title;
+      $('collection-sort-pin').hidden = !temporary || state.collectionSortBusy;
+      syncCollectionSortMenuChecks();
+    }
+    async function applyCollectionSort(sort, { temporary = false } = {}) {
+      if (!state.collectionId || state.collectionSortBusy) return;
+      const label = COLLECTION_SORT_LABELS[sort] || sort;
+      closeCollectionSortMenu({ restoreFocus: true });
+      if (temporary) {
+        state.collectionSortTemp = true;
+        state.collectionViewSort = sort === savedCollectionSort() ? '' : sort;
+        renderCollectionSort();
+        await fetchCollectionImages({ reset: true });
+        setCollectionStatus(
+          state.collectionViewSort
+            ? `仅本次按「${label}」查看，未保存。`
+            : '已恢复收藏夹默认排序。'
+        );
+        return;
+      }
+      if (sort === savedCollectionSort() && !state.collectionViewSort) return;
+      state.collectionSortBusy = true;
+      renderCollectionSort();
+      try {
+        const data = await parseResponse(await fetch(`/api/collections/${encodeURIComponent(state.collectionId)}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sort, seed_sort: effectiveCollectionSort() }),
+        }));
+        const summary = data.collection;
+        const collection = state.collections.find((item) => item.id === summary.id);
+        if (collection) collection.sort = summary.sort;
+        if (collection) collection.name = summary.name;
+        state.collectionViewSort = '';
+        state.collectionSortTemp = false;
+        renderCollectionList();
+        await fetchCollectionImages({ reset: true });
+        setCollectionStatus(`已按「${label}」排序并保存。`);
+      } catch (error) {
+        setCollectionStatus(`排序保存失败：${error.message}`);
+      } finally {
+        state.collectionSortBusy = false;
+        renderCollectionSort();
+      }
+    }
+    function toggleCollectionSortMenu() {
+      if ($('collection-sort-menu').hidden) openCollectionSortMenu();
+      else closeCollectionSortMenu({ restoreFocus: true });
+    }
     function renderCollectionEditMode() {
       const mode = state.collectionEditMode;
       const list = $('collection-list');
@@ -2941,9 +3182,13 @@
       state.collectionId = '';
       state.collectionName = '';
       state.collectionTotal = null;
+      state.collectionViewSort = '';
+      state.collectionSortTemp = false;
       state.results = [];
       state.hasMore = false;
       state.loadingMore = false;
+      $('gallery').classList.remove('is-ordering');
+      renderCollectionSort();
       $('gallery').replaceChildren();
       $('load-more').hidden = true;
       $('load-more').textContent = '正在载入更多相关图片…';
@@ -3373,6 +3618,16 @@
         if (session === state.cardMenuSession) setCollectionStatus(`无法读取收藏夹：${error.message}`);
       });
     }
+    $('collection-sort-toggle').addEventListener('click', () => toggleCollectionSortMenu());
+    $('collection-sort-pin').addEventListener('click', () => {
+      applyCollectionSort(effectiveCollectionSort(), { temporary: false });
+    });
+    $('collection-sort-menu').addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeCollectionSortMenu({ restoreFocus: true });
+      }
+    });
     $('viewer-collection-menu').addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -3393,6 +3648,10 @@
       const cardMenu = $('card-collection-menu');
       if (!cardMenu.hidden && !cardMenu.contains(event.target) && !state.cardMenuTrigger?.contains(event.target)) {
         closeCardCollectionMenu({ restoreFocus: false });
+      }
+      const sortMenu = $('collection-sort-menu');
+      if (!sortMenu.hidden && !$('collection-sort').contains(event.target)) {
+        closeCollectionSortMenu({ restoreFocus: false });
       }
     });
     function renderCollectionList() {
@@ -3415,8 +3674,13 @@
             </form>
           </div>`;
         }
+        const sort = collection.sort || 'added_asc';
+        const sortBadge = sort !== 'added_asc'
+          ? `<span class="collection-sort-badge" title="排序：${escapeHtml(COLLECTION_SORT_LABELS[sort] || sort)}">${collectionSortIcon(sort)}</span>`
+          : '';
         return `<div class="collection-row collection-tile${selected ? ' is-selected' : ''}${dragging ? ' is-reordering' : ''}" data-collection-id="${escapeHtml(collection.id)}" data-collection-tile data-collection-index="${pageStart + index}">
           <button class="collection-name" type="button" data-collection-action="browse" data-collection-id="${escapeHtml(collection.id)}" title="${state.collectionEditMode === 'reorder' ? `拖动调整「${escapeHtml(collection.name)}」的顺序；拖到分页按钮可跨页` : `浏览「${escapeHtml(collection.name)}」`}" aria-pressed="${selected}" ${state.collectionEditMode === 'reorder' ? 'aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"' : ''}><span class="collection-name-label">${escapeHtml(collection.name)}</span><span class="collection-count">${Number(collection.count) || 0}</span></button>
+          ${sortBadge}
         </div>`;
       }).join('');
       list.innerHTML = `<div class="collection-page-grid" aria-label="收藏夹第 ${page + 1} 页">${tiles}</div>${collectionPaginationMarkup('sidebar')}`;
@@ -3506,6 +3770,8 @@
       state.collectionId = collection.id;
       state.collectionName = collection.name;
       state.collectionTotal = null;
+      state.collectionViewSort = '';
+      state.collectionSortTemp = false;
       state.browseKey = '';
       state.browseName = '';
       state.browseTotal = 0;
@@ -3750,10 +4016,19 @@
           limit: String(Number($('limit').value) || 40),
           offset: String(reset ? 0 : state.results.length),
         });
+        if (state.collectionViewSort) params.set('sort', state.collectionViewSort);
         const data = await parseResponse(await fetch(`/api/collections/${encodeURIComponent(collectionId)}/images?${params}`));
         if (seq !== state.searchSeq) return;
         const incoming = data.results || [];
         state.collectionName = data.collection?.name || state.collectionName;
+        const activeSummary = state.collections.find((item) => item.id === collectionId);
+        if (activeSummary && data.collection) {
+          activeSummary.sort = data.collection.sort || activeSummary.sort;
+          activeSummary.count = Number.isInteger(data.collection.count)
+            ? data.collection.count
+            : activeSummary.count;
+          activeSummary.name = data.collection.name ?? activeSummary.name;
+        }
         state.collectionTotal = Number.isInteger(data.total) ? data.total : null;
         if (reset) {
           state.results = incoming;
@@ -3784,7 +4059,12 @@
       const queryHint = query ? ` · 搜索「${query}」` : '';
       const more = state.hasMore ? ' · 下滑加载更多' : '';
       const count = state.collectionTotal === null ? `已显示 ${shown} 张图` : `${shown} / ${state.collectionTotal} 张图`;
-      $('query-info').textContent = `收藏夹「${state.collectionName}」· ${count}${queryHint}${more}`;
+      const sort = effectiveCollectionSort();
+      const sortHint = ` · ${COLLECTION_SORT_LABELS[sort] || sort}${state.collectionViewSort ? '（临时）' : ''}`;
+      const manualHint = sort === 'manual' ? ' · 拖动卡片上手柄微调' : '';
+      $('query-info').textContent = `收藏夹「${state.collectionName}」· ${count}${sortHint}${queryHint}${more}${manualHint}`;
+      $('gallery').classList.toggle('is-ordering', sort === 'manual');
+      renderCollectionSort();
     }
     function advanceViewerAfterCollectionRemoval(preferredId, previousIndex) {
       if (!$('viewer').open || state.viewerSource !== 'gallery') return;
@@ -4230,16 +4510,20 @@
       const ratio = item.width > 0 && item.height > 0 ? ` style="aspect-ratio: ${item.width} / ${item.height}"` : '';
       const score = Number.isFinite(item.score) ? `<span class="score">${item.score.toFixed(0)}</span>` : '';
       const inCollection = state.mode === 'collection';
+      const manualOrder = inCollection && effectiveCollectionSort() === 'manual';
       const cardAccess = inCollection ? '' : ` tabindex="0" role="button" aria-label="查看原图：${escapeHtml(item.name)}"`;
       const imageAccess = inCollection ? ` tabindex="0" role="button" aria-label="查看原图：${escapeHtml(item.name)}" data-card-open` : '';
       const galleryDrag = ` draggable="true" data-gallery-drag title="拖动「${escapeHtml(item.name)}」到参考图以添加"`;
+      const orderHandle = manualOrder
+        ? `<button class="card-order-handle" type="button" data-card-action="order" draggable="false" aria-label="调整「${escapeHtml(item.name)}」的顺序" aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight" title="拖动调整顺序，或 Alt+←/→">${CARD_ORDER_ICON}</button>`
+        : '';
       const collectionActions = inCollection
         ? `<div class="collection-card-actions">
             <button class="collection-card-action remove" type="button" data-card-action="remove">移除</button>
           </div>`
         : '';
       return `<article class="card${inCollection ? ' has-collection-actions' : ''}" data-index="${index}"${cardAccess}>
-          <div class="image-wrap"${ratio}${imageAccess}${galleryDrag}><img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">${score}</div>
+          <div class="image-wrap"${ratio}${imageAccess}${galleryDrag}>${orderHandle}<img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">${score}</div>
           <div class="card-body">
             <div class="card-title-row"><div class="filename" title="${escapeHtml(item.path)}">${escapeHtml(item.name)}</div><div class="card-title-actions"><button class="card-title-favorite" type="button" data-card-action="favorite" aria-label="收藏：${escapeHtml(item.name)}" title="收藏到…" aria-haspopup="dialog" aria-expanded="false" aria-controls="card-collection-menu">♡</button></div></div>
             <div class="meta">${item.width} × ${item.height}</div>
@@ -4249,6 +4533,7 @@
         </article>`;
     }
     function renderGallery(results, { append } = { append: false }) {
+      renderCollectionSort();
       if (!append && !results.length) {
         const empty = state.mode === 'browse'
           ? '这个目录及其子目录里还没有已索引的图片。'
@@ -4286,6 +4571,7 @@
           if (!item) return;
           const actionTarget = event.target.closest('[data-card-action]');
           const action = actionTarget?.dataset.cardAction;
+          if (action === 'order') return;
           if (action === 'favorite') {
             if (consumeCardMenuGestureClick(actionTarget)) return;
             openCardCollectionMenu(item, actionTarget);
@@ -4308,6 +4594,7 @@
         });
         const imageWrap = card.querySelector('[data-gallery-drag]');
         imageWrap?.addEventListener('dragstart', (event) => {
+          if (state.cardOrderDrag) { event.preventDefault(); return; }
           const item = state.results[Number(card.dataset.index)];
           if (!item || !event.dataTransfer) { event.preventDefault(); return; }
           state.galleryDragItem = item;
@@ -4336,7 +4623,159 @@
         favoriteButton?.addEventListener('lostpointercapture', (event) => {
           finishCardMenuGesture(event, { cancelled: true });
         });
+        const orderHandle = card.querySelector('[data-card-action="order"]');
+        orderHandle?.addEventListener('pointerdown', (event) => startCardOrderDrag(event, card));
+        orderHandle?.addEventListener('keydown', (event) => handleCardOrderKeydown(event, card));
+        orderHandle?.addEventListener('dragstart', (event) => event.preventDefault());
       });
+    }
+
+    function clearCardOrderTarget(drag) {
+      drag.targetCard?.classList.remove('is-order-target');
+      drag.targetCard = null;
+      drag.targetItemId = '';
+    }
+    function startCardOrderDrag(event, card) {
+      if (state.mode !== 'collection' || effectiveCollectionSort() !== 'manual') return;
+      if (state.cardOrderDrag || !event.isPrimary || event.button !== 0) return;
+      const item = state.results[Number(card.dataset.index)];
+      if (!item) return;
+      const handle = event.currentTarget;
+      state.cardOrderDrag = {
+        pointerId: event.pointerId, handle, item, card,
+        startX: event.clientX, startY: event.clientY, started: false,
+        targetCard: null, targetItemId: '', after: false,
+      };
+      handle.setPointerCapture?.(event.pointerId);
+      window.addEventListener('pointermove', updateCardOrderDrag, { passive: false });
+      window.addEventListener('pointerup', finishCardOrderDrag);
+      window.addEventListener('pointercancel', cancelCardOrderDrag);
+    }
+    function updateCardOrderDrag(event) {
+      const drag = state.cardOrderDrag;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      if (!drag.started) {
+        if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 6) return;
+        drag.started = true;
+        drag.card.classList.add('is-order-dragging');
+      }
+      event.preventDefault();
+      const element = document.elementFromPoint(event.clientX, event.clientY);
+      const target = element?.closest('.card');
+      if (!target || target === drag.card || !$('gallery').contains(target)) {
+        clearCardOrderTarget(drag);
+        return;
+      }
+      const targetItem = state.results[Number(target.dataset.index)];
+      if (!targetItem) {
+        clearCardOrderTarget(drag);
+        return;
+      }
+      if (drag.targetCard !== target) {
+        clearCardOrderTarget(drag);
+        drag.targetCard = target;
+        drag.targetItemId = targetItem.id;
+        target.classList.add('is-order-target');
+      }
+      const bounds = target.getBoundingClientRect();
+      drag.after = event.clientY > bounds.top + bounds.height / 2;
+    }
+    function cancelCardOrderDrag(event) {
+      const drag = state.cardOrderDrag;
+      if (!drag) return;
+      finishCardOrderDrag({ pointerId: drag.pointerId }, { cancelled: true });
+    }
+    function finishCardOrderDrag(event, { cancelled = false } = {}) {
+      const drag = state.cardOrderDrag;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const targetItemId = drag.targetItemId;
+      const dropAfter = drag.after;
+      window.removeEventListener('pointermove', updateCardOrderDrag);
+      window.removeEventListener('pointerup', finishCardOrderDrag);
+      window.removeEventListener('pointercancel', cancelCardOrderDrag);
+      if (drag.handle.hasPointerCapture?.(event.pointerId)) {
+        drag.handle.releasePointerCapture(event.pointerId);
+      }
+      drag.card.classList.remove('is-order-dragging');
+      clearCardOrderTarget(drag);
+      state.cardOrderDrag = null;
+      if (!drag.started || cancelled || !targetItemId) return;
+      if (dropAfter) void persistCardOrder(drag.item, null, targetItemId);
+      else void persistCardOrder(drag.item, targetItemId, null);
+    }
+    function cardOrderWouldChange(itemId, beforeId, afterId) {
+      const source = state.results.findIndex((entry) => entry.id === itemId);
+      if (source < 0) return false;
+      if (beforeId) {
+        const anchor = state.results.findIndex((entry) => entry.id === beforeId);
+        return anchor >= 0 && anchor !== source + 1;
+      }
+      if (afterId) {
+        const anchor = state.results.findIndex((entry) => entry.id === afterId);
+        return anchor >= 0 && anchor !== source - 1;
+      }
+      return source < state.results.length - 1;
+    }
+    function applyLocalCardOrder(itemId, beforeId, afterId) {
+      const source = state.results.findIndex((entry) => entry.id === itemId);
+      if (source < 0) return;
+      const [item] = state.results.splice(source, 1);
+      let index = state.results.length;
+      if (beforeId) {
+        const anchor = state.results.findIndex((entry) => entry.id === beforeId);
+        if (anchor >= 0) index = anchor;
+      } else if (afterId) {
+        const anchor = state.results.findIndex((entry) => entry.id === afterId);
+        if (anchor >= 0) index = anchor + 1;
+      }
+      state.results.splice(index, 0, item);
+    }
+    async function persistCardOrder(item, beforeId, afterId) {
+      if (!state.collectionId || !cardOrderWouldChange(item.id, beforeId, afterId)) return;
+      const previousResults = [...state.results];
+      applyLocalCardOrder(item.id, beforeId, afterId);
+      renderGallery(state.results);
+      try {
+        const data = await parseResponse(await fetch(`/api/collections/${encodeURIComponent(state.collectionId)}/items/order`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            image_id: item.id,
+            before_id: beforeId || null,
+            after_id: afterId || null,
+          }),
+        }));
+        applyCollectionHistory(data.history);
+        const summary = data.collection;
+        const collection = state.collections.find((entry) => entry.id === summary.id);
+        if (collection) {
+          collection.sort = summary.sort;
+          collection.count = Number.isInteger(summary.count) ? summary.count : collection.count;
+        }
+        state.collectionViewSort = '';
+        state.collectionSortTemp = false;
+        renderCollectionList();
+        renderCollectionSort();
+        $('gallery').classList.toggle('is-ordering', effectiveCollectionSort() === 'manual');
+        setCollectionStatus(data.moved ? appendUndoHint('已调整图片顺序。') : '顺序未改变。');
+      } catch (error) {
+        state.results = previousResults;
+        renderGallery(state.results);
+        setCollectionStatus(`调整顺序失败：${error.message}`);
+      }
+    }
+    function handleCardOrderKeydown(event, card) {
+      if (state.mode !== 'collection' || effectiveCollectionSort() !== 'manual') return;
+      if (!event.altKey || !['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'].includes(event.key)) return;
+      const index = Number(card.dataset.index);
+      const item = state.results[index];
+      if (!item) return;
+      const earlier = event.key === 'ArrowLeft' || event.key === 'ArrowUp';
+      const neighbor = state.results[index + (earlier ? -1 : 1)];
+      if (!neighbor) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (earlier) void persistCardOrder(item, neighbor.id, null);
+      else void persistCardOrder(item, null, neighbor.id);
     }
 
     function currentIndex() {

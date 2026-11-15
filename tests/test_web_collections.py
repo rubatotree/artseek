@@ -79,12 +79,14 @@ def _payload(
     *,
     tags: list[str] | None = None,
     caption: str | None = None,
+    mtime_ns: int = 0,
 ) -> dict[str, Any]:
     return {
         "path": f"D:/art/{name}",
         "name": name,
         "width": 640,
         "height": 480,
+        "mtime_ns": mtime_ns,
         "tags": tags or [],
         "caption": caption,
     }
@@ -101,9 +103,11 @@ class CollectionsApiTests(unittest.TestCase):
         self.config = AppConfig(data_dir=root / "data", cache_dir=root / "cache")
         self.config.tagger.enabled = False
         payloads = {
-            "a": _payload("alpha.png", tags=["blue_hair"], caption="a bright portrait"),
-            "b": _payload("beta.png", tags=["landscape"], caption="moonlit hill"),
-            "c": _payload("gamma.png", tags=["city"], caption="blue hour city"),
+            "a": _payload(
+                "alpha.png", tags=["blue_hair"], caption="a bright portrait", mtime_ns=300
+            ),
+            "b": _payload("beta.png", tags=["landscape"], caption="moonlit hill", mtime_ns=100),
+            "c": _payload("gamma.png", tags=["city"], caption="blue hour city", mtime_ns=200),
         }
         self.engine = _Engine(payloads)
         self.client = TestClient(create_app(self.config, engine=self.engine))
@@ -266,6 +270,140 @@ class CollectionsApiTests(unittest.TestCase):
         repeated_remove = self.client.delete(f"{endpoint}/a")
         self.assertFalse(repeated_remove.json()["removed"])
 
+    def test_collection_images_honor_saved_and_temporary_sort(self) -> None:
+        collection = self.create_collection()
+        endpoint = f"/api/collections/{collection['id']}/items"
+        for point_id in ("a", "b", "c"):
+            self.client.post(endpoint, json={"image_id": point_id})
+
+        def ids(**params: Any) -> list[str]:
+            response = self.client.get(
+                f"/api/collections/{collection['id']}/images", params=params
+            )
+            self.assertEqual(response.status_code, 200)
+            return [item["id"] for item in response.json()["results"]]
+
+        self.assertEqual(ids(), ["a", "b", "c"])
+        self.assertEqual(ids(sort="mtime_desc"), ["a", "c", "b"])
+        self.assertEqual(ids(sort="mtime_asc"), ["b", "c", "a"])
+        self.assertEqual(ids(sort="name_desc"), ["c", "b", "a"])
+        self.assertEqual(ids(sort="added_desc"), ["c", "b", "a"])
+        self.assertEqual(ids(sort="unknown"), ["a", "b", "c"])
+
+        first = self.client.get(
+            f"/api/collections/{collection['id']}/images",
+            params={"sort": "mtime_asc", "limit": 1},
+        ).json()
+        self.assertEqual([item["id"] for item in first["results"]], ["b"])
+        self.assertEqual(first["total"], 3)
+        self.assertTrue(first["has_more"])
+        middle = self.client.get(
+            f"/api/collections/{collection['id']}/images",
+            params={"sort": "mtime_asc", "limit": 1, "offset": 1},
+        ).json()
+        self.assertEqual([item["id"] for item in middle["results"]], ["c"])
+        self.assertTrue(middle["has_more"])
+        last = self.client.get(
+            f"/api/collections/{collection['id']}/images",
+            params={"sort": "mtime_asc", "limit": 1, "offset": 2},
+        ).json()
+        self.assertEqual([item["id"] for item in last["results"]], ["a"])
+        self.assertFalse(last["has_more"])
+
+        saved = self.client.patch(
+            f"/api/collections/{collection['id']}", json={"sort": "mtime_asc"}
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["collection"]["sort"], "mtime_asc")
+        saved_sort = self.client.get(
+            f"/api/collections/{collection['id']}/images"
+        ).json()
+        self.assertEqual(saved_sort["sort"], "mtime_asc")
+        self.assertEqual(saved_sort["saved_sort"], "mtime_asc")
+        self.assertEqual([item["id"] for item in saved_sort["results"]], ["b", "c", "a"])
+
+        # A query override views another order without touching the collection.
+        temporary = self.client.get(
+            f"/api/collections/{collection['id']}/images", params={"sort": "added_desc"}
+        ).json()
+        self.assertEqual(temporary["sort"], "added_desc")
+        self.assertEqual(temporary["saved_sort"], "mtime_asc")
+        self.assertEqual([item["id"] for item in temporary["results"]], ["c", "b", "a"])
+        self.assertEqual(ids(), ["b", "c", "a"])
+        listed = self.client.get("/api/collections").json()["collections"]
+        self.assertEqual(listed[0]["sort"], "mtime_asc")
+
+        manual = self.client.patch(
+            f"/api/collections/{collection['id']}",
+            json={"sort": "manual", "seed_sort": "mtime_desc"},
+        )
+        self.assertEqual(manual.status_code, 200)
+        self.assertEqual(manual.json()["collection"]["sort"], "manual")
+        seeded = self.client.get(f"/api/collections/{collection['id']}/images").json()
+        self.assertEqual(
+            [item["id"] for item in seeded["results"]],
+            ["a", "c", "b"],
+        )
+
+        invalid = self.client.patch(
+            f"/api/collections/{collection['id']}", json={"sort": "sideways"}
+        )
+        self.assertEqual(invalid.status_code, 422)
+        self.assertEqual(
+            self.client.patch(f"/api/collections/{collection['id']}", json={}).status_code,
+            422,
+        )
+
+    def test_manual_item_order_persists_and_is_undoable(self) -> None:
+        collection = self.create_collection()
+        endpoint = f"/api/collections/{collection['id']}/items"
+        for point_id in ("a", "b", "c"):
+            self.client.post(endpoint, json={"image_id": point_id})
+        order_endpoint = f"{endpoint}/order"
+
+        moved = self.client.put(order_endpoint, json={"image_id": "c", "before_id": "a"})
+        self.assertEqual(moved.status_code, 200)
+        self.assertTrue(moved.json()["moved"])
+        self.assertEqual(moved.json()["collection"]["sort"], "manual")
+        self.assertEqual(moved.json()["history"]["undo_label"], "调整「灵感」内的图片顺序")
+        images = self.client.get(f"/api/collections/{collection['id']}/images").json()
+        self.assertEqual([item["id"] for item in images["results"]], ["c", "a", "b"])
+
+        undone = self.client.post("/api/collections/undo")
+        self.assertEqual(undone.status_code, 200)
+        self.assertEqual(undone.json()["applied"]["kind"], "reorder_items")
+        self.assertEqual(undone.json()["collection"]["sort"], "added_asc")
+        images = self.client.get(f"/api/collections/{collection['id']}/images").json()
+        self.assertEqual([item["id"] for item in images["results"]], ["a", "b", "c"])
+        redone = self.client.post("/api/collections/redo")
+        self.assertEqual(redone.json()["collection"]["sort"], "manual")
+        images = self.client.get(f"/api/collections/{collection['id']}/images").json()
+        self.assertEqual([item["id"] for item in images["results"]], ["c", "a", "b"])
+
+        # Moving after an anchor and appending are both supported.
+        appended = self.client.put(order_endpoint, json={"image_id": "c"})
+        self.assertEqual(appended.status_code, 200)
+        self.assertTrue(appended.json()["moved"])
+        images = self.client.get(f"/api/collections/{collection['id']}/images").json()
+        self.assertEqual([item["id"] for item in images["results"]], ["a", "b", "c"])
+        anchored = self.client.put(order_endpoint, json={"image_id": "a", "after_id": "c"})
+        self.assertTrue(anchored.json()["moved"])
+        images = self.client.get(f"/api/collections/{collection['id']}/images").json()
+        self.assertEqual([item["id"] for item in images["results"]], ["b", "c", "a"])
+
+        stale = self.client.put(order_endpoint, json={"image_id": "a", "before_id": "missing"})
+        self.assertEqual(stale.status_code, 409)
+        missing_item = self.client.put(
+            order_endpoint, json={"image_id": "missing", "before_id": "b"}
+        )
+        self.assertEqual(missing_item.status_code, 409)
+        self.assertEqual(
+            self.client.put(
+                order_endpoint, json={"image_id": "a", "before_id": "b", "after_id": "c"}
+            ).status_code,
+            422,
+        )
+
     def test_homepage_exposes_collection_controls(self) -> None:
         html = self.client.get("/").text
         self.assertIn('viewport-fit=cover', html)
@@ -336,6 +474,18 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn("grid-template-rows: repeat(6, 44px);", html)
         self.assertIn("function collectionPaginationMarkup", html)
         self.assertIn("data-collection-page", html)
+        self.assertIn('id="collection-sort-toggle"', html)
+        self.assertIn('id="collection-sort-pin"', html)
+        self.assertIn('id="collection-sort-menu"', html)
+        self.assertIn("function renderCollectionSort", html)
+        self.assertIn("function renderCollectionSortMenu", html)
+        self.assertIn("function applyCollectionSort", html)
+        self.assertIn("仅本次查看，不保存", html)
+        self.assertIn("collection-sort-badge", html)
+        self.assertIn("card-order-handle", html)
+        self.assertIn("function persistCardOrder", html)
+        self.assertIn("/items/order", html)
+        self.assertIn("Alt+ArrowLeft Alt+ArrowRight", html)
         self.assertIn("function moveCollectionToIndex", html)
         self.assertIn("拖到分页按钮可跨页", html)
         self.assertIn('id="collection-create-tool"', html)

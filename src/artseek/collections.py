@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-COLLECTIONS_VERSION = 1
+COLLECTIONS_VERSION = 2
 MAX_COLLECTION_HISTORY = 20
 HISTORY_DELETE_COLLECTION = "delete_collection"
 HISTORY_CREATE_COLLECTION = "create_collection"
@@ -15,6 +15,7 @@ HISTORY_ADD_ITEM = "add_item"
 HISTORY_REMOVE_ITEM = "remove_item"
 HISTORY_RENAME_COLLECTION = "rename_collection"
 HISTORY_REORDER_COLLECTIONS = "reorder_collections"
+HISTORY_REORDER_ITEMS = "reorder_items"
 HISTORY_COLLECTION_ORDER_ID = "__collection_order__"
 _HISTORY_KINDS = frozenset(
     {
@@ -24,8 +25,29 @@ _HISTORY_KINDS = frozenset(
         HISTORY_REMOVE_ITEM,
         HISTORY_RENAME_COLLECTION,
         HISTORY_REORDER_COLLECTIONS,
+        HISTORY_REORDER_ITEMS,
     }
 )
+SORT_ADDED_ASC = "added_asc"
+SORT_ADDED_DESC = "added_desc"
+SORT_MTIME_ASC = "mtime_asc"
+SORT_MTIME_DESC = "mtime_desc"
+SORT_NAME_ASC = "name_asc"
+SORT_NAME_DESC = "name_desc"
+SORT_MANUAL = "manual"
+DEFAULT_COLLECTION_SORT = SORT_ADDED_ASC
+COLLECTION_SORT_KEYS = frozenset(
+    {
+        SORT_ADDED_ASC,
+        SORT_ADDED_DESC,
+        SORT_MTIME_ASC,
+        SORT_MTIME_DESC,
+        SORT_NAME_ASC,
+        SORT_NAME_DESC,
+        SORT_MANUAL,
+    }
+)
+PAYLOAD_SORT_KEYS = frozenset({SORT_MTIME_ASC, SORT_MTIME_DESC, SORT_NAME_ASC, SORT_NAME_DESC})
 _PATH_LOCKS: dict[str, threading.RLock] = {}
 _PATH_LOCKS_GUARD = threading.Lock()
 
@@ -42,21 +64,45 @@ def _lock_for_path(path: Path) -> threading.RLock:
 
 @dataclass(frozen=True, slots=True)
 class Collection:
-    """A user-owned ordered set of indexed image point IDs."""
+    """A user-owned ordered set of indexed image point IDs.
+
+    ``item_ids`` is the immutable insertion sequence; ``manual_order`` only
+    stores a user-defined permutation of that sequence, so switching between
+    "added order" and "manual order" never loses either one.
+    """
 
     id: str
     name: str
     item_ids: tuple[str, ...]
+    sort: str = DEFAULT_COLLECTION_SORT
+    manual_order: tuple[str, ...] = ()
 
     @property
     def count(self) -> int:
         return len(self.item_ids)
+
+    def ordered_item_ids(self) -> tuple[str, ...]:
+        """Manual ordering reconciled with the current membership.
+
+        Stale IDs (kept across index removals) stay in the permutation, and new
+        items are appended in insertion order until the user moves them.
+        """
+        if not self.manual_order:
+            return self.item_ids
+        known = set(self.item_ids)
+        ordered = [point_id for point_id in self.manual_order if point_id in known]
+        if len(ordered) == len(self.item_ids):
+            return tuple(ordered)
+        seen = set(ordered)
+        ordered.extend(point_id for point_id in self.item_ids if point_id not in seen)
+        return tuple(ordered)
 
     def summary(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "name": self.name,
             "count": self.count,
+            "sort": self.sort,
         }
 
 
@@ -74,6 +120,10 @@ class HistoryEntry:
     next_name: str = ""
     order_ids: tuple[str, ...] = ()
     next_order_ids: tuple[str, ...] = ()
+    manual_order: tuple[str, ...] = ()
+    next_manual_order: tuple[str, ...] = ()
+    sort_mode: str = ""
+    next_sort_mode: str = ""
 
     def label(self, collections: list[Collection]) -> str:
         current = CollectionStore._find(collections, self.collection_id)
@@ -87,6 +137,8 @@ class HistoryEntry:
             return f"重命名「{self.name}」为「{self.next_name}」"
         if self.kind == HISTORY_REORDER_COLLECTIONS:
             return "调整收藏夹顺序"
+        if self.kind == HISTORY_REORDER_ITEMS:
+            return f"调整「{name}」内的图片顺序"
         if self.kind == HISTORY_ADD_ITEM:
             return f"收藏「{item}」到「{name}」" if item else f"收藏到「{name}」"
         if item:
@@ -105,6 +157,10 @@ class HistoryEntry:
             "next_name": self.next_name,
             "order_ids": list(self.order_ids),
             "next_order_ids": list(self.next_order_ids),
+            "manual_order": list(self.manual_order),
+            "next_manual_order": list(self.next_manual_order),
+            "sort_mode": self.sort_mode,
+            "next_sort_mode": self.next_sort_mode,
         }
 
 
@@ -181,7 +237,12 @@ class CollectionStore:
     def create(self, name: str) -> Collection:
         with self._lock:
             document = self._load_document()
-            collection = Collection(id=uuid.uuid4().hex, name=name, item_ids=())
+            collection = Collection(
+                id=uuid.uuid4().hex,
+                name=name,
+                item_ids=(),
+                sort=DEFAULT_COLLECTION_SORT,
+            )
             document.collections.append(collection)
             self._record_undo(
                 document,
@@ -198,33 +259,119 @@ class CollectionStore:
     def rename(self, collection_id: str, name: str) -> Collection | None:
         return self.update(collection_id, name=name)
 
-    def update(self, collection_id: str, *, name: str) -> Collection | None:
+    def update(
+        self,
+        collection_id: str,
+        *,
+        name: str | None = None,
+        sort: str | None = None,
+        manual_order: tuple[str, ...] | None = None,
+    ) -> Collection | None:
+        """Update collection metadata; ``sort`` is a preference, not history."""
+        if sort is not None and sort not in COLLECTION_SORT_KEYS:
+            raise ValueError("未知的收藏夹排序方式")
         with self._lock:
             document = self._load_document()
             index = self._index_of(document.collections, collection_id)
             if index is None:
                 return None
             current = document.collections[index]
-            if current.name == name:
+            next_name = current.name if name is None else name
+            next_sort = current.sort if sort is None else sort
+            next_manual_order = current.manual_order if manual_order is None else manual_order
+            if (
+                current.name == next_name
+                and current.sort == next_sort
+                and current.manual_order == next_manual_order
+            ):
                 return current
-            updated = Collection(
-                id=current.id,
-                name=name,
-                item_ids=current.item_ids,
+            updated = replace(
+                current,
+                name=next_name,
+                sort=next_sort,
+                manual_order=next_manual_order,
+            )
+            document.collections[index] = updated
+            if current.name != next_name:
+                self._record_undo(
+                    document,
+                    HistoryEntry(
+                        kind=HISTORY_RENAME_COLLECTION,
+                        collection_id=current.id,
+                        name=current.name,
+                        next_name=next_name,
+                        index=index,
+                    ),
+                )
+            self._save(document)
+            return updated
+
+    def reorder_item(
+        self,
+        collection_id: str,
+        point_id: str,
+        *,
+        before_id: str | None = None,
+        after_id: str | None = None,
+    ) -> tuple[Collection | None, bool]:
+        """Move one item to an anchor in the manual order.
+
+        ``None`` anchors move the item to the end. A missing anchor returns
+        ``None`` so the caller can report a stale view instead of silently
+        appending, which would surprise a concurrent editor.
+        """
+        with self._lock:
+            document = self._load_document()
+            index = self._index_of(document.collections, collection_id)
+            if index is None:
+                return None, False
+            current = document.collections[index]
+            if point_id not in current.item_ids:
+                return None, False
+            order = list(current.ordered_item_ids())
+            previous_order = tuple(order)
+            sort_mode = current.sort
+            order.remove(point_id)
+            if before_id is not None:
+                if before_id == point_id:
+                    return current, False
+                if before_id not in order:
+                    return None, False
+                insert_at = order.index(before_id)
+            elif after_id is not None:
+                if after_id == point_id:
+                    return current, False
+                if after_id not in order:
+                    return None, False
+                insert_at = order.index(after_id) + 1
+            else:
+                insert_at = len(order)
+            order.insert(insert_at, point_id)
+            next_order = tuple(order)
+            if next_order == previous_order and sort_mode == SORT_MANUAL:
+                return current, False
+            updated = replace(
+                current,
+                sort=SORT_MANUAL,
+                manual_order=next_order,
             )
             document.collections[index] = updated
             self._record_undo(
                 document,
                 HistoryEntry(
-                    kind=HISTORY_RENAME_COLLECTION,
+                    kind=HISTORY_REORDER_ITEMS,
                     collection_id=current.id,
                     name=current.name,
-                    next_name=name,
-                    index=index,
+                    index=insert_at,
+                    point_id=point_id,
+                    sort_mode=sort_mode,
+                    next_sort_mode=SORT_MANUAL,
+                    manual_order=current.manual_order,
+                    next_manual_order=next_order,
                 ),
             )
             self._save(document)
-            return updated
+            return updated, True
 
     def reorder(self, collection_ids: list[str]) -> list[Collection] | None:
         """Persist a complete collection ordering without dropping concurrent rows."""
@@ -272,6 +419,8 @@ class CollectionStore:
                         name=removed.name,
                         index=index,
                         item_ids=removed.item_ids,
+                        manual_order=removed.manual_order,
+                        sort_mode=removed.sort,
                     ),
                 )
             else:
@@ -310,9 +459,8 @@ class CollectionStore:
             current = document.collections[index]
             if point_id in current.item_ids:
                 return current, False
-            updated = Collection(
-                id=current.id,
-                name=current.name,
+            updated = replace(
+                current,
                 item_ids=(*current.item_ids, point_id),
             )
             document.collections[index] = updated
@@ -347,9 +495,8 @@ class CollectionStore:
             if point_id not in current.item_ids:
                 return current, False
             item_index = current.item_ids.index(point_id)
-            updated = Collection(
-                id=current.id,
-                name=current.name,
+            updated = replace(
+                current,
                 item_ids=tuple(item for item in current.item_ids if item != point_id),
             )
             document.collections[index] = updated
@@ -421,12 +568,15 @@ class CollectionStore:
         collection_id = value.get("id")
         name = value.get("name")
         raw_items = value.get("item_ids")
+        raw_manual_order = value.get("manual_order")
+        raw_sort = value.get("sort")
         if (
             not isinstance(collection_id, str)
             or not collection_id
             or collection_id in seen_ids
             or not isinstance(name, str)
             or not isinstance(raw_items, list)
+            or not isinstance(raw_manual_order, (list, type(None)))
         ):
             return None
         item_ids: list[str] = []
@@ -436,10 +586,18 @@ class CollectionStore:
                 continue
             seen_items.add(point_id)
             item_ids.append(point_id)
+        sort = (
+            raw_sort
+            if isinstance(raw_sort, str) and raw_sort in COLLECTION_SORT_KEYS
+            else DEFAULT_COLLECTION_SORT
+        )
+        manual_order = tuple(self._decode_history_ids(raw_manual_order or []))
         return Collection(
             id=collection_id,
             name=name.strip(),
             item_ids=tuple(item_ids),
+            sort=sort,
+            manual_order=manual_order,
         )
 
     def _decode_history(self, raw: object) -> list[HistoryEntry]:
@@ -467,6 +625,10 @@ class CollectionStore:
         raw_order_ids = value.get("order_ids") or []
         raw_next_order_ids = value.get("next_order_ids") or []
         raw_items = value.get("item_ids") or []
+        raw_manual_order = value.get("manual_order") or []
+        raw_next_manual_order = value.get("next_manual_order") or []
+        sort_mode = value.get("sort_mode") or ""
+        next_sort_mode = value.get("next_sort_mode") or ""
         if (
             kind not in _HISTORY_KINDS
             or not isinstance(collection_id, str)
@@ -481,9 +643,20 @@ class CollectionStore:
             or not isinstance(raw_order_ids, list)
             or not isinstance(raw_next_order_ids, list)
             or not isinstance(raw_items, list)
+            or not isinstance(raw_manual_order, list)
+            or not isinstance(raw_next_manual_order, list)
+            or not isinstance(sort_mode, str)
+            or not isinstance(next_sort_mode, str)
         ):
             return None
-        if kind in {HISTORY_ADD_ITEM, HISTORY_REMOVE_ITEM} and not point_id:
+        if kind in {HISTORY_ADD_ITEM, HISTORY_REMOVE_ITEM, HISTORY_REORDER_ITEMS} and not point_id:
+            return None
+        sort_mode = sort_mode if sort_mode in COLLECTION_SORT_KEYS else ""
+        next_sort_mode = next_sort_mode if next_sort_mode in COLLECTION_SORT_KEYS else ""
+        if kind == HISTORY_REORDER_ITEMS and (
+            sort_mode not in COLLECTION_SORT_KEYS
+            or next_sort_mode not in COLLECTION_SORT_KEYS
+        ):
             return None
         order_ids = self._decode_history_ids(raw_order_ids)
         next_order_ids = self._decode_history_ids(raw_next_order_ids)
@@ -510,6 +683,10 @@ class CollectionStore:
             next_name=next_name.strip(),
             order_ids=tuple(order_ids),
             next_order_ids=tuple(next_order_ids),
+            manual_order=tuple(self._decode_history_ids(raw_manual_order)),
+            next_manual_order=tuple(self._decode_history_ids(raw_next_manual_order)),
+            sort_mode=sort_mode,
+            next_sort_mode=next_sort_mode,
         )
 
     @staticmethod
@@ -532,6 +709,8 @@ class CollectionStore:
                     "id": item.id,
                     "name": item.name,
                     "item_ids": list(item.item_ids),
+                    "sort": item.sort,
+                    "manual_order": list(item.manual_order),
                 }
                 for item in document.collections
             ],
@@ -570,11 +749,15 @@ class CollectionStore:
             index=index,
             item_ids=current.item_ids,
             item_name=entry.item_name,
+            manual_order=current.manual_order,
+            sort_mode=current.sort,
         )
 
     def _apply_undo(self, document: _Document, entry: HistoryEntry) -> Collection | None:
         if entry.kind == HISTORY_REORDER_COLLECTIONS:
             return self._apply_collection_order(document, entry.order_ids)
+        if entry.kind == HISTORY_REORDER_ITEMS:
+            return self._apply_manual_order(document, entry, next_order=False)
         if entry.kind == HISTORY_CREATE_COLLECTION:
             return self._remove_collection(document, entry)
         if entry.kind == HISTORY_DELETE_COLLECTION:
@@ -588,6 +771,8 @@ class CollectionStore:
     def _apply_redo(self, document: _Document, entry: HistoryEntry) -> Collection | None:
         if entry.kind == HISTORY_REORDER_COLLECTIONS:
             return self._apply_collection_order(document, entry.next_order_ids)
+        if entry.kind == HISTORY_REORDER_ITEMS:
+            return self._apply_manual_order(document, entry, next_order=True)
         if entry.kind == HISTORY_CREATE_COLLECTION:
             return self._insert_collection(document, entry)
         if entry.kind == HISTORY_DELETE_COLLECTION:
@@ -605,6 +790,12 @@ class CollectionStore:
             id=entry.collection_id,
             name=entry.name,
             item_ids=entry.item_ids,
+            sort=(
+                entry.sort_mode
+                if entry.sort_mode in COLLECTION_SORT_KEYS
+                else DEFAULT_COLLECTION_SORT
+            ),
+            manual_order=entry.manual_order,
         )
         insert_at = min(entry.index, len(document.collections))
         document.collections.insert(insert_at, restored)
@@ -617,8 +808,37 @@ class CollectionStore:
                 id=entry.collection_id,
                 name=entry.name,
                 item_ids=entry.item_ids,
+                sort=(
+                    entry.sort_mode
+                    if entry.sort_mode in COLLECTION_SORT_KEYS
+                    else DEFAULT_COLLECTION_SORT
+                ),
+                manual_order=entry.manual_order,
             )
         return document.collections.pop(index)
+
+    def _apply_manual_order(
+        self,
+        document: _Document,
+        entry: HistoryEntry,
+        *,
+        next_order: bool,
+    ) -> Collection | None:
+        index = self._index_of(document.collections, entry.collection_id)
+        if index is None:
+            return None
+        current = document.collections[index]
+        if entry.point_id not in current.item_ids:
+            return current
+        sort_mode = entry.next_sort_mode if next_order else entry.sort_mode
+        manual_order = entry.next_manual_order if next_order else entry.manual_order
+        updated = replace(
+            current,
+            sort=sort_mode if sort_mode in COLLECTION_SORT_KEYS else DEFAULT_COLLECTION_SORT,
+            manual_order=manual_order,
+        )
+        document.collections[index] = updated
+        return updated
 
     def _insert_point(self, document: _Document, entry: HistoryEntry) -> Collection | None:
         index = self._index_of(document.collections, entry.collection_id)
@@ -629,7 +849,7 @@ class CollectionStore:
             return current
         items = list(current.item_ids)
         items.insert(min(entry.index, len(items)), entry.point_id)
-        updated = Collection(id=current.id, name=current.name, item_ids=tuple(items))
+        updated = replace(current, item_ids=tuple(items))
         document.collections[index] = updated
         return updated
 
@@ -640,9 +860,8 @@ class CollectionStore:
         current = document.collections[index]
         if entry.point_id not in current.item_ids:
             return current
-        updated = Collection(
-            id=current.id,
-            name=current.name,
+        updated = replace(
+            current,
             item_ids=tuple(item for item in current.item_ids if item != entry.point_id),
         )
         document.collections[index] = updated
@@ -658,7 +877,7 @@ class CollectionStore:
         if index is None:
             return None
         current = document.collections[index]
-        updated = Collection(id=current.id, name=name, item_ids=current.item_ids)
+        updated = replace(current, name=name)
         document.collections[index] = updated
         return updated
 

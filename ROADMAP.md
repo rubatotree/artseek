@@ -239,3 +239,32 @@ directory migration.
    homepage / API fingerprints.
 2. Complete: persist search snapshots beside `q`/`ref` in the URL, restore
    them on open, and cover store/API/homepage fingerprints.
+
+## 收藏夹排序（Collection sorting）
+
+Each collection owns a persistent `sort` preference and an optional manual
+permutation. `item_ids` stays the immutable insertion sequence, so switching
+between "added order" and "manual order" never loses either one. A request-level
+`sort` query parameter previews another order without persisting it; the
+sidebar tile badge and gallery control show the saved mode.
+
+### Risks and safeguards
+
+- Payload-based sorts (file mtime, name) need every live item's key, so one
+  bounded sorted-ID cursor is built per collection and cached; Qdrant payloads
+  are not retained. `added`/`manual` sorts keep the existing lazy cursor path.
+- Manual order updates are anchor-based (`before_id`/`after_id`) so paginated
+  clients never need the full list and concurrent edits get a 409 instead of a
+  silent append.
+- Entering manual mode seeds the permutation from the order currently on screen
+  (`seed_sort`), avoiding a jump back to insertion order.
+- Manual reordering is undoable with the full previous/next permutation and
+  sort mode; sort-preference changes are not pushed onto the content history.
+
+### Milestones
+
+1. Complete: persistence schema, per-collection sort, temporary overrides.
+2. Complete: anchor-based manual ordering with undo/redo and stale-anchor 409.
+3. Complete: icon sort menu, tile badges, pointer/keyboard card reordering.
+4. Complete: store/API/homepage tests plus a live browser check of the sort
+   menu, temporary preview, seeding, drag, keyboard reorder, and undo.

@@ -16,7 +16,16 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ..collections import Collection, CollectionStore, HistoryAction
+from ..collections import (
+    COLLECTION_SORT_KEYS,
+    DEFAULT_COLLECTION_SORT,
+    PAYLOAD_SORT_KEYS,
+    SORT_ADDED_DESC,
+    SORT_MANUAL,
+    Collection,
+    CollectionStore,
+    HistoryAction,
+)
 from ..config import (
     DEFAULT_WEB_SEARCH_LIMIT,
     MAX_WEB_SEARCH_LIMIT,
@@ -202,6 +211,8 @@ class CollectionUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = None
+    sort: str | None = None
+    seed_sort: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -213,10 +224,41 @@ class CollectionUpdateRequest(BaseModel):
             raise ValueError("收藏夹名称不能超过 80 个字符")
         return name
 
+    @field_validator("sort", "seed_sort")
+    @classmethod
+    def validate_sort(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in COLLECTION_SORT_KEYS:
+            raise ValueError("未知的收藏夹排序方式")
+        return value
+
     @model_validator(mode="after")
     def validate_update(self) -> CollectionUpdateRequest:
-        if self.name is None:
-            raise ValueError("请提供新的收藏夹名称")
+        if self.name is None and self.sort is None:
+            raise ValueError("请提供新的收藏夹名称或排序方式")
+        return self
+
+
+class CollectionItemOrderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    image_id: str
+    before_id: str | None = None
+    after_id: str | None = None
+
+    @field_validator("image_id")
+    @classmethod
+    def validate_image_id(cls, value: str) -> str:
+        image_id = value.strip()
+        if not image_id:
+            raise ValueError("图片 ID 不能为空")
+        return image_id
+
+    @model_validator(mode="after")
+    def validate_anchor(self) -> CollectionItemOrderRequest:
+        if self.before_id is not None and self.after_id is not None:
+            raise ValueError("before_id 与 after_id 只能提供一个")
         return self
 
 
@@ -318,8 +360,23 @@ class CollectionIdCursor:
 
     membership_token: int
     index_generation: int
+    sort_mode: str = DEFAULT_COLLECTION_SORT
+    manual_token: int = 0
     live_item_ids: list[str] = field(default_factory=list)
     source_cursor: int = 0
+    scan_complete: bool = False
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+
+@dataclass(slots=True)
+class CollectionSortCursor:
+    """Bounded ID materialization for sorts which need indexed payload fields."""
+
+    membership_token: int
+    index_generation: int
+    sort_mode: str
+    ordered_ids: list[str] = field(default_factory=list)
+    live_count: int = 0
     scan_complete: bool = False
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -344,6 +401,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     app.state.collection_index_empty = False
     app.state.collection_index_generation = 0
     app.state.collection_id_cursors: OrderedDict[str, CollectionIdCursor] = OrderedDict()
+    app.state.collection_sort_cursors: OrderedDict[str, CollectionSortCursor] = OrderedDict()
     app.state.collection_id_cursors_lock = threading.RLock()
     static_path = Path(__file__).with_name("static") / "index.html"
 
@@ -421,31 +479,141 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             app.state.collection_index_empty = False
             app.state.collection_index_generation += 1
             app.state.collection_id_cursors.clear()
+            app.state.collection_sort_cursors.clear()
 
     def invalidate_collection_id_cursor(collection_id: str) -> None:
         with app.state.collection_id_cursors_lock:
             app.state.collection_id_cursors.pop(collection_id, None)
+            app.state.collection_sort_cursors.pop(collection_id, None)
 
-    def collection_id_cursor(collection: Collection) -> CollectionIdCursor:
+    def collection_id_cursor(collection: Collection, sort: str) -> CollectionIdCursor:
         """Return one LRU cursor whose data fits the public pagination window."""
         membership_token = hash(collection.item_ids)
+        manual_token = hash(collection.manual_order)
         with app.state.collection_id_cursors_lock:
             cursor = app.state.collection_id_cursors.get(collection.id)
             generation = app.state.collection_index_generation
             if (
                 cursor is None
                 or cursor.membership_token != membership_token
+                or cursor.manual_token != manual_token
+                or cursor.sort_mode != sort
                 or cursor.index_generation != generation
             ):
                 cursor = CollectionIdCursor(
                     membership_token=membership_token,
                     index_generation=generation,
+                    sort_mode=sort,
+                    manual_token=manual_token,
                 )
                 app.state.collection_id_cursors[collection.id] = cursor
             app.state.collection_id_cursors.move_to_end(collection.id)
             while len(app.state.collection_id_cursors) > MAX_CACHED_COLLECTIONS:
                 app.state.collection_id_cursors.popitem(last=False)
             return cursor
+
+    def collection_source_ids(collection: Collection, sort: str) -> list[str]:
+        """Cheap source ordering for sorts which never inspect payloads."""
+        if sort == SORT_ADDED_DESC:
+            return list(reversed(collection.item_ids))
+        if sort == SORT_MANUAL:
+            return list(collection.ordered_item_ids())
+        return list(collection.item_ids)
+
+    def collection_sort_key(payload: dict[str, Any], sort: str) -> int | str:
+        if sort.startswith("mtime"):
+            return int(payload.get("mtime_ns") or 0)
+        return str(payload.get("name") or "").casefold()
+
+    def collection_sort_cursor(collection: Collection, sort: str) -> CollectionSortCursor:
+        """Return the LRU cursor holding a full payload-sorted ID ordering."""
+        membership_token = hash(collection.item_ids)
+        generation = app.state.collection_index_generation
+        with app.state.collection_id_cursors_lock:
+            cursor = app.state.collection_sort_cursors.get(collection.id)
+            if (
+                cursor is None
+                or cursor.membership_token != membership_token
+                or cursor.sort_mode != sort
+                or cursor.index_generation != generation
+            ):
+                cursor = CollectionSortCursor(
+                    membership_token=membership_token,
+                    index_generation=generation,
+                    sort_mode=sort,
+                )
+                app.state.collection_sort_cursors[collection.id] = cursor
+            app.state.collection_sort_cursors.move_to_end(collection.id)
+            while len(app.state.collection_sort_cursors) > MAX_CACHED_COLLECTIONS:
+                app.state.collection_sort_cursors.popitem(last=False)
+            return cursor
+
+    def build_collection_sort_cursor(
+        cursor: CollectionSortCursor,
+        collection: Collection,
+    ) -> bool:
+        """Materialize the full sorted ID order once; return False if index is gone."""
+        if cursor.scan_complete:
+            return True
+        entries: list[tuple[Any, str]] = []
+        live_count = 0
+        item_ids = collection.item_ids
+        for batch_start in range(0, len(item_ids), COLLECTION_SCAN_BATCH_SIZE):
+            batch = list(item_ids[batch_start : batch_start + COLLECTION_SCAN_BATCH_SIZE])
+            payloads = retrieve_collection_payloads(batch)
+            if app.state.collection_index_empty:
+                return False
+            for point_id in batch:
+                payload = payloads.get(point_id)
+                if not isinstance(payload, dict):
+                    continue
+                live_count += 1
+                entries.append((collection_sort_key(payload, cursor.sort_mode), point_id))
+        # Stable sort: equal keys retain insertion order for ascending modes;
+        # reverse also reverses ties, matching "newest first" expectations.
+        entries.sort(
+            key=lambda item: item[0],
+            reverse=cursor.sort_mode.endswith("_desc"),
+        )
+        cursor.ordered_ids = [point_id for _key, point_id in entries[:MAX_CACHED_COLLECTION_IDS]]
+        cursor.live_count = live_count
+        cursor.scan_complete = True
+        return True
+
+    def collection_ordered_live_ids(collection: Collection, sort: str) -> list[str]:
+        """Return every live item ID in the order a view would display."""
+        if sort not in PAYLOAD_SORT_KEYS:
+            return collection_source_ids(collection, sort)
+        cursor = collection_sort_cursor(collection, sort)
+        with cursor.lock:
+            if not build_collection_sort_cursor(cursor, collection):
+                return []
+            return list(cursor.ordered_ids)
+
+    def materialize_sorted_collection_page(
+        collection: Collection,
+        sort: str,
+        start: int,
+        page_size: int,
+    ) -> tuple[list[tuple[str, dict[str, Any]]], int | None, bool]:
+        """Read one page from a payload-sorted cursor."""
+        cursor = collection_sort_cursor(collection, sort)
+        with cursor.lock:
+            if not build_collection_sort_cursor(cursor, collection):
+                return [], 0, False
+            page_ids = cursor.ordered_ids[start : start + page_size]
+            page_payloads = retrieve_collection_payloads(page_ids)
+            if app.state.collection_index_empty:
+                return [], 0, False
+            page = [
+                (point_id, page_payloads[point_id])
+                for point_id in page_ids
+                if isinstance(page_payloads.get(point_id), dict)
+            ]
+            truncated = cursor.live_count > len(cursor.ordered_ids)
+            total = None if truncated else cursor.live_count
+            has_more = start + len(page_ids) < len(cursor.ordered_ids)
+            return page, total, has_more
 
     def retrieve_collection_payloads(point_ids: list[str]) -> dict[str, dict[str, Any]]:
         if app.state.collection_index_empty:
@@ -459,17 +627,19 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 with app.state.collection_id_cursors_lock:
                     app.state.collection_index_empty = True
                     app.state.collection_id_cursors.clear()
+                    app.state.collection_sort_cursors.clear()
                 return {}
             raise
 
     def materialize_unfiltered_collection_page(
         collection: Collection,
+        sort: str,
         start: int,
         page_size: int,
     ) -> tuple[list[tuple[str, dict[str, Any]]], int | None, bool]:
         """Read an ordered page with a bounded ID cursor, never cached payloads."""
-        cursor = collection_id_cursor(collection)
-        item_ids = collection.item_ids
+        cursor = collection_id_cursor(collection, sort)
+        item_ids = collection_source_ids(collection, sort)
         target_count = start + page_size + 1
         page_payloads: dict[str, dict[str, Any]] = {}
 
@@ -627,9 +797,29 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
 
     @app.patch("/api/collections/{collection_id}")
     def update_collection(collection_id: str, request: CollectionUpdateRequest) -> dict[str, Any]:
+        current = require_collection(collection_id)
+        manual_order: tuple[str, ...] | None = None
+        if (
+            request.sort == SORT_MANUAL
+            and current.sort != SORT_MANUAL
+            and not current.manual_order
+            and current.item_ids
+        ):
+            # Entering manual mode keeps the order the user was looking at
+            # instead of jumping back to insertion order.
+            seed_sort = request.seed_sort or current.sort
+            if seed_sort not in COLLECTION_SORT_KEYS:
+                seed_sort = DEFAULT_COLLECTION_SORT
+            live_ids = collection_ordered_live_ids(current, seed_sort)
+            seen = set(live_ids)
+            manual_order = tuple(live_ids) + tuple(
+                point_id for point_id in current.item_ids if point_id not in seen
+            )
         collection = app.state.collections.update(
             collection_id,
             name=request.name,
+            sort=request.sort,
+            manual_order=manual_order,
         )
         if collection is None:
             raise HTTPException(404, "收藏夹不存在")
@@ -687,14 +877,41 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "history": current_history(),
         }
 
+    @app.put("/api/collections/{collection_id}/items/order")
+    def reorder_collection_item(
+        collection_id: str,
+        request: CollectionItemOrderRequest,
+    ) -> dict[str, Any]:
+        require_collection(collection_id)
+        collection, moved = app.state.collections.reorder_item(
+            collection_id,
+            request.image_id,
+            before_id=request.before_id,
+            after_id=request.after_id,
+        )
+        if collection is None:
+            raise HTTPException(409, "收藏夹内容已更新，请刷新后重试")
+        if moved:
+            invalidate_collection_id_cursor(collection_id)
+        return {
+            "collection": collection_summary(collection),
+            "moved": moved,
+            "history": current_history(),
+        }
+
     @app.get("/api/collections/{collection_id}/images")
     def collection_images(
         collection_id: str,
         query: str = "",
+        sort: str = "",
         limit: int = 40,
         offset: int = Query(default=0, ge=0, le=10_000),
     ) -> dict[str, Any]:
         collection = require_collection(collection_id)
+        # A query-level sort is a temporary view override. It never persists.
+        method = sort if sort in COLLECTION_SORT_KEYS else collection.sort
+        if method not in COLLECTION_SORT_KEYS:
+            method = DEFAULT_COLLECTION_SORT
         needle = query.strip().casefold()
         page_size = max(1, min(limit, 200))
         start = offset
@@ -723,13 +940,35 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                     and isinstance(payloads[point_id], dict)
                     and matches(payloads[point_id])
                 )
+            if method in PAYLOAD_SORT_KEYS:
+                filtered.sort(
+                    key=lambda item: collection_sort_key(item[1], method),
+                    reverse=method.endswith("_desc"),
+                )
+            elif method == SORT_ADDED_DESC:
+                filtered.reverse()
+            elif method == SORT_MANUAL:
+                rank = {
+                    point_id: index
+                    for index, point_id in enumerate(collection.ordered_item_ids())
+                }
+                filtered.sort(key=lambda item: rank.get(item[0], len(rank)))
             page = filtered[start : start + page_size]
             total = len(filtered)
             has_more = start + len(page) < total
             total_exact = True
+        elif method in PAYLOAD_SORT_KEYS:
+            page, total, has_more = materialize_sorted_collection_page(
+                collection,
+                method,
+                start,
+                page_size,
+            )
+            total_exact = total is not None
         else:
             page, total, has_more = materialize_unfiltered_collection_page(
                 collection,
+                method,
                 start,
                 page_size,
             )
@@ -737,6 +976,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         return {
             "collection": collection_summary(collection),
             "query": query.strip(),
+            "sort": method,
+            "saved_sort": collection.sort,
             "offset": start,
             "limit": page_size,
             "total": total,

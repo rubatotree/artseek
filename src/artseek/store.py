@@ -20,6 +20,7 @@ SEARCH_PAYLOAD_FIELDS = (
     "width",
     "height",
     "size_bytes",
+    "mtime_ns",
     "content_hash",
     "phash",
     "tags",
