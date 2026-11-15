@@ -551,9 +551,17 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertNotIn("card.addEventListener('drag'", card_source)
         self.assertIn('role="button"', card_source)
         self.assertIn('data-card-action="favorite"', card_source)
-        self.assertIn('class="card-title-row"', card_source)
-        self.assertIn('class="card-title-favorite"', card_source)
+        self.assertIn('class="card-favorite"', card_source)
         self.assertIn('aria-controls="card-collection-menu"', card_source)
+        self.assertNotIn('class="card-body"', card_source)
+        self.assertNotIn('class="filename"', card_source)
+        self.assertNotIn('class="meta"', card_source)
+        self.assertIn('cardDisplayAspect(item)', card_source)
+        self.assertIn("const CARD_ASPECT_MIN = 0.6;", html)
+        self.assertIn("const CARD_ASPECT_MAX = 3;", html)
+        self.assertIn("if (width < 900) return 3;", html)
+        self.assertIn('class="card-hits"', card_source)
+        self.assertIn('class="card-remove"', card_source)
         self.assertIn('>♡</button>', card_source)
         self.assertIn('data-gallery-drag', card_source)
         self.assertIn('draggable="true"', card_source)
@@ -675,13 +683,17 @@ class CollectionsApiTests(unittest.TestCase):
         )
         self.assertIn("await fetchCollectionImages({ reset: true });", delete_source)
         self.assertIn("$('panel').classList.remove('loading');", delete_source)
-        self.assertIn("border-radius: 15px 15px 0 0", html)
-        self.assertIn(".image-wrap { border-radius: 11px 11px 0 0; }", html)
         self.assertIn(
-            ".filename { flex: 1 1 auto; min-width: 0; max-width: 100%;"
-            " overflow: hidden; white-space: nowrap; text-overflow: ellipsis;",
+            ".image-wrap {\n      position: relative; overflow: hidden; border-radius: 15px;",
             html,
         )
+        self.assertIn(".image-wrap { border-radius: 11px; }", html)
+        self.assertIn(
+            ".card-favorite {\n      position: absolute; right: 8px; bottom: 8px; z-index: 3;",
+            html,
+        )
+        self.assertIn("function cardDisplayAspect(item)", html)
+        self.assertIn("return columnWidth / cardDisplayAspect(item);", html)
 
     def test_missing_qdrant_collection_returns_an_empty_page_without_pruning_membership(
         self,

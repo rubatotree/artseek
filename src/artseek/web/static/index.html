@@ -424,7 +424,7 @@
       border-radius: 16px; background: #fff; box-shadow: 0 7px 22px rgba(58, 47, 64, .055);
     }
     .image-wrap {
-      position: relative; overflow: hidden; border-radius: 15px 15px 0 0;
+      position: relative; overflow: hidden; border-radius: 15px;
       background: #f1edf2; cursor: zoom-in;
     }
     .image-wrap[data-gallery-drag] { cursor: grab; }
@@ -450,38 +450,45 @@
       box-shadow: 0 0 0 2px #d7aab9, 0 10px 24px rgba(86, 54, 68, .16);
     }
     .image-wrap img { display: block; width: 100%; height: 100%; object-fit: cover; }
-    .score { position: absolute; top: 9px; right: 9px; padding: 5px 8px; border-radius: 999px; background: rgba(31,27,35,.72); color: #fff; font-size: 12px; backdrop-filter: blur(8px); }
-    .card-body { min-width: 0; padding: 10px 11px 11px; }
-    .card.has-collection-actions .card-body { padding-right: 68px; min-height: 52px; }
-    .card-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-    .filename { flex: 1 1 auto; min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; font-weight: 650; }
-    .meta { min-width: 0; overflow: hidden; margin-top: 4px; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-    .hits { min-width: 0; overflow-wrap: anywhere; margin-top: 7px; font-size: 11px; color: #965a71; line-height: 1.5; }
-    .collection-card-actions {
-      position: absolute; right: 8px; bottom: 8px; z-index: 2; display: flex; gap: 5px;
+    .score {
+      position: absolute; top: 9px; right: 9px; padding: 5px 8px; border-radius: 999px;
+      background: rgba(31,27,35,.62); color: #fff; font-size: 12px; backdrop-filter: blur(8px);
     }
-    .collection-card-action {
-      min-height: 32px; padding: 7px 8px; border: 1px solid #eadce3; border-radius: 9px;
-      background: #fff; color: #665866; box-shadow: 0 3px 10px rgba(69, 51, 76, .08); font-size: 11px;
+    .card-favorite {
+      position: absolute; right: 8px; bottom: 8px; z-index: 3;
+      display: grid; place-items: center; width: 34px; height: 34px; min-height: 0; padding: 0;
+      border: 1px solid rgba(255, 255, 255, .32); border-radius: 999px;
+      background: rgba(36, 31, 40, .42); color: #fff; font-size: 19px; line-height: 1;
+      box-shadow: 0 3px 12px rgba(31, 27, 35, .2); backdrop-filter: blur(8px);
+      opacity: .8; touch-action: none;
+      transition: opacity .15s ease, background .15s ease, transform .15s ease;
     }
-    .collection-card-action:hover, .collection-card-action:focus-visible {
-      transform: none; background: var(--rose-soft); color: #8a5268;
+    .card:hover .card-favorite, .card-favorite:focus-visible {
+      opacity: 1; transform: none; background: rgba(138, 82, 104, .84); color: #fff;
     }
-    .collection-card-action.remove { border-color: #c8d9e8; background: var(--blue-soft); color: #496a8a; }
-    .card-title-actions { flex: 0 0 auto; display: flex; }
-    .card-title-favorite {
-      width: 32px; height: 32px; padding: 0; border: 1px solid transparent; border-radius: 999px;
-      background: transparent; color: #9b7483; font-size: 21px; line-height: 1; touch-action: none;
+    .card-favorite:active { transform: scale(.95); }
+    .card-remove {
+      position: absolute; left: 8px; bottom: 8px; z-index: 3; min-height: 30px;
+      padding: 6px 10px; border: 1px solid rgba(255, 255, 255, .4); border-radius: 999px;
+      background: rgba(36, 31, 40, .46); color: #fff; font-size: 11px;
+      backdrop-filter: blur(8px); opacity: .78;
     }
-    .card-title-favorite:hover, .card-title-favorite:focus-visible {
-      transform: none; border-color: #eadce3; background: var(--rose-soft); color: #8a5268;
+    .card:hover .card-remove, .card-remove:focus-visible { opacity: 1; transform: none; }
+    .card-remove:hover { background: rgba(36, 31, 40, .66); }
+    .card-hits {
+      position: absolute; left: 8px; bottom: 8px; z-index: 2;
+      max-width: calc(100% - 58px); overflow: hidden; padding: 5px 8px;
+      border-radius: 999px; background: rgba(31, 27, 35, .55); color: #f8eef2;
+      font-size: 10.5px; line-height: 1.2; white-space: nowrap; text-overflow: ellipsis;
+      backdrop-filter: blur(8px); pointer-events: none;
     }
     .card:focus-visible { outline: 2px solid #ddb2c2; outline-offset: 3px; }
     @media (hover: none), (pointer: coarse) {
-      .card-title-favorite {
-        width: 44px; height: 44px; border-color: #eadce3; background: #fff; color: #8a5268;
+      .card-favorite {
+        width: 44px; height: 44px; opacity: .92;
+        border-color: rgba(255, 255, 255, .36); background: rgba(36, 31, 40, .52);
       }
-      .card-title-favorite:active { transform: scale(.97); }
+      .card-remove { min-height: 40px; padding: 9px 12px; opacity: .9; }
     }
     .empty { padding: 90px 20px; text-align: center; color: var(--muted); }
     .load-more {
@@ -829,7 +836,6 @@
       #query { font-size: 16px; min-height: 44px; padding: 10px 12px; min-width: 0; }
       .search-actions { gap: 6px; }
       #search, .random-browse { min-height: 44px; padding: 10px 12px; box-shadow: none; }
-      .collection-card-action { min-height: 40px; padding: 8px 9px; }
       .composer { margin-top: 8px; }
       .tree-panel { order: -1; }
       .results-column { order: 0; }
@@ -912,7 +918,7 @@
       .text-weight-card input { width: 44px; font-size: 14px; }
       .gallery {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 4px;
         width: 100%;
         max-width: 100%;
@@ -932,11 +938,13 @@
       .brand { font-size: 20px; line-height: 1.1; }
       .subtitle { margin: 0; padding: 0; font-size: 11px; }
       .fold-toggle { min-height: 44px; }
-      .gallery { gap: 3px; padding: 3px 0 28px; }
+      .gallery {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 3px; padding: 3px 0 28px;
+      }
       .gallery-col { gap: 3px; }
       .card { border-radius: 12px; }
-      .image-wrap { border-radius: 11px 11px 0 0; }
-      .card-body { padding: 8px; }
+      .image-wrap { border-radius: 11px; }
       .side-tab, .collection-footer-actions button,
       .collection-page-button { min-height: 40px; }
       .collection-footer-actions button { flex-basis: 40px; width: 40px; height: 40px; }
@@ -1242,6 +1250,8 @@
     const CARD_MENU_DRAG_THRESHOLD_MOUSE = 8;
     const CARD_MENU_DRAG_THRESHOLD_TOUCH = 18;
     const GALLERY_ITEM_MIME = 'application/x-artseek-image-id';
+    const CARD_ASPECT_MIN = 0.6;
+    const CARD_ASPECT_MAX = 3;
     const COLLECTION_SORT_OPTIONS = [
       { value: 'added_asc', label: '加入顺序 · 旧→新' },
       { value: 'added_desc', label: '加入顺序 · 新→旧' },
@@ -4466,17 +4476,20 @@
     }
 
     function galleryColumnCount() {
-      if (window.matchMedia('(max-width: 900px)').matches) return 2;
+      // The 720px breakpoint uses the fixed two-column mobile grid below.
+      if (window.matchMedia('(max-width: 720px)').matches) return 2;
       const width = $('gallery').clientWidth || window.innerWidth;
       if (width < 520) return 2;
-      if (width < 780) return 3;
+      if (width < 900) return 3;
       if (width < 1100) return 4;
       return 5;
     }
+    function cardDisplayAspect(item) {
+      const natural = item.width > 0 && item.height > 0 ? item.width / item.height : 0.8;
+      return Math.min(CARD_ASPECT_MAX, Math.max(CARD_ASPECT_MIN, natural));
+    }
     function estimateCardHeight(item, columnWidth) {
-      const ratio = item.width > 0 && item.height > 0 ? item.height / item.width : 1.25;
-      const hits = item.tag_hits && item.tag_hits.length ? 22 : 0;
-      return columnWidth * ratio + 108 + hits;
+      return columnWidth / cardDisplayAspect(item);
     }
     function shortestColumnIndex() {
       let best = 0;
@@ -4507,7 +4520,7 @@
       state.colHeights[index] += estimateCardHeight(item, width);
     }
     function cardHTML(item, index) {
-      const ratio = item.width > 0 && item.height > 0 ? ` style="aspect-ratio: ${item.width} / ${item.height}"` : '';
+      const ratio = ` style="aspect-ratio: ${cardDisplayAspect(item)}"`;
       const score = Number.isFinite(item.score) ? `<span class="score">${item.score.toFixed(0)}</span>` : '';
       const inCollection = state.mode === 'collection';
       const manualOrder = inCollection && effectiveCollectionSort() === 'manual';
@@ -4517,19 +4530,14 @@
       const orderHandle = manualOrder
         ? `<button class="card-order-handle" type="button" data-card-action="order" draggable="false" aria-label="调整「${escapeHtml(item.name)}」的顺序" aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight" title="拖动调整顺序，或 Alt+←/→">${CARD_ORDER_ICON}</button>`
         : '';
-      const collectionActions = inCollection
-        ? `<div class="collection-card-actions">
-            <button class="collection-card-action remove" type="button" data-card-action="remove">移除</button>
-          </div>`
+      const removeAction = inCollection
+        ? `<button class="card-remove" type="button" data-card-action="remove" aria-label="从收藏夹移出：${escapeHtml(item.name)}" title="移出收藏夹">移除</button>`
         : '';
-      return `<article class="card${inCollection ? ' has-collection-actions' : ''}" data-index="${index}"${cardAccess}>
-          <div class="image-wrap"${ratio}${imageAccess}${galleryDrag}>${orderHandle}<img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">${score}</div>
-          <div class="card-body">
-            <div class="card-title-row"><div class="filename" title="${escapeHtml(item.path)}">${escapeHtml(item.name)}</div><div class="card-title-actions"><button class="card-title-favorite" type="button" data-card-action="favorite" aria-label="收藏：${escapeHtml(item.name)}" title="收藏到…" aria-haspopup="dialog" aria-expanded="false" aria-controls="card-collection-menu">♡</button></div></div>
-            <div class="meta">${item.width} × ${item.height}</div>
-            ${item.tag_hits && item.tag_hits.length ? `<div class="hits">命中：${item.tag_hits.map(t => escapeHtml(t.replaceAll('_',' '))).join(' · ')}</div>` : ''}
-          </div>
-          ${collectionActions}
+      const hits = item.tag_hits && item.tag_hits.length
+        ? `<div class="card-hits">命中：${item.tag_hits.map(t => escapeHtml(t.replaceAll('_',' '))).join(' · ')}</div>`
+        : '';
+      return `<article class="card" data-index="${index}"${cardAccess}>
+          <div class="image-wrap"${ratio}${imageAccess}${galleryDrag}>${orderHandle}<img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">${score}${hits}${removeAction}<button class="card-favorite" type="button" data-card-action="favorite" draggable="false" aria-label="收藏：${escapeHtml(item.name)}" title="收藏到…" aria-haspopup="dialog" aria-expanded="false" aria-controls="card-collection-menu">♡</button></div>
         </article>`;
     }
     function renderGallery(results, { append } = { append: false }) {
@@ -4594,7 +4602,10 @@
         });
         const imageWrap = card.querySelector('[data-gallery-drag]');
         imageWrap?.addEventListener('dragstart', (event) => {
-          if (state.cardOrderDrag) { event.preventDefault(); return; }
+          if (state.cardOrderDrag || cardMenuGesture.pointerId !== null) {
+            event.preventDefault();
+            return;
+          }
           const item = state.results[Number(card.dataset.index)];
           if (!item || !event.dataTransfer) { event.preventDefault(); return; }
           state.galleryDragItem = item;

@@ -268,3 +268,19 @@ sidebar tile badge and gallery control show the saved mode.
 3. Complete: icon sort menu, tile badges, pointer/keyboard card reordering.
 4. Complete: store/API/homepage tests plus a live browser check of the sort
    menu, temporary preview, seeding, drag, keyboard reorder, and undo.
+
+## Image-first gallery cards
+
+Cards are now the image itself: no filename/dimension body, translucent
+favourite and removal overlays, and tag hits as a compact pill. Very tall or
+very wide images have their display aspect ratio clamped to `0.6…3` and are
+cropped with `object-fit: cover`; the masonry height estimate uses the same
+value. Tablet portrait widths (≤900px) render three columns while phones
+(≤720px) keep two.
+
+1. Complete: image-only card markup, favourite/removal overlays, drag-gesture
+   guards.
+2. Complete: clamped card aspect ratios and matching masonry estimates.
+3. Complete: responsive three-column tablet grid and two-column phone grid.
+4. Complete: full pytest, Ruff, JS syntax, and live browser checks at
+   390/768/834/1024px.
