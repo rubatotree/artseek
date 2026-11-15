@@ -275,12 +275,18 @@ Cards are now the image itself: no filename/dimension body, translucent
 favourite and removal overlays, and tag hits as a compact pill. Very tall or
 very wide images have their display aspect ratio clamped to `0.6…3` and are
 cropped with `object-fit: cover`; the masonry height estimate uses the same
-value. Tablet portrait widths (≤900px) render three columns while phones
-(≤720px) keep two.
+value.
+
+A view control beside the collection sort control switches between natural
+masonry, square masonry, compact square masonry, and a one-row-per-image list.
+The choice persists in `localStorage`. Tablet portrait/landscape use four
+columns for natural/square views, six for compact, while phones use two
+(three when compact) and list always uses one.
 
 1. Complete: image-only card markup, favourite/removal overlays, drag-gesture
    guards.
 2. Complete: clamped card aspect ratios and matching masonry estimates.
-3. Complete: responsive three-column tablet grid and two-column phone grid.
-4. Complete: full pytest, Ruff, JS syntax, and live browser checks at
-   390/768/834/1024px.
+3. Complete: flex-column tablet/phone grids with four tablet columns.
+4. Complete: persisted view modes, compact mode without favourites, list rows,
+   plus full pytest, Ruff, JS syntax, and live browser checks at
+   390/768/834/1024/1366px.

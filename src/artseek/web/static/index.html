@@ -419,6 +419,49 @@
       display: flex; align-items: flex-start; gap: 14px; padding: 8px 0 60px;
     }
     .gallery-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+    .gallery.view-square { gap: 10px; }
+    .gallery.view-square .gallery-col { gap: 10px; }
+    .gallery.view-compact { gap: 6px; }
+    .gallery.view-compact .gallery-col { gap: 6px; }
+    .gallery.view-compact .card { border-radius: 12px; }
+    .gallery.view-list { display: block; padding-bottom: 48px; }
+    .gallery.view-list .gallery-col { display: flex; gap: 8px; }
+    .gallery.view-list .card {
+      display: grid; grid-template-columns: 84px minmax(0, 1fr) auto;
+      align-items: center; gap: 10px; padding: 6px; border-radius: 14px;
+    }
+    .gallery.view-list .image-wrap {
+      width: 84px; height: 84px; aspect-ratio: 1; border-radius: 10px;
+    }
+    .gallery.view-list .image-wrap img { height: 100%; }
+    .gallery.view-list .card-order-handle { top: 4px; left: 4px; width: 22px; height: 22px; }
+    .gallery.view-list .card-order-handle svg { width: 12px; height: 12px; }
+    .list-body { min-width: 0; }
+    .list-name {
+      overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      font-size: 13px; font-weight: 650;
+    }
+    .list-meta {
+      margin-top: 3px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      color: var(--muted); font-size: 11px;
+    }
+    .list-hits {
+      margin-top: 3px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      color: #965a71; font-size: 11px;
+    }
+    .card-list-actions { display: flex; align-items: center; gap: 6px; }
+    .gallery.view-list .card-favorite {
+      position: static; width: 34px; height: 34px; opacity: 1;
+      border-color: #eadce3; background: var(--rose-soft); color: #8a5268;
+      box-shadow: none; backdrop-filter: none;
+    }
+    .gallery.view-list .card-remove {
+      position: static; min-height: 32px; padding: 7px 10px; opacity: 1;
+      border-color: #c8d9e8; background: var(--blue-soft); color: #496a8a;
+      backdrop-filter: none;
+    }
+    .gallery.view-list .card-favorite:hover,
+    .gallery.view-list .card-remove:hover { transform: none; background: #f3d7e2; color: #8a5268; }
     .card {
       position: relative; min-width: 0; max-width: 100%; overflow: hidden; border: 1px solid #eee9ef;
       border-radius: 16px; background: #fff; box-shadow: 0 7px 22px rgba(58, 47, 64, .055);
@@ -917,8 +960,6 @@
       .text-weight-card, .ref-add, .ref-card { width: 52px; height: 52px; border-radius: 10px; }
       .text-weight-card input { width: 44px; font-size: 14px; }
       .gallery {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 4px;
         width: 100%;
         max-width: 100%;
@@ -938,11 +979,11 @@
       .brand { font-size: 20px; line-height: 1.1; }
       .subtitle { margin: 0; padding: 0; font-size: 11px; }
       .fold-toggle { min-height: 44px; }
-      .gallery {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 3px; padding: 3px 0 28px;
-      }
+      .gallery { gap: 3px; padding: 3px 0 28px; }
       .gallery-col { gap: 3px; }
+      .gallery.view-list .card { grid-template-columns: 68px minmax(0, 1fr) auto; gap: 8px; padding: 5px; }
+      .gallery.view-list .image-wrap { width: 68px; height: 68px; }
+      .gallery.view-list .list-name { font-size: 12px; }
       .card { border-radius: 12px; }
       .image-wrap { border-radius: 11px; }
       .side-tab, .collection-footer-actions button,
@@ -1166,6 +1207,10 @@
             <button class="collection-sort-pin" id="collection-sort-pin" type="button" aria-label="保存为收藏夹排序" title="保存为收藏夹排序" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 4h12v17l-6-4-6 4z"/></svg></button>
             <div id="collection-sort-menu" class="collection-sort-menu" role="dialog" aria-label="收藏夹排序" hidden></div>
           </div>
+          <div id="gallery-view" class="collection-sort gallery-view" hidden>
+            <button class="collection-sort-toggle" id="gallery-view-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="gallery-view-menu" aria-label="查看形式" title="查看形式"></button>
+            <div id="gallery-view-menu" class="collection-sort-menu" role="dialog" aria-label="查看形式" hidden></div>
+          </div>
         </div>
         <main id="gallery" class="gallery"></main>
         <div id="load-more" class="load-more" hidden>正在载入更多相关图片…</div>
@@ -1252,6 +1297,35 @@
     const GALLERY_ITEM_MIME = 'application/x-artseek-image-id';
     const CARD_ASPECT_MIN = 0.6;
     const CARD_ASPECT_MAX = 3;
+    const GALLERY_VIEW_STORAGE_KEY = 'artseek.galleryView';
+    const GALLERY_VIEWS = [
+      { value: 'natural', label: '原比例瀑布流' },
+      { value: 'square', label: '正方形瀑布流' },
+      { value: 'compact', label: '缩小的正方形瀑布流' },
+      { value: 'list', label: '列表' },
+    ];
+    const GALLERY_VIEW_LABELS = Object.fromEntries(
+      GALLERY_VIEWS.map((option) => [option.value, option.label])
+    );
+    function loadGalleryView() {
+      try {
+        const stored = localStorage.getItem(GALLERY_VIEW_STORAGE_KEY);
+        if (stored && GALLERY_VIEW_LABELS[stored]) return stored;
+      } catch {
+        // Storage can be unavailable in private contexts; keep the default.
+      }
+      return 'natural';
+    }
+    function galleryViewIcon(value) {
+      const mode = String(value || 'natural');
+      const paths = {
+        natural: 'M4 5v14M9 4v9M14 6v12M19 5v8',
+        square: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
+        compact: 'M4 4h4v4H4zM10 4h4v4h-4zM16 4h4v4h-4zM4 10h4v4H4zM10 10h4v4h-4zM16 10h4v4h-4zM4 16h4v4H4zM10 16h4v4h-4zM16 16h4v4h-4z',
+        list: 'M4 5h4v4H4zM11 7h9M4 15h4v4H4zM11 17h9',
+      };
+      return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="${paths[mode] || paths.natural}"/></svg>`;
+    }
     const COLLECTION_SORT_OPTIONS = [
       { value: 'added_asc', label: '加入顺序 · 旧→新' },
       { value: 'added_desc', label: '加入顺序 · 新→旧' },
@@ -1295,6 +1369,7 @@
       collectionDrag: null, collectionOrderSave: 0, collectionReorderClickUntil: 0, collectionEditModeCancelUntil: 0, collectionHistoryBusy: false,
       collectionHistory: { canUndo: false, canRedo: false, undoLabel: '', redoLabel: '' },
       collectionViewSort: '', collectionSortTemp: false, collectionSortBusy: false,
+      galleryView: loadGalleryView(),
       cardOrderDrag: null,
       galleryDragItem: null,
       viewerMenuTrigger: null, viewerMenuSession: 0,
@@ -3062,6 +3137,78 @@
       if ($('collection-sort-menu').hidden) openCollectionSortMenu();
       else closeCollectionSortMenu({ restoreFocus: true });
     }
+    function closeGalleryViewMenu({ restoreFocus = false } = {}) {
+      const menu = $('gallery-view-menu');
+      if (menu.hidden) return;
+      menu.hidden = true;
+      $('gallery-view-toggle').setAttribute('aria-expanded', 'false');
+      if (restoreFocus) $('gallery-view-toggle').focus();
+    }
+    function renderGalleryViewMenu() {
+      const menu = $('gallery-view-menu');
+      const view = state.galleryView;
+      menu.innerHTML = `<div class="collection-sort-title">查看形式</div>${GALLERY_VIEWS.map((option) => `
+        <button class="collection-sort-option" type="button" role="menuitemradio" aria-checked="${option.value === view}" data-view-value="${option.value}">
+          ${galleryViewIcon(option.value)}
+          <span>${option.label}</span>
+          <span class="collection-sort-check" aria-hidden="true">${option.value === view ? '✓' : ''}</span>
+        </button>`).join('')}`;
+      menu.querySelectorAll('[data-view-value]').forEach((button) => {
+        button.addEventListener('click', () => applyGalleryView(button.dataset.viewValue));
+      });
+    }
+    function syncGalleryViewMenuChecks() {
+      const menu = $('gallery-view-menu');
+      if (menu.hidden) return;
+      const view = state.galleryView;
+      menu.querySelectorAll('[data-view-value]').forEach((button) => {
+        const selected = button.dataset.viewValue === view;
+        button.setAttribute('aria-checked', String(selected));
+        const check = button.querySelector('.collection-sort-check');
+        if (check) check.textContent = selected ? '✓' : '';
+      });
+    }
+    function openGalleryViewMenu() {
+      renderGalleryViewMenu();
+      $('gallery-view-menu').hidden = false;
+      $('gallery-view-toggle').setAttribute('aria-expanded', 'true');
+      requestAnimationFrame(() => {
+        $('gallery-view-menu').querySelector('[aria-checked="true"]')?.focus();
+      });
+    }
+    function toggleGalleryViewMenu() {
+      if ($('gallery-view-menu').hidden) openGalleryViewMenu();
+      else closeGalleryViewMenu({ restoreFocus: true });
+    }
+    function renderGalleryView() {
+      const bar = $('gallery-view');
+      const active = state.mode !== 'idle';
+      bar.hidden = !active;
+      if (!active) {
+        closeGalleryViewMenu();
+        return;
+      }
+      const view = state.galleryView;
+      const toggle = $('gallery-view-toggle');
+      toggle.innerHTML = galleryViewIcon(view);
+      const title = `查看形式：${GALLERY_VIEW_LABELS[view] || view}`;
+      toggle.setAttribute('aria-label', title);
+      toggle.title = title;
+      syncGalleryViewMenuChecks();
+    }
+    function applyGalleryView(value) {
+      if (!GALLERY_VIEW_LABELS[value]) return;
+      closeGalleryViewMenu({ restoreFocus: true });
+      if (state.galleryView === value) return;
+      state.galleryView = value;
+      try {
+        localStorage.setItem(GALLERY_VIEW_STORAGE_KEY, value);
+      } catch {
+        // Keep the in-memory choice when storage is unavailable.
+      }
+      renderGalleryView();
+      renderGallery(state.results, { append: false });
+    }
     function renderCollectionEditMode() {
       const mode = state.collectionEditMode;
       const list = $('collection-list');
@@ -3199,6 +3346,7 @@
       state.loadingMore = false;
       $('gallery').classList.remove('is-ordering');
       renderCollectionSort();
+      renderGalleryView();
       $('gallery').replaceChildren();
       $('load-more').hidden = true;
       $('load-more').textContent = '正在载入更多相关图片…';
@@ -3628,6 +3776,13 @@
         if (session === state.cardMenuSession) setCollectionStatus(`无法读取收藏夹：${error.message}`);
       });
     }
+    $('gallery-view-toggle').addEventListener('click', () => toggleGalleryViewMenu());
+    $('gallery-view-menu').addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeGalleryViewMenu({ restoreFocus: true });
+      }
+    });
     $('collection-sort-toggle').addEventListener('click', () => toggleCollectionSortMenu());
     $('collection-sort-pin').addEventListener('click', () => {
       applyCollectionSort(effectiveCollectionSort(), { temporary: false });
@@ -3662,6 +3817,10 @@
       const sortMenu = $('collection-sort-menu');
       if (!sortMenu.hidden && !$('collection-sort').contains(event.target)) {
         closeCollectionSortMenu({ restoreFocus: false });
+      }
+      const viewMenu = $('gallery-view-menu');
+      if (!viewMenu.hidden && !$('gallery-view').contains(event.target)) {
+        closeGalleryViewMenu({ restoreFocus: false });
       }
     });
     function renderCollectionList() {
@@ -4476,20 +4635,25 @@
     }
 
     function galleryColumnCount() {
-      // The 720px breakpoint uses the fixed two-column mobile grid below.
-      if (window.matchMedia('(max-width: 720px)').matches) return 2;
+      const view = state.galleryView;
+      if (view === 'list') return 1;
+      const phone = window.matchMedia('(max-width: 720px)').matches;
       const width = $('gallery').clientWidth || window.innerWidth;
-      if (width < 520) return 2;
-      if (width < 900) return 3;
-      if (width < 1100) return 4;
-      return 5;
+      if (phone || width < 520) return view === 'compact' ? 3 : 2;
+      if (width < 1100) return view === 'compact' ? 6 : 4;
+      return view === 'compact' ? 8 : 5;
     }
     function cardDisplayAspect(item) {
       const natural = item.width > 0 && item.height > 0 ? item.width / item.height : 0.8;
       return Math.min(CARD_ASPECT_MAX, Math.max(CARD_ASPECT_MIN, natural));
     }
+    function cardLayoutAspect(item) {
+      if (state.galleryView === 'square' || state.galleryView === 'compact') return 1;
+      return cardDisplayAspect(item);
+    }
     function estimateCardHeight(item, columnWidth) {
-      return columnWidth / cardDisplayAspect(item);
+      if (state.galleryView === 'list') return 76;
+      return columnWidth / cardLayoutAspect(item);
     }
     function shortestColumnIndex() {
       let best = 0;
@@ -4520,10 +4684,12 @@
       state.colHeights[index] += estimateCardHeight(item, width);
     }
     function cardHTML(item, index) {
-      const ratio = ` style="aspect-ratio: ${cardDisplayAspect(item)}"`;
-      const score = Number.isFinite(item.score) ? `<span class="score">${item.score.toFixed(0)}</span>` : '';
+      const view = state.galleryView;
+      const listMode = view === 'list';
       const inCollection = state.mode === 'collection';
       const manualOrder = inCollection && effectiveCollectionSort() === 'manual';
+      const ratio = listMode ? '' : ` style="aspect-ratio: ${cardLayoutAspect(item)}"`;
+      const score = Number.isFinite(item.score) ? `<span class="score">${item.score.toFixed(0)}</span>` : '';
       const cardAccess = inCollection ? '' : ` tabindex="0" role="button" aria-label="查看原图：${escapeHtml(item.name)}"`;
       const imageAccess = inCollection ? ` tabindex="0" role="button" aria-label="查看原图：${escapeHtml(item.name)}" data-card-open` : '';
       const galleryDrag = ` draggable="true" data-gallery-drag title="拖动「${escapeHtml(item.name)}」到参考图以添加"`;
@@ -4533,15 +4699,39 @@
       const removeAction = inCollection
         ? `<button class="card-remove" type="button" data-card-action="remove" aria-label="从收藏夹移出：${escapeHtml(item.name)}" title="移出收藏夹">移除</button>`
         : '';
-      const hits = item.tag_hits && item.tag_hits.length
-        ? `<div class="card-hits">命中：${item.tag_hits.map(t => escapeHtml(t.replaceAll('_',' '))).join(' · ')}</div>`
+      const favoriteAction = view === 'compact'
+        ? ''
+        : `<button class="card-favorite" type="button" data-card-action="favorite" draggable="false" aria-label="收藏：${escapeHtml(item.name)}" title="收藏到…" aria-haspopup="dialog" aria-expanded="false" aria-controls="card-collection-menu">♡</button>`;
+      const hitsText = item.tag_hits && item.tag_hits.length
+        ? item.tag_hits.map(t => escapeHtml(t.replaceAll('_',' '))).join(' · ')
         : '';
+      if (listMode) {
+        const meta = [
+          item.width > 0 && item.height > 0 ? `${item.width} × ${item.height}` : '',
+          Number.isFinite(item.score) ? `匹配 ${item.score.toFixed(0)}` : '',
+        ].filter(Boolean).join(' · ');
+        return `<article class="card card-list" data-index="${index}"${cardAccess}>
+          <div class="image-wrap"${imageAccess}${galleryDrag}>${orderHandle}<img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false"></div>
+          <div class="list-body">
+            <div class="list-name" title="${escapeHtml(item.path)}">${escapeHtml(item.name)}</div>
+            <div class="list-meta">${meta}</div>
+            ${hitsText ? `<div class="list-hits">命中：${hitsText}</div>` : ''}
+          </div>
+          <div class="card-list-actions">${removeAction}${favoriteAction}</div>
+        </article>`;
+      }
+      const hits = hitsText ? `<div class="card-hits">命中：${hitsText}</div>` : '';
       return `<article class="card" data-index="${index}"${cardAccess}>
-          <div class="image-wrap"${ratio}${imageAccess}${galleryDrag}>${orderHandle}<img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">${score}${hits}${removeAction}<button class="card-favorite" type="button" data-card-action="favorite" draggable="false" aria-label="收藏：${escapeHtml(item.name)}" title="收藏到…" aria-haspopup="dialog" aria-expanded="false" aria-controls="card-collection-menu">♡</button></div>
+          <div class="image-wrap"${ratio}${imageAccess}${galleryDrag}>${orderHandle}<img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">${score}${hits}${removeAction}${favoriteAction}</div>
         </article>`;
     }
     function renderGallery(results, { append } = { append: false }) {
       renderCollectionSort();
+      renderGalleryView();
+      const gallery = $('gallery');
+      gallery.classList.toggle('view-square', state.galleryView === 'square');
+      gallery.classList.toggle('view-compact', state.galleryView === 'compact');
+      gallery.classList.toggle('view-list', state.galleryView === 'list');
       if (!append && !results.length) {
         const empty = state.mode === 'browse'
           ? '这个目录及其子目录里还没有已索引的图片。'

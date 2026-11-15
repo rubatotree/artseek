@@ -481,6 +481,15 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn("function renderCollectionSortMenu", html)
         self.assertIn("function applyCollectionSort", html)
         self.assertIn("仅本次查看，不保存", html)
+        self.assertIn('id="gallery-view-toggle"', html)
+        self.assertIn('id="gallery-view-menu"', html)
+        self.assertIn("const GALLERY_VIEW_STORAGE_KEY = 'artseek.galleryView';", html)
+        self.assertIn("function loadGalleryView()", html)
+        self.assertIn("function renderGalleryView()", html)
+        self.assertIn("function applyGalleryView(value)", html)
+        self.assertIn("gallery.classList.toggle('view-list'", html)
+        self.assertIn(".gallery.view-list .card {", html)
+        self.assertIn("缩小的正方形瀑布流", html)
         self.assertIn("collection-sort-badge", html)
         self.assertIn("card-order-handle", html)
         self.assertIn("function persistCardOrder", html)
@@ -556,10 +565,21 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertNotIn('class="card-body"', card_source)
         self.assertNotIn('class="filename"', card_source)
         self.assertNotIn('class="meta"', card_source)
-        self.assertIn('cardDisplayAspect(item)', card_source)
+        self.assertIn('cardLayoutAspect(item)', card_source)
+        self.assertIn("const favoriteAction = view === 'compact'", card_source)
+        self.assertIn("if (listMode) {", card_source)
+        self.assertIn('class="card card-list"', card_source)
+        self.assertIn('class="list-name"', card_source)
+        self.assertIn('class="card-list-actions"', card_source)
         self.assertIn("const CARD_ASPECT_MIN = 0.6;", html)
         self.assertIn("const CARD_ASPECT_MAX = 3;", html)
-        self.assertIn("if (width < 900) return 3;", html)
+        self.assertIn(
+            "if (state.galleryView === 'square' || state.galleryView === 'compact') return 1;",
+            html,
+        )
+        self.assertIn("if (view === 'list') return 1;", html)
+        self.assertIn("if (width < 1100) return view === 'compact' ? 6 : 4;", html)
+        self.assertIn("if (phone || width < 520) return view === 'compact' ? 3 : 2;", html)
         self.assertIn('class="card-hits"', card_source)
         self.assertIn('class="card-remove"', card_source)
         self.assertIn('>♡</button>', card_source)
@@ -693,7 +713,8 @@ class CollectionsApiTests(unittest.TestCase):
             html,
         )
         self.assertIn("function cardDisplayAspect(item)", html)
-        self.assertIn("return columnWidth / cardDisplayAspect(item);", html)
+        self.assertIn("return columnWidth / cardLayoutAspect(item);", html)
+        self.assertIn("if (state.galleryView === 'list') return 76;", html)
 
     def test_missing_qdrant_collection_returns_an_empty_page_without_pruning_membership(
         self,
