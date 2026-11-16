@@ -357,7 +357,6 @@
     }
     .primary { color: white; background: linear-gradient(135deg, #cc7897, #b8759d); box-shadow: 0 8px 20px #e5bfd0; }
     .secondary, .upload-label { color: #665866; background: #f6f1f5; }
-    .random-browse { white-space: nowrap; }
     button:focus-visible { outline: 2px solid #ddb2c2; outline-offset: 2px; }
     input[type="file"] { display: none; }
     .viewer-weight { display: flex; align-items: center; gap: 6px; color: #ddd6e0; font-size: 13px; }
@@ -1021,7 +1020,7 @@
       }
       #query { font-size: 16px; min-height: 44px; padding: 10px 12px; min-width: 0; }
       .search-actions { gap: 6px; }
-      #search, .random-browse { min-height: 44px; padding: 10px 12px; box-shadow: none; }
+      #search { min-height: 44px; padding: 10px 12px; box-shadow: none; }
       .composer { margin-top: 8px; }
       .tree-panel { order: -1; }
       .results-column { order: 0; }
@@ -1328,7 +1327,6 @@
           <input id="query" type="text" name="artseek-query" placeholder="搜索图片，或粘贴参考图..." title="可输入描述，或直接粘贴参考图" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" inputmode="search" enterkeyhint="search">
           <div class="search-actions">
             <button class="primary" id="search" type="submit">查询</button>
-            <button class="secondary random-browse" id="random-browse" type="button" title="在当前选定范围内随机翻阅">随机瀑布</button>
           </div>
         </div>
         <div class="composer" id="composer">
@@ -1499,6 +1497,7 @@
       { value: 'mtime_asc', label: '修改日期 · 旧→新' },
       { value: 'name_asc', label: '名称 · A→Z' },
       { value: 'name_desc', label: '名称 · Z→A' },
+      { value: 'random', label: '随机' },
       { value: 'manual', label: '手动排序' },
     ];
     const COLLECTION_SORT_LABELS = Object.fromEntries(
@@ -1509,6 +1508,7 @@
       { value: 'name_desc', label: '名称 · Z→A' },
       { value: 'mtime', label: '最近更新' },
       { value: 'mtime_asc', label: '最早更新' },
+      { value: 'random', label: '随机' },
     ];
     const FOLDER_SORT_LABELS = Object.fromEntries(
       FOLDER_SORT_OPTIONS.map((option) => [option.value, option.label])
@@ -1546,7 +1546,8 @@
       searchSnapshotId: '', searchRequest: null,
       colHeights: [],
       mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
-      browseSort: loadFolderSort(),
+      browseSort: loadFolderSort(), browseSeed: null, scopeTotal: 0,
+      collectionRandomSeed: null,
       randomSeed: null, randomTotal: 0,
       collections: [], collectionId: '', collectionName: '', collectionTotal: null,
       editingCollectionId: '', pendingCreatedCollectionId: '', collectionEditMode: '', collectionEditModeTransitionTimer: 0, collectionSearchTimer: 0,
@@ -3764,7 +3765,7 @@
       if (restoreFocus) $('collection-sort-toggle').focus();
     }
     function browseSortActive() {
-      return state.mode === 'browse' && Boolean(state.browseKey);
+      return state.mode === 'scope' || (state.mode === 'browse' && Boolean(state.browseKey));
     }
     function effectiveBrowseSort() {
       return FOLDER_SORT_LABELS[state.browseSort] ? state.browseSort : 'name';
@@ -3838,21 +3839,33 @@
       const title = `${browse ? '图片排序' : '排序'}：${label}${temporary ? '（仅本次查看）' : ''}`;
       toggle.setAttribute('aria-label', title);
       toggle.title = title;
-      $('collection-sort-pin').hidden = browse || !temporary || state.collectionSortBusy;
+      $('collection-sort-pin').hidden = browse || sort === 'random' || !temporary || state.collectionSortBusy;
       syncCollectionSortMenuChecks();
     }
     async function applyCollectionSort(sort, { temporary = false } = {}) {
       if (browseSortActive()) {
         if (!FOLDER_SORT_LABELS[sort]) return;
         state.browseSort = sort;
+        if (sort === 'random') state.browseSeed = newRandomSeed();
         try { localStorage.setItem(FOLDER_SORT_STORAGE_KEY, sort); }
         catch (_) { /* keep in-memory */ }
         closeCollectionSortMenu({ restoreFocus: true });
         renderCollectionSort();
-        await fetchFolderImages({ reset: true });
+        if (state.mode === 'scope') await fetchScopeImages({ reset: true });
+        else await fetchFolderImages({ reset: true });
         return;
       }
       if (!state.collectionId || state.collectionSortBusy) return;
+      if (sort === 'random') {
+        state.collectionViewSort = 'random';
+        state.collectionRandomSeed = newRandomSeed();
+        state.collectionSortTemp = true;
+        closeCollectionSortMenu({ restoreFocus: true });
+        renderCollectionSort();
+        await fetchCollectionImages({ reset: true });
+        setCollectionStatus('已按随机顺序查看，本次不会保存。');
+        return;
+      }
       const label = COLLECTION_SORT_LABELS[sort] || sort;
       closeCollectionSortMenu({ restoreFocus: true });
       if (temporary) {
@@ -3868,6 +3881,7 @@
         return;
       }
       if (sort === savedCollectionSort() && !state.collectionViewSort) return;
+      state.collectionRandomSeed = null;
       state.collectionSortBusy = true;
       renderCollectionSort();
       try {
@@ -4949,6 +4963,10 @@
           offset: String(reset ? 0 : state.results.length),
         });
         if (state.collectionViewSort) params.set('sort', state.collectionViewSort);
+        if (state.collectionViewSort === 'random') {
+          if (state.collectionRandomSeed == null) state.collectionRandomSeed = newRandomSeed();
+          params.set('seed', String(state.collectionRandomSeed));
+        }
         if (state.authorKey) params.set('author_key', state.authorKey);
         const data = await parseResponse(await fetch(`/api/collections/${encodeURIComponent(collectionId)}/images?${params}`));
         if (seq !== state.searchSeq) return;
@@ -5038,6 +5056,7 @@
       if (state.mode === 'random') return fetchRandomBrowse({ reset: false });
       if (state.mode === 'collection') return fetchCollectionImages({ reset: false });
       if (state.mode === 'author') return fetchAuthorImages({ reset: false });
+      if (state.mode === 'scope') return fetchScopeImages({ reset: false });
       if (state.mode === 'search') return fetchResults({ reset: false });
       return Promise.resolve();
     }
@@ -5164,6 +5183,117 @@
       fetchFolderImages({ reset: true });
     }
 
+    function startScopeBrowse({ skipRoute = false } = {}) {
+      if (!treeState.selected.size) {
+        refreshDefaultGallery();
+        return;
+      }
+      state.mode = 'scope';
+      state.collectionId = '';
+      state.collectionName = '';
+      state.collectionTotal = null;
+      state.randomSeed = null;
+      state.scopeTotal = 0;
+      renderTree();
+      renderCollectionList();
+      renderCollectionSort();
+      renderGalleryView();
+      if (!skipRoute) commitGalleryRoute({ replace: true });
+      fetchScopeImages({ reset: true });
+    }
+
+    async function fetchScopeImages({ reset }) {
+      if (!treeState.selected.size) return;
+      if (!reset && (state.loadingMore || !state.hasMore)) return;
+      const seq = reset ? ++state.searchSeq : state.searchSeq;
+      const timeRange = currentTimeRange();
+      const sort = state.browseSort || 'name';
+      if (sort === 'random' && state.browseSeed == null) state.browseSeed = newRandomSeed();
+      if (reset) {
+        state.hasMore = false;
+        $('panel').classList.add('loading');
+        $('query-info').textContent = '正在载入已勾选目录中的图片…';
+        $('load-more').hidden = true;
+      } else {
+        state.loadingMore = true;
+        $('load-more').textContent = '正在载入更多已勾选目录中的图片…';
+        $('load-more').hidden = false;
+      }
+      try {
+        const params = new URLSearchParams({
+          folder_keys: JSON.stringify([...treeState.selected]),
+          sort,
+          limit: String(Number($('limit').value) || 40),
+          offset: String(reset ? 0 : state.results.length),
+        });
+        if (sort === 'random' && state.browseSeed != null) {
+          params.set('seed', String(state.browseSeed));
+        }
+        if (timeRange.after) params.set('mtime_after', timeRange.after);
+        if (timeRange.before) params.set('mtime_before', timeRange.before);
+        if (state.authorKey) params.set('author_key', state.authorKey);
+        const data = await parseResponse(await fetch(`/api/scope-images?${params}`));
+        if (seq !== state.searchSeq) return;
+        const incoming = data.results || [];
+        state.scopeTotal = Number(data.total || 0);
+        if (state.browseSort === 'random' && data.seed != null) state.browseSeed = data.seed;
+        if (reset) {
+          state.results = incoming;
+          renderGallery(state.results, { append: false });
+        } else {
+          state.results = state.results.concat(incoming);
+          renderGallery(incoming, { append: true });
+        }
+        state.hasMore = Boolean(data.has_more) && incoming.length > 0;
+        $('load-more').hidden = !state.hasMore;
+        renderScopeInfo(state.results.length);
+        if ($('viewer').open) {
+          updateViewerNav();
+          updateProvenanceButton();
+          syncNeighborImages();
+          prefetchViewerAhead();
+        }
+      } catch (error) {
+        if (seq !== state.searchSeq) return;
+        if (reset) $('query-info').textContent = `已勾选目录载入失败：${error.message}`;
+        else $('load-more').textContent = `继续载入失败：${error.message}`;
+        if (!reset) state.hasMore = false;
+      } finally {
+        if (seq === state.searchSeq) {
+          $('panel').classList.remove('loading');
+          state.loadingMore = false;
+          if (!state.hasMore && state.results.length) $('load-more').hidden = true;
+        }
+      }
+    }
+
+    function renderScopeInfo(shown) {
+      const sort = FOLDER_SORT_LABELS[state.browseSort] || state.browseSort;
+      const more = state.hasMore ? ' · 下滑加载更多' : '';
+      $('query-info').textContent = `已勾选 ${treeState.selected.size} 个目录 · ${shown} / ${state.scopeTotal} 张图 · ${sort}${more}`;
+      renderCollectionSort();
+    }
+
+    function refreshDefaultGallery() {
+      if (['search', 'collection', 'author', 'random'].includes(state.mode)) return;
+      if (treeState.selected.size) {
+        startScopeBrowse({ skipRoute: true });
+        return;
+      }
+      if (state.browseKey) {
+        previewFolder(state.browseKey, state.browseName, { skipRoute: true });
+        return;
+      }
+      state.mode = 'idle';
+      state.results = [];
+      state.hasMore = false;
+      state.scopeTotal = 0;
+      renderGallery(state.results, { append: false });
+      renderCollectionSort();
+      renderGalleryView();
+      $('query-info').textContent = '勾选左侧目录后，这里会显示所有已勾选目录中的图片。';
+    }
+
     async function fetchFolderImages({ reset }) {
       const key = state.browseKey;
       if (!key) return;
@@ -5180,12 +5310,15 @@
         $('load-more').hidden = false;
       }
       try {
+        const sort = state.browseSort || 'name';
+        if (sort === 'random' && state.browseSeed == null) state.browseSeed = newRandomSeed();
         const params = new URLSearchParams({
           folder_key: key,
-          sort: state.browseSort || 'name',
+          sort,
           limit: String(Number($('limit').value) || 40),
           offset: String(reset ? 0 : state.results.length),
         });
+        if (sort === 'random' && state.browseSeed != null) params.set('seed', String(state.browseSeed));
         if (state.authorKey) params.set('author_key', state.authorKey);
         const response = await fetch(`/api/folder-images?${params}`);
         const data = await parseResponse(response);
@@ -6621,6 +6754,7 @@
       renderTree();
       updateTreeSummary();
       scheduleTreeSave();
+      refreshDefaultGallery();
     }
     function scheduleTreeSave() {
       clearTimeout(treeState.saveTimer);
@@ -6957,7 +7091,6 @@
 
     $('index-add').addEventListener('click', addIndexDirectory);
     $('index-refresh-all').addEventListener('click', refreshAllIndexed);
-    $('random-browse').addEventListener('click', startRandomBrowse);
     $('index-path').addEventListener('keydown', (event) => {
       if (event.key === 'Enter') { event.preventDefault(); addIndexDirectory(); }
     });

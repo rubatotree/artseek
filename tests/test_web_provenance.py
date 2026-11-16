@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import time
 import unittest
@@ -253,6 +254,31 @@ class ProvenanceApiTests(unittest.TestCase):
                     break
                 time.sleep(0.02)
         self.assertFalse(status["running"])
+
+    def test_scope_and_folder_random_sort_are_seeded(self) -> None:
+        folder_key = "d:/art/收藏"
+        scope = self.client.get(
+            "/api/scope-images",
+            params={"folder_keys": json.dumps([folder_key]), "sort": "random", "seed": 7},
+        )
+        self.assertEqual(scope.status_code, 200)
+        self.assertEqual(scope.json()["seed"], 7)
+        self.assertEqual([item["id"] for item in scope.json()["results"]], ["p1"])
+        repeat = self.client.get(
+            "/api/scope-images",
+            params={"folder_keys": json.dumps([folder_key]), "sort": "random", "seed": 7},
+        )
+        self.assertEqual(
+            [item["id"] for item in repeat.json()["results"]],
+            [item["id"] for item in scope.json()["results"]],
+        )
+        folder = self.client.get(
+            "/api/folder-images",
+            params={"folder_key": folder_key, "sort": "random", "seed": 9},
+        )
+        self.assertEqual(folder.status_code, 200)
+        self.assertEqual(folder.json()["seed"], 9)
+        self.assertEqual([item["id"] for item in folder.json()["results"]], ["p1"])
 
     def test_scan_job_updates_records(self) -> None:
         response = self.client.post(

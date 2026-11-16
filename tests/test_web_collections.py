@@ -193,6 +193,28 @@ class CollectionsApiTests(unittest.TestCase):
         )
         self.assertEqual(pinned_update.status_code, 422)
 
+    def test_random_collection_sort_is_seeded_and_not_persisted(self) -> None:
+        collection = self.create_collection("随机")
+        endpoint = f"/api/collections/{collection['id']}/items"
+        for point_id in ("a", "b", "c"):
+            self.client.post(endpoint, json={"image_id": point_id})
+        first = self.client.get(
+            f"/api/collections/{collection['id']}/images",
+            params={"sort": "random", "seed": 11},
+        )
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json()["sort"], "random")
+        self.assertEqual(first.json()["seed"], 11)
+        self.assertNotEqual(first.json()["saved_sort"], "random")
+        second = self.client.get(
+            f"/api/collections/{collection['id']}/images",
+            params={"sort": "random", "seed": 11},
+        )
+        self.assertEqual(
+            [item["id"] for item in first.json()["results"]],
+            [item["id"] for item in second.json()["results"]],
+        )
+
     def test_item_membership_changes_expose_undo_and_redo(self) -> None:
         self.assertEqual(self.client.post("/api/collections/undo").status_code, 409)
         collection = self.create_collection()

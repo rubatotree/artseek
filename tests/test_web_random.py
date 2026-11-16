@@ -105,10 +105,12 @@ class RandomBrowseApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("勾选", response.json()["detail"])
 
-    def test_homepage_exposes_random_waterfall_action(self) -> None:
+    def test_homepage_removes_random_waterfall_and_exposes_scope_sort(self) -> None:
         html = self.client.get("/").text
-        self.assertIn('id="random-browse"', html)
-        self.assertIn("/api/random-browse", html)
+        self.assertNotIn('id="random-browse"', html)
+        self.assertIn("/api/scope-images", html)
+        self.assertIn("artseek.folderSort", html)
+        self.assertIn("value: 'random'", html)
 
 
 if __name__ == "__main__":

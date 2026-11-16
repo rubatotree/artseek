@@ -809,19 +809,27 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         limit: int = 40,
         offset: int = 0,
         author_key: str | None = None,
+        seed: int | None = None,
     ) -> dict:
         key = canonical_path(folder_key)
         catalog = app.state.engine.folder_catalog()
         acc = catalog.folders.get(key)
         if acc is None:
             raise HTTPException(404, "该目录不在索引中")
-        method = sort if sort in SORT_KEYS else DEFAULT_SORT
+        method = sort if sort in SORT_KEYS or sort == "random" else DEFAULT_SORT
         page_size = max(1, min(limit, 200))
         start = max(0, offset)
         refs = catalog.list_folder_images(key, method)
         if author_key:
             allowed = set(app.state.provenance.point_ids_for_author(author_key))
             refs = [item for item in refs if item[0] in allowed]
+        if method == "random":
+            seed = (
+                seed
+                if seed is not None
+                else random.SystemRandom().randrange(1 << 53)
+            )
+            random.Random(seed).shuffle(refs)
         total = len(refs)
         page = refs[start : start + page_size]
         payloads = app.state.engine.store.retrieve_payloads([point_id for point_id, _, _ in page])
@@ -835,10 +843,96 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "folder_name": acc.name,
             "folder_path": acc.path,
             "sort": method,
+            "seed": seed if method == "random" else None,
             "offset": start,
             "limit": page_size,
             "total": total,
             "has_more": start + len(results) < total,
+            "results": results,
+        }
+
+    @app.get("/api/scope-images")
+    def scope_images(
+        folder_keys: str = "",
+        sort: str = DEFAULT_SORT,
+        seed: int | None = None,
+        limit: int = 40,
+        offset: int = 0,
+        author_key: str | None = None,
+        mtime_after: str | None = None,
+        mtime_before: str | None = None,
+    ) -> dict[str, Any]:
+        keys = parse_folder_keys(folder_keys) or []
+        if not keys:
+            raise HTTPException(400, "请先勾选要查看的目录")
+        catalog = app.state.engine.folder_catalog()
+        ids = catalog.point_ids(
+            keys,
+            after_ns=day_start_ns(mtime_after),
+            before_ns=day_end_ns(mtime_before),
+        )
+        if ids is None:
+            ids = [point_id for acc in catalog.folders.values() for point_id in acc.ids]
+        if author_key:
+            allowed = set(app.state.provenance.point_ids_for_author(author_key))
+            ids = [point_id for point_id in ids if point_id in allowed]
+        ids = list(dict.fromkeys(ids))
+        method = sort if sort in SORT_KEYS or sort == "random" else DEFAULT_SORT
+        if method == "random":
+            seed = (
+                seed
+                if seed is not None
+                else random.SystemRandom().randrange(1 << 53)
+            )
+            random.Random(seed).shuffle(ids)
+        elif method in {"name", "name_desc", "mtime", "mtime_asc"}:
+            wanted = set(ids)
+            names: dict[str, str] = {}
+            mtimes: dict[str, int] = {}
+            for acc in catalog.folders.values():
+                for index, point_id in enumerate(acc.ids):
+                    if point_id not in wanted:
+                        continue
+                    names[point_id] = (
+                        acc.id_names[index] if index < len(acc.id_names) else point_id
+                    )
+                    mtimes[point_id] = (
+                        acc.id_mtimes[index] if index < len(acc.id_mtimes) else 0
+                    )
+            if method.startswith("name"):
+                ids.sort(
+                    key=lambda point_id: (
+                        names.get(point_id, point_id).casefold(),
+                        point_id,
+                    ),
+                    reverse=method == "name_desc",
+                )
+            else:
+                ids.sort(
+                    key=lambda point_id: (mtimes.get(point_id, 0), point_id),
+                    reverse=method == "mtime",
+                )
+        total = len(ids)
+        page_size = max(1, min(limit, 200))
+        start = max(0, min(offset, 50_000))
+        page_ids = ids[start : start + page_size]
+        payloads = app.state.engine.store.retrieve_payloads(page_ids)
+        results = attach_provenance(
+            [
+                gallery_result(point_id, payloads[point_id])
+                for point_id in page_ids
+                if isinstance(payloads.get(point_id), dict)
+            ]
+        )
+        return {
+            "folder_keys": keys,
+            "folder_count": len(keys),
+            "sort": method,
+            "seed": seed if method == "random" else None,
+            "offset": start,
+            "limit": page_size,
+            "total": total,
+            "has_more": start + len(page_ids) < total,
             "results": results,
         }
 
@@ -1014,11 +1108,17 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         limit: int = 40,
         offset: int = Query(default=0, ge=0, le=10_000),
         author_key: str | None = None,
+        seed: int | None = None,
     ) -> dict[str, Any]:
         collection = require_collection(collection_id)
         # A query-level sort is a temporary view override. It never persists.
-        method = sort if sort in COLLECTION_SORT_KEYS else collection.sort
-        if method not in COLLECTION_SORT_KEYS:
+        random_requested = sort == "random"
+        method = (
+            "random"
+            if random_requested
+            else (sort if sort in COLLECTION_SORT_KEYS else collection.sort)
+        )
+        if method not in COLLECTION_SORT_KEYS and method != "random":
             method = DEFAULT_COLLECTION_SORT
         needle = query.strip().casefold()
         page_size = max(1, min(limit, 200))
@@ -1043,7 +1143,29 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             ]
             return needle in "\n".join(searchable).casefold()
 
-        if needle or allowed is not None:
+        if method == "random":
+            filtered: list[tuple[str, dict[str, Any]]] = []
+            for batch_start in range(0, len(collection.item_ids), 256):
+                batch = list(collection.item_ids[batch_start : batch_start + 256])
+                payloads = retrieve_collection_payloads(batch)
+                filtered.extend(
+                    (point_id, payloads[point_id])
+                    for point_id in batch
+                    if point_id in payloads
+                    and isinstance(payloads[point_id], dict)
+                    and matches(point_id, payloads[point_id])
+                )
+            seed = (
+                seed
+                if seed is not None
+                else random.SystemRandom().randrange(1 << 53)
+            )
+            random.Random(seed).shuffle(filtered)
+            page = filtered[start : start + page_size]
+            total = len(filtered)
+            has_more = start + len(page) < total
+            total_exact = True
+        elif needle or allowed is not None:
             filtered: list[tuple[str, dict[str, Any]]] = []
             for batch_start in range(0, len(collection.item_ids), 256):
                 batch = list(collection.item_ids[batch_start : batch_start + 256])
@@ -1092,6 +1214,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "collection": collection_summary(collection),
             "query": query.strip(),
             "sort": method,
+            "seed": seed if method == "random" else None,
             "saved_sort": collection.sort,
             "offset": start,
             "limit": page_size,
