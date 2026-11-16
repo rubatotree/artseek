@@ -129,6 +129,29 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(data["page_label"], "p0")
         self.assertEqual(data["reverse_search"]["saucenao"], "https://saucenao.com/")
 
+    def test_tag_suggestions_cover_source_and_image_tags(self) -> None:
+        self.store.upsert_scan(
+            "p1", self.payload, ParsedSource(parse_filename(self.image.name))
+        )
+        self.store.set_fetch_result(
+            "p1",
+            {
+                "platform": "pixiv",
+                "source_id": "12345678",
+                "page": 0,
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "status": "ok",
+                "tags": ["オリジナル"],
+            },
+        )
+        self.engine.store.payloads["p1"]["tags"] = ["long_hair"]
+        source = self.client.get("/api/tags", params={"kind": "source", "q": "オリ"})
+        self.assertEqual(source.status_code, 200)
+        self.assertEqual(source.json()["tags"][0]["tag"], "オリジナル")
+        image = self.client.get("/api/tags", params={"kind": "image", "q": "hair"})
+        self.assertEqual(image.status_code, 200)
+        self.assertEqual(image.json()["tags"][0]["tag"], "long_hair")
+
     def test_tag_images_endpoint_returns_tagged_records(self) -> None:
         self.store.upsert_scan(
             "p1", self.payload, ParsedSource(parse_filename(self.image.name))

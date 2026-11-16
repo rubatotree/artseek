@@ -289,7 +289,7 @@
       border-radius: 12px; background: #fcf8fa;
     }
     .search-filters[hidden] { display: none; }
-    .filter-field-wrap { display: block; min-width: 0; }
+    .filter-field-wrap { position: relative; display: block; min-width: 0; }
     .filter-field {
       display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center;
       gap: 7px; min-width: 0; color: var(--muted); font-size: 11px;
@@ -321,6 +321,24 @@
       background: transparent; color: #8a5268; font-size: 12px; line-height: 1;
     }
     .filter-chip button:hover { transform: none; background: #efd6e0; }
+    .filter-suggest-toggle {
+      width: 20px; height: 20px; min-height: 0; padding: 0; border-radius: 7px;
+      background: #f6f1f5; color: #8a5268; font-size: 16px; line-height: 18px;
+    }
+    .filter-suggest-toggle:hover { transform: none; background: #efd6e0; }
+    .filter-suggestions {
+      position: absolute; left: 71px; right: 0; top: calc(100% + 4px); z-index: 40;
+      max-height: 210px; overflow: auto; padding: 4px; border: 1px solid #e2d6dd;
+      border-radius: 10px; background: #fff; box-shadow: 0 12px 24px rgba(69,51,76,.14);
+    }
+    .filter-suggestions[hidden] { display: none; }
+    .filter-suggestion {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      width: 100%; padding: 6px 8px; border-radius: 7px; background: transparent;
+      color: var(--ink); font: 500 12px/1.2 inherit; text-align: left;
+    }
+    .filter-suggestion:hover { transform: none; background: var(--rose-soft); }
+    .filter-suggestion small { color: var(--muted); font-size: 10px; }
     .composer { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; margin-top: 10px; }
     .text-weight-card, .ref-add {
       width: 72px; height: 72px; padding: 0; border-radius: 12px;
@@ -1422,8 +1440,10 @@
               <div class="filter-control">
                 <div id="filter-author-chips" class="filter-chips" aria-label="作者筛选标签"></div>
                 <input id="filter-author" type="text" placeholder="作者名/key，回车生成" autocomplete="off" spellcheck="false">
+                <button class="filter-suggest-toggle" type="button" data-suggest-kind="author" aria-label="显示作者列表" title="显示作者列表">+</button>
               </div>
             </label>
+            <div id="filter-author-suggestions" class="filter-suggestions" hidden></div>
           </div>
           <div class="filter-field-wrap">
             <label class="filter-field"><span>标题模糊词</span>
@@ -1437,24 +1457,30 @@
               <div class="filter-control">
                 <div id="filter-text-chips" class="filter-chips" aria-label="来源标签筛选"></div>
                 <input id="filter-text-tags" type="text" placeholder="Pixiv/X tag，回车生成" title="精确匹配 Pixiv/X 来源 tag" autocomplete="off" spellcheck="false">
+                <button class="filter-suggest-toggle" type="button" data-suggest-kind="source" aria-label="显示来源标签列表" title="显示来源标签列表">+</button>
               </div>
             </label>
+            <div id="filter-text-suggestions" class="filter-suggestions" hidden></div>
           </div>
           <div class="filter-field-wrap">
             <label class="filter-field"><span>文字标签</span>
               <div class="filter-control">
                 <div id="filter-tag-text-chips" class="filter-chips" aria-label="文字标签筛选"></div>
                 <input id="filter-tag-text" type="text" placeholder="模糊匹配来源 tag" title="在来源 tag 名称中做文字包含匹配" autocomplete="off" spellcheck="false">
+                <button class="filter-suggest-toggle" type="button" data-suggest-kind="source" aria-label="显示文字标签列表" title="显示文字标签列表">+</button>
               </div>
             </label>
+            <div id="filter-tag-text-suggestions" class="filter-suggestions" hidden></div>
           </div>
           <div class="filter-field-wrap">
             <label class="filter-field"><span>图片标签</span>
               <div class="filter-control">
                 <div id="filter-image-chips" class="filter-chips" aria-label="图片标签筛选"></div>
                 <input id="filter-image-tags" type="text" placeholder="WD tag，回车生成" title="本地画面标签，例如 long_hair" autocomplete="off" spellcheck="false">
+                <button class="filter-suggest-toggle" type="button" data-suggest-kind="image" aria-label="显示图片标签列表" title="显示图片标签列表">+</button>
               </div>
             </label>
+            <div id="filter-image-suggestions" class="filter-suggestions" hidden></div>
           </div>
         </div>
         </form>
@@ -3718,6 +3744,104 @@
       tag_text: { input: 'filter-tag-text', chips: 'filter-tag-text-chips', single: false },
       image_tags: { input: 'filter-image-tags', chips: 'filter-image-chips', single: false },
     };
+    const FILTER_SUGGEST_CONFIG = {
+      'filter-author': {
+        menu: 'filter-author-suggestions', kind: 'author', chipKind: 'author',
+      },
+      'filter-text-tags': {
+        menu: 'filter-text-suggestions', kind: 'source', chipKind: 'text_tags',
+      },
+      'filter-tag-text': {
+        menu: 'filter-tag-text-suggestions', kind: 'source', chipKind: 'tag_text',
+      },
+      'filter-image-tags': {
+        menu: 'filter-image-suggestions', kind: 'image', chipKind: 'image_tags',
+      },
+    };
+    const filterSuggestSeq = {};
+    const filterSuggestTimers = {};
+    function closeFilterSuggestions(fieldId) {
+      const config = FILTER_SUGGEST_CONFIG[fieldId];
+      if (!config) return;
+      $(config.menu).hidden = true;
+      $(config.menu).replaceChildren();
+    }
+    function closeAllFilterSuggestions() {
+      Object.keys(FILTER_SUGGEST_CONFIG).forEach(closeFilterSuggestions);
+    }
+    function updateSuggestToggle(fieldId) {
+      const config = FILTER_SUGGEST_CONFIG[fieldId];
+      if (!config) return;
+      const input = $(fieldId);
+      const button = input.closest('.filter-field-wrap')?.querySelector('.filter-suggest-toggle');
+      if (button) button.hidden = Boolean(input.value.trim());
+    }
+    async function loadFilterSuggestions(fieldId, query = '') {
+      const config = FILTER_SUGGEST_CONFIG[fieldId];
+      if (!config) return;
+      const menu = $(config.menu);
+      const seq = (filterSuggestSeq[fieldId] || 0) + 1;
+      filterSuggestSeq[fieldId] = seq;
+      let url;
+      if (config.kind === 'author') {
+        const params = new URLSearchParams({ q: query, limit: '40' });
+        url = `/api/authors?${params}`;
+      } else {
+        const params = new URLSearchParams({ q: query, kind: config.kind, limit: '80' });
+        url = `/api/tags?${params}`;
+      }
+      try {
+        const data = await parseResponse(await fetch(url));
+        if (filterSuggestSeq[fieldId] !== seq) return;
+        const items = config.kind === 'author' ? (data.authors || []) : (data.tags || []);
+        menu.replaceChildren();
+        if (!items.length) {
+          const empty = document.createElement('div');
+          empty.className = 'filter-suggestion';
+          empty.textContent = '没有匹配项';
+          menu.append(empty);
+        } else {
+          for (const item of items) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'filter-suggestion';
+            const label = config.kind === 'author'
+              ? (item.name || item.handle || item.key)
+              : `#${item.tag}`;
+            const hint = config.kind === 'author'
+              ? (item.handle ? `@${item.handle}` : item.key)
+              : `${item.count || 0} 张`;
+            button.innerHTML = `<span>${escapeHtml(label)}</span><small>${escapeHtml(hint)}</small>`;
+            button.addEventListener('click', () => {
+              const value = config.kind === 'author' ? item.key : item.tag;
+              addFilterChip(config.chipKind, value);
+              $(fieldId).value = '';
+              updateSuggestToggle(fieldId);
+              updateFilterBadge();
+              closeFilterSuggestions(fieldId);
+              scheduleFilterApply();
+            });
+            menu.append(button);
+          }
+        }
+        menu.hidden = false;
+      } catch (error) {
+        if (filterSuggestSeq[fieldId] !== seq) return;
+        menu.innerHTML = `<div class="filter-suggestion">列表读取失败：${escapeHtml(error.message)}</div>`;
+        menu.hidden = false;
+      }
+    }
+    function scheduleFilterSuggestions(fieldId, query) {
+      clearTimeout(filterSuggestTimers[fieldId]);
+      if (!query.trim()) {
+        closeFilterSuggestions(fieldId);
+        return;
+      }
+      filterSuggestTimers[fieldId] = setTimeout(() => {
+        delete filterSuggestTimers[fieldId];
+        loadFilterSuggestions(fieldId, query);
+      }, 180);
+    }
     function scheduleFilterApply() {
       clearTimeout(state.filterApplyTimer);
       state.filterApplyTimer = setTimeout(() => {
@@ -3806,6 +3930,7 @@
       if (!raw) return;
       for (const value of splitFilterTags(raw)) addFilterChip(kind, value);
       input.value = '';
+      updateSuggestToggle(config.input);
       updateFilterBadge();
       scheduleFilterApply();
     }
@@ -3849,6 +3974,7 @@
       $('filter-text-tags').value = '';
       $('filter-tag-text').value = '';
       $('filter-image-tags').value = '';
+      Object.keys(FILTER_SUGGEST_CONFIG).forEach(updateSuggestToggle);
       Object.values(FILTER_CHIP_CONFIG).forEach((config) => $(config.chips).replaceChildren());
       if (filters.author) addFilterChip('author', filters.author);
       for (const tag of filters.text_tags || []) addFilterChip('text_tags', tag);
@@ -3864,9 +3990,40 @@
       });
       $(config.input).addEventListener('blur', () => commitFilterInput(kind));
     });
+    Object.entries(FILTER_SUGGEST_CONFIG).forEach(([fieldId, config]) => {
+      const input = $(fieldId);
+      const wrapper = input.closest('.filter-field-wrap');
+      const toggle = wrapper?.querySelector('.filter-suggest-toggle');
+      toggle?.addEventListener('click', () => {
+        if (!$(config.menu).hidden) {
+          closeFilterSuggestions(fieldId);
+          return;
+        }
+        closeAllFilterSuggestions();
+        loadFilterSuggestions(fieldId, '');
+      });
+      input.addEventListener('input', () => {
+        updateSuggestToggle(fieldId);
+        scheduleFilterSuggestions(fieldId, input.value);
+      });
+      input.addEventListener('focus', () => {
+        if (input.value.trim()) scheduleFilterSuggestions(fieldId, input.value);
+      });
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closeFilterSuggestions(fieldId);
+      });
+      updateSuggestToggle(fieldId);
+    });
+    document.addEventListener('pointerdown', (event) => {
+      if (!event.target.closest('.filter-field-wrap')) closeAllFilterSuggestions();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeAllFilterSuggestions();
+    });
     function setFilterPanelOpen(open) {
       $('search-filters').hidden = !open;
       $('filter-toggle').setAttribute('aria-expanded', String(open));
+      if (!open) closeAllFilterSuggestions();
     }
     function formatWeight(value) {
       return Number(value).toFixed(Number.isInteger(Number(value)) ? 0 : 1);

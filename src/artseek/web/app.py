@@ -513,6 +513,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     app.state.collection_id_cursors: OrderedDict[str, CollectionIdCursor] = OrderedDict()
     app.state.collection_sort_cursors: OrderedDict[str, CollectionSortCursor] = OrderedDict()
     app.state.collection_id_cursors_lock = threading.RLock()
+    app.state.tag_suggestion_lock = threading.RLock()
+    app.state.image_tag_suggestions = {"generation": -1, "items": []}
     static_path = Path(__file__).with_name("static") / "index.html"
 
     @app.on_event("shutdown")
@@ -2348,6 +2350,45 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "has_more": offset + len(page_ids) < total,
             "results": results,
         }
+
+    def image_tag_suggestions() -> list[dict[str, Any]]:
+        generation = int(app.state.collection_index_generation)
+        cache = app.state.image_tag_suggestions
+        with app.state.tag_suggestion_lock:
+            if cache.get("generation") == generation:
+                return list(cache.get("items") or [])
+            counts: dict[str, int] = {}
+            for _, payload in app.state.engine.store.iter_payloads():
+                for tag in payload.get("tags") or []:
+                    text = str(tag or "").strip()
+                    if text:
+                        counts[text] = counts.get(text, 0) + 1
+            items = [
+                {"tag": tag, "count": count}
+                for tag, count in sorted(
+                    counts.items(), key=lambda item: (-item[1], item[0].casefold())
+                )
+            ]
+            app.state.image_tag_suggestions = {"generation": generation, "items": items}
+            return list(items)
+
+    @app.get("/api/tags")
+    def tag_suggestions(
+        q: str = "",
+        kind: str = "source",
+        limit: int = 60,
+    ) -> dict[str, Any]:
+        page_size = max(1, min(int(limit), 200))
+        if kind == "image":
+            needle = str(q or "").strip().casefold()
+            items = [
+                item
+                for item in image_tag_suggestions()
+                if not needle or needle in item["tag"].casefold()
+            ][:page_size]
+        else:
+            items = app.state.provenance.list_source_tags(q, limit=page_size)
+        return {"kind": kind, "tags": items}
 
     @app.get("/api/tags/{tag}/images")
     def tag_images(

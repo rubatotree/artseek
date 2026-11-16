@@ -779,6 +779,24 @@ class ProvenanceStore:
             ).fetchall()
         return [str(row["point_id"]) for row in rows]
 
+    def list_source_tags(self, query: str = "", *, limit: int = 60) -> list[dict[str, Any]]:
+        needle = f"%{str(query or '').strip().casefold()}%"
+        params: list[Any] = []
+        where = "image_source.tags_json IS NOT NULL AND TRIM(value) <> ''"
+        if str(query or "").strip():
+            where += " AND LOWER(value) LIKE ?"
+            params.append(needle)
+        params.append(max(1, min(int(limit), 200)))
+        with self._read() as connection:
+            rows = connection.execute(
+                "SELECT value AS tag, COUNT(*) AS count "
+                "FROM image_source, json_each(image_source.tags_json) "
+                f"WHERE {where} GROUP BY value "
+                "ORDER BY count DESC, value COLLATE NOCASE LIMIT ?",
+                params,
+            ).fetchall()
+        return [{"tag": str(row["tag"]), "count": int(row["count"])} for row in rows]
+
     def point_ids_for_title(self, query: str) -> list[str]:
         terms = [term for term in re.split(r"\s+", str(query or "").strip()) if term]
         if not terms:
