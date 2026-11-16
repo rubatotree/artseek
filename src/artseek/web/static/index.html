@@ -1906,9 +1906,9 @@
         return;
       }
       clearTimeout(state.viewerTitleTimer);
-      state.viewerTitleTimer = setTimeout(() => fetchViewerTitle(item), 120);
+      state.viewerTitleTimer = setTimeout(() => prefetchProvenance(item), 120);
     }
-    async function fetchViewerTitle(item) {
+    async function prefetchProvenance(item) {
       if (!item || !item.id) return;
       const cachedNow = state.viewerTitleCache.get(item.id);
       if (cachedNow) {
@@ -5998,12 +5998,19 @@
         const index = currentRefIndex() + delta;
         if (index < 0 || index >= state.references.length) return null;
         const ref = state.references[index];
-        return { src: ref.src, thumb: ref.preview || ref.src, width: ref.width || 0, height: ref.height || 0 };
+        return {
+          item: ref,
+          src: ref.src,
+          thumb: ref.preview || ref.src,
+          width: ref.width || 0,
+          height: ref.height || 0,
+        };
       }
       const index = currentIndex() + delta;
       if (index < 0 || index >= state.results.length) return null;
       const item = state.results[index];
       return {
+        item,
         src: galleryImageSrc(item),
         thumb: galleryThumbSrc(item),
         width: item.width || 0,
@@ -6078,9 +6085,12 @@
       applyViewTransform();
     }
     function prefetchViewerAhead() {
-      for (const delta of [-2, -1, 1, 2]) {
+      for (const delta of [-3, -2, -1, 1, 2, 3]) {
         const neighbor = viewerNeighbor(delta);
-        if (neighbor) preloadSrc(neighbor.src);
+        if (neighbor) {
+          preloadSrc(neighbor.src);
+          void prefetchProvenance(neighbor.item);
+        }
       }
       if (state.viewerSource === 'reference' || !state.hasMore) return;
       const index = currentIndex();
@@ -6089,8 +6099,13 @@
         if (!$('viewer').open) return;
         updateViewerNav();
         syncNeighborImages();
-        const extra = viewerNeighbor(1) || viewerNeighbor(2);
-        if (extra) preloadSrc(extra.src);
+        for (const delta of [-1, 1, 2, 3]) {
+          const extra = viewerNeighbor(delta);
+          if (extra) {
+            preloadSrc(extra.src);
+            void prefetchProvenance(extra.item);
+          }
+        }
       });
     }
     function clearViewerSlots() {
