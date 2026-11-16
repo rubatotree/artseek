@@ -321,6 +321,7 @@ class ProvenanceApiTests(unittest.TestCase):
                 "query": "",
                 "title_query": "晴れ",
                 "text_tags": ["オリジナル"],
+                "tag_text": ["リジナ"],
                 "image_tags": ["long_hair"],
                 "folder_keys": [],
             },
@@ -329,6 +330,7 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in response.json()["results"]], ["p1"])
         self.assertEqual(len(self.engine.search_calls), before)
         self.assertEqual(response.json()["applied_filters"]["title_query"], "晴れ")
+        self.assertEqual(response.json()["applied_filters"]["tag_text"], ["リジナ"])
         self.assertEqual(response.json()["applied_filters"]["image_tags"], ["long_hair"])
 
     def test_search_filters_parse_author_and_tag_tokens(self) -> None:
@@ -419,6 +421,14 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(folder.status_code, 200)
         self.assertEqual(folder.json()["seed"], 9)
         self.assertEqual([item["id"] for item in folder.json()["results"]], ["p1"])
+        many = [f"d:/art/收藏/{index}" for index in range(601)]
+        posted = self.client.post(
+            "/api/scope-images",
+            json={"folder_keys": many, "sort": "random", "seed": 3},
+        )
+        self.assertEqual(posted.status_code, 200)
+        self.assertEqual(posted.json()["folder_count"], 601)
+        self.assertEqual([item["id"] for item in posted.json()["results"]], ["p1"])
 
     def test_scan_job_updates_records(self) -> None:
         response = self.client.post(

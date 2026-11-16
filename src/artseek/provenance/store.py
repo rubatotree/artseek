@@ -794,6 +794,23 @@ class ProvenanceStore:
             ).fetchall()
         return [str(row["point_id"]) for row in rows]
 
+    def point_ids_for_tag_text(self, terms: Sequence[str]) -> list[str]:
+        clean = [str(term).strip() for term in terms if str(term).strip()]
+        if not clean:
+            return []
+        clauses = " AND ".join(
+            "EXISTS (SELECT 1 FROM json_each(image_source.tags_json) "
+            "WHERE value LIKE ? COLLATE NOCASE)"
+            for _ in clean
+        )
+        with self._read() as connection:
+            rows = connection.execute(
+                f"SELECT point_id FROM image_source WHERE {clauses} "
+                "ORDER BY mtime_ns IS NULL, mtime_ns DESC, updated_at DESC, point_id",
+                [f"%{term}%" for term in clean],
+            ).fetchall()
+        return [str(row["point_id"]) for row in rows]
+
     def point_ids_for_tags(self, tags: Sequence[str]) -> list[str]:
         clean = [str(tag).strip() for tag in tags if str(tag).strip()]
         if not clean:
