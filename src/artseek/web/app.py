@@ -2256,45 +2256,87 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
 
         def run() -> None:
             summary = {"ok": 0, "skipped": 0, "failed": 0}
+            batch_size = 64
+            neighbor_limit = 24
+            top_tags = 5
+
+            def rank_neighbors(
+                point_id: str, neighbors: list[Any]
+            ) -> tuple[list[str], dict[str, float]]:
+                votes: dict[str, float] = {}
+                for neighbor in neighbors:
+                    if neighbor.id == point_id:
+                        continue
+                    for tag in neighbor.payload.get("tags") or []:
+                        text = str(tag).strip()
+                        if text:
+                            votes[text] = votes.get(text, 0.0) + float(neighbor.score)
+                ranked = sorted(votes.items(), key=lambda item: item[1], reverse=True)
+                top = ranked[:top_tags]
+                return (
+                    [tag for tag, _ in top],
+                    {
+                        tag: round(score / max(ranked[0][1], 1e-6), 4)
+                        for tag, score in top
+                    },
+                )
+
+            matrix_data = None
+            if len(point_ids) >= 64 and app.state.engine.store.count() <= 200_000:
+                job.message = "正在加载视觉向量…"
+                try:
+                    matrix_data = app.state.engine.store.visual_tag_data()
+                except Exception:
+                    matrix_data = None
+
             try:
-                for index, point_id in enumerate(point_ids, start=1):
+                for start in range(0, len(point_ids), batch_size):
                     if job.stop_event.is_set():
                         break
                     while job.pause_event.is_set() and not job.stop_event.is_set():
                         time.sleep(0.25)
                     if job.stop_event.is_set():
                         break
+                    chunk = point_ids[start : start + batch_size]
                     try:
-                        vector = app.state.engine.store.visual_vector(point_id)
-                        if vector is None:
-                            summary["skipped"] += 1
-                            continue
-                        neighbors = app.state.engine.store.query(
-                            vector, "visual", 24
-                        )
-                        votes: dict[str, float] = {}
-                        for neighbor in neighbors:
-                            if neighbor.id == point_id:
-                                continue
-                            for tag in neighbor.payload.get("tags") or []:
-                                text = str(tag).strip()
-                                if text:
-                                    votes[text] = votes.get(text, 0.0) + float(neighbor.score)
-                        ranked = sorted(votes.items(), key=lambda item: item[1], reverse=True)
-                        tags = [tag for tag, _ in ranked[:5]]
-                        scores = {
-                            tag: round(score / max(ranked[0][1], 1e-6), 4)
-                            for tag, score in ranked[:5]
-                        }
-                        if tags:
-                            store.set_auto_tags(point_id, tags, scores)
-                            summary["ok"] += 1
+                        updates: list[tuple[str, list[str], dict[str, float]]] = []
+                        if matrix_data is not None:
+                            votes = app.state.engine.store.neighbor_tag_votes_from_data(
+                                matrix_data,
+                                chunk,
+                                limit=neighbor_limit,
+                                top_tags=top_tags,
+                            )
+                            for point_id in chunk:
+                                ranked = votes.get(point_id)
+                                if ranked is None:
+                                    summary["skipped"] += 1
+                                    continue
+                                tags, scores = ranked
+                                updates.append((point_id, tags, scores))
+                                if tags:
+                                    summary["ok"] += 1
+                                else:
+                                    summary["skipped"] += 1
                         else:
-                            store.set_auto_tags(point_id, [], {})
-                            summary["skipped"] += 1
+                            vectors = app.state.engine.store.visual_vectors(chunk)
+                            query_ids = [point_id for point_id in chunk if point_id in vectors]
+                            responses = app.state.engine.store.query_visual_tag_neighbors(
+                                [vectors[point_id] for point_id in query_ids],
+                                neighbor_limit,
+                            )
+                            for point_id, neighbors in zip(query_ids, responses, strict=True):
+                                tags, scores = rank_neighbors(point_id, neighbors)
+                                updates.append((point_id, tags, scores))
+                                if tags:
+                                    summary["ok"] += 1
+                                else:
+                                    summary["skipped"] += 1
+                            summary["skipped"] += len(chunk) - len(query_ids)
+                        app.state.provenance.set_auto_tags_many(updates)
                     except Exception:
-                        summary["failed"] += 1
-                    progress(index)
+                        summary["failed"] += len(chunk)
+                    progress(min(start + len(chunk), job.total))
                 job.summary = summary
                 job.message = (
                     f"自动 Tag 完成：成功 {summary['ok']}，"

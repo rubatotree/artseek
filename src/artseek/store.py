@@ -334,16 +334,138 @@ class VectorStore:
         return [point_id for _, point_id in found]
 
     def visual_vector(self, point_id: str) -> list[float] | None:
-        records = self.client.retrieve(
+        return self.visual_vectors([point_id]).get(point_id)
+
+    def visual_vectors(self, point_ids: Sequence[str]) -> dict[str, list[float]]:
+        unique = [item_id for item_id in dict.fromkeys(point_ids) if item_id]
+        if not unique:
+            return {}
+        result: dict[str, list[float]] = {}
+        for start in range(0, len(unique), 256):
+            records = self.client.retrieve(
+                collection_name=COLLECTION,
+                ids=unique[start : start + 256],
+                with_payload=False,
+                with_vectors=["visual"],
+            )
+            for record in records:
+                vector = _named_vector(record.vector, "visual")
+                if vector is not None:
+                    result[str(record.id)] = vector.tolist()
+        return result
+
+    def query_visual_tag_neighbors(
+        self,
+        vectors: Sequence[list[float]],
+        limit: int = 24,
+    ) -> list[list[Neighbor]]:
+        """Batch visual queries with only the tags payload needed for voting."""
+        if not vectors:
+            return []
+        requests = [
+            models.QueryRequest(
+                query=vector,
+                using="visual",
+                limit=max(1, int(limit)),
+                with_payload=["tags"],
+                with_vectors=False,
+            )
+            for vector in vectors
+        ]
+        responses = self.client.query_batch_points(
             collection_name=COLLECTION,
-            ids=[point_id],
-            with_payload=False,
-            with_vectors=["visual"],
+            requests=requests,
         )
-        if not records:
-            return None
-        vector = _named_vector(records[0].vector, "visual")
-        return vector.tolist() if vector is not None else None
+        return [
+            [
+                Neighbor(str(point.id), float(point.score), dict(point.payload or {}))
+                for point in response.points
+            ]
+            for response in responses
+        ]
+
+    def visual_tag_data(self) -> tuple[list[str], np.ndarray, list[list[str]]]:
+        """Load normalized visual vectors and tags once for batched neighbor voting."""
+        existing = {item.name for item in self.client.get_collections().collections}
+        if COLLECTION not in existing:
+            return [], np.zeros((0, 0), dtype=np.float32), []
+        point_ids: list[str] = []
+        vectors: list[list[float]] = []
+        tags: list[list[str]] = []
+        offset: Any = None
+        while True:
+            records, offset = self.client.scroll(
+                collection_name=COLLECTION,
+                limit=2048,
+                offset=offset,
+                with_payload=["tags"],
+                with_vectors=["visual"],
+            )
+            for record in records:
+                vector = _named_vector(record.vector, "visual")
+                if vector is None:
+                    continue
+                point_ids.append(str(record.id))
+                vectors.append(vector.tolist())
+                tags.append(
+                    [
+                        str(tag).strip()
+                        for tag in (dict(record.payload or {}).get("tags") or [])
+                        if str(tag).strip()
+                    ]
+                )
+            if offset is None:
+                break
+        if not vectors:
+            return [], np.zeros((0, 0), dtype=np.float32), []
+        matrix = np.asarray(vectors, dtype=np.float32)
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        matrix /= np.maximum(norms, 1e-12)
+        return point_ids, matrix, tags
+
+    @staticmethod
+    def neighbor_tag_votes_from_data(
+        data: tuple[list[str], np.ndarray, list[list[str]]],
+        point_ids: Sequence[str],
+        *,
+        limit: int = 24,
+        top_tags: int = 5,
+        chunk_size: int = 128,
+    ) -> dict[str, tuple[list[str], dict[str, float]]]:
+        """Vectorized equivalent of Qdrant top-k voting for a set of target points."""
+        all_ids, matrix, all_tags = data
+        if not all_ids or not point_ids:
+            return {}
+        index = {point_id: row for row, point_id in enumerate(all_ids)}
+        targets = [(point_id, index[point_id]) for point_id in point_ids if point_id in index]
+        if not targets:
+            return {}
+        result: dict[str, tuple[list[str], dict[str, float]]] = {}
+        k = min(max(1, int(limit)), max(1, len(all_ids) - 1))
+        for start in range(0, len(targets), chunk_size):
+            batch = targets[start : start + chunk_size]
+            query = matrix[[row for _, row in batch]]
+            scores = query @ matrix.T
+            for local, (point_id, row) in enumerate(batch):
+                scores[local, row] = -np.inf
+                best = np.argpartition(-scores[local], k - 1)[:k]
+                votes: dict[str, float] = {}
+                for neighbor in best:
+                    score = float(scores[local, neighbor])
+                    if not np.isfinite(score):
+                        continue
+                    for tag in all_tags[neighbor]:
+                        votes[tag] = votes.get(tag, 0.0) + score
+                ranked = sorted(votes.items(), key=lambda item: item[1], reverse=True)
+                top = ranked[:top_tags]
+                result[point_id] = (
+                    [tag for tag, _ in top],
+                    {
+                        tag: round(score / max(ranked[0][1], 1e-6), 4)
+                        for tag, score in top
+                    },
+                )
+        return result
 
     def get(self, point_id: str) -> dict[str, Any] | None:
         records = self.client.retrieve(

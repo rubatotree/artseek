@@ -113,6 +113,28 @@ class ProvenanceStoreTests(unittest.TestCase):
         self.store.set_auto_tags("p1", ["自动标签"], {"自动标签": 0.88})
         self.assertEqual(self.store.point_ids_without_auto_tags(), [])
 
+    def test_set_auto_tags_many_updates_multiple_records(self) -> None:
+        self.store.upsert_scan("p1", self.payload, _parsed("12345678_p0.png"))
+        second = {
+            **self.payload,
+            "path": "D:/pics/50640084_p0.png",
+            "path_key": "d:/pics/50640084_p0.png",
+        }
+        self.store.upsert_scan("p2", second, _parsed("50640084_p0.png"))
+        self.store.set_auto_tags_many(
+            [
+                ("p1", ["自动标签"], {"自动标签": 0.88}),
+                ("p2", [], {}),
+            ]
+        )
+        self.assertEqual(self.store.point_ids_without_auto_tags(), [])
+        first = self.store.get("p1")
+        second_record = self.store.get("p2")
+        assert first is not None and second_record is not None
+        self.assertEqual(first["auto_tags"], ["自动标签"])
+        self.assertEqual(first["auto_tag_scores"]["自动标签"], 0.88)
+        self.assertEqual(second_record["auto_tags"], [])
+
     def test_manual_and_auto_tags_are_searchable(self) -> None:
         self.store.upsert_scan("p1", self.payload, _parsed("12345678_p0.png"))
         self.store.set_manual("p1", {"manual_tags": ["手动标签"]})

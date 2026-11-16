@@ -830,17 +830,33 @@ class ProvenanceStore:
         tags: Sequence[str],
         scores: dict[str, float] | None = None,
     ) -> None:
+        self.set_auto_tags_many([(point_id, tags, scores)])
+
+    def set_auto_tags_many(
+        self,
+        entries: Sequence[tuple[str, Sequence[str], dict[str, float] | None]],
+    ) -> None:
+        if not entries:
+            return
+        now = _now()
+        rows = [
+            (
+                _json(list(tags), []),
+                _json(scores or {}, {}),
+                now,
+                now,
+                point_id,
+            )
+            for point_id, tags, scores in entries
+            if point_id
+        ]
+        if not rows:
+            return
         with self._read() as connection:
-            connection.execute(
+            connection.executemany(
                 "UPDATE image_source SET auto_tags_json = ?, auto_tag_scores_json = ?, "
                 "auto_tagged_at = ?, updated_at = ? WHERE point_id = ?",
-                (
-                    _json(list(tags), []),
-                    _json(scores or {}, {}),
-                    _now(),
-                    _now(),
-                    point_id,
-                ),
+                rows,
             )
             connection.commit()
 
