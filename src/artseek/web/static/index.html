@@ -1704,6 +1704,7 @@
       searchSnapshotId: '', searchRequest: null, filterApplyTimer: 0,
       filterTagExpression: '',
       viewerReturnRoute: '',
+      provenanceTagAliasCache: new Map(),
       tempReturn: null,
       searchSort: 'mtime_desc',
       colHeights: [],
@@ -2267,6 +2268,37 @@
       button.hidden = !imageId;
       button.setAttribute('aria-pressed', String(state.provenance.open));
     }
+    function applyProvenanceTagAliases(link, aliases) {
+      if (!link || !link.isConnected) return;
+      const values = (aliases || []).map((value) => String(value).trim()).filter(Boolean);
+      if (values.length) link.title = [...new Set(values)].join(' · ');
+    }
+    async function loadProvenanceTagAliases(link, tag) {
+      const cache = state.provenanceTagAliasCache;
+      if (cache.has(tag)) {
+        applyProvenanceTagAliases(link, cache.get(tag));
+        return;
+      }
+      try {
+        const data = await parseResponse(await fetch(
+          `/api/tag-dictionary?q=${encodeURIComponent(tag)}&limit=20`
+        ));
+        const needle = tag.toLowerCase();
+        const match = (data.tags || []).find((entry) => {
+          const aliases = Array.isArray(entry.aliases) ? entry.aliases : [];
+          return String(entry.tag || '').toLowerCase() === needle
+            || aliases.some((value) => String(value).toLowerCase() === needle);
+        });
+        const aliases = match
+          ? [match.display_zh, ...(match.aliases || []), match.tag]
+          : [tag];
+        const unique = [...new Set(aliases.filter(Boolean))];
+        cache.set(tag, unique);
+        applyProvenanceTagAliases(link, unique);
+      } catch (_) {
+        applyProvenanceTagAliases(link, [tag]);
+      }
+    }
     function renderProvenance(data) {
       const body = $('provenance-body');
       const record = (data && data.record) || {};
@@ -2350,6 +2382,15 @@
             <button type="button" id="prov-clear">恢复自动</button>
           </div>
         </form>`;
+      body.querySelectorAll('.provenance-tag').forEach((link) => {
+        const tag = link.dataset.tag || '';
+        if (!tag) return;
+        const known = Array.isArray(record.tag_aliases?.[tag])
+          ? record.tag_aliases[tag]
+          : [];
+        if (known.length) applyProvenanceTagAliases(link, known);
+        else loadProvenanceTagAliases(link, tag);
+      });
       body.querySelector('[data-prov-action="refresh"]')?.addEventListener('click', () => resolveProvenanceUrl(url, { silent: true }));
       body.querySelector('[data-prov-action="open-post"]')?.addEventListener('click', () => {
         if (url) window.open(url, '_blank', 'noopener');
