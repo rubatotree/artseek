@@ -1697,12 +1697,13 @@
       return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${base}${arrow}</svg>`;
     }
     const CARD_ORDER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01"/></svg>';
-    const routeCtl = { applying: false, seq: 0, dismissAll: false };
+    const routeCtl = { applying: false, seq: 0, dismissAll: false, restoreViewer: false };
     const state = {
       references: [], refSeq: 0, current: null, currentRefKey: null, viewerSource: 'gallery',
       results: [], offset: 0, hasMore: false, loadingMore: false, searchSeq: 0,
       searchSnapshotId: '', searchRequest: null, filterApplyTimer: 0,
       filterTagExpression: '',
+      viewerReturnRoute: '',
       tempReturn: null,
       searchSort: 'mtime_desc',
       colHeights: [],
@@ -7465,6 +7466,7 @@
     }
     function openViewer(item) {
       const alreadyOpen = $('viewer').open;
+      if (!alreadyOpen) state.viewerReturnRoute = appRouteHref(currentGalleryRoute());
       applyGalleryViewerState(item);
       resetView();
       if (!alreadyOpen) $('viewer').showModal();
@@ -7478,6 +7480,7 @@
       const ref = state.references.find((item) => item.key === key);
       if (!ref) return;
       const alreadyOpen = $('viewer').open;
+      if (!alreadyOpen) state.viewerReturnRoute = appRouteHref(currentGalleryRoute());
       applyReferenceViewerState(ref);
       resetView();
       if (!alreadyOpen) $('viewer').showModal();
@@ -8700,6 +8703,7 @@
       const overlay = (history.state && history.state.artseek) ? Number(history.state.overlay || 0) : 0;
       if (overlay > 0) {
         routeCtl.dismissAll = true;
+        routeCtl.restoreViewer = true;
         history.go(-overlay);
         return;
       }
@@ -8860,6 +8864,17 @@
           finishDismissViewer();
           return;
         }
+        if (routeCtl.restoreViewer) {
+          routeCtl.restoreViewer = false;
+          const savedReturn = state.viewerReturnRoute;
+          state.viewerReturnRoute = '';
+          if (savedReturn && appRouteHref(route) === savedReturn && state.results.length) {
+            if ($('viewer').open) $('viewer').close();
+            routeCtl.dismissAll = false;
+            syncDocumentTitle(route);
+            return;
+          }
+        }
         routeCtl.dismissAll = false;
         if (route.kind === 'home') {
           resetGalleryToIdle();
@@ -8988,6 +9003,7 @@
     if (window.matchMedia('(pointer: fine)').matches) $('query').focus();
     bindGalleryReferenceDropTarget();
     window.addEventListener('popstate', () => {
+      if ($('viewer').open) routeCtl.restoreViewer = true;
       const route = (history.state && history.state.artseek) ? history.state : parseAppRoute();
       applyAppRoute(route);
     });
