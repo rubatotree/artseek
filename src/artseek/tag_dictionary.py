@@ -52,6 +52,8 @@ _TAG_ENTRIES: tuple[TagEntry, ...] = (
     TagEntry("1boy", "单人男性", ("单人男性", "一个男孩", "1boy")),
     TagEntry("solo", "单人", ("单人", "solo")),
     TagEntry("original", "原创", ("原创", "创作", "創作", "オリジナル", "original")),
+    TagEntry("soles", "脚底", ("足裏", "脚底")),
+    TagEntry("navel", "肚脐", ("おへそ", "肚脐")),
     TagEntry(
         "blue_archive",
         "蔚蓝档案",
@@ -73,11 +75,16 @@ def _load_generated_translations() -> list[TagEntry]:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
+    curated_fields = set()
+    for entry in _TAG_ENTRIES:
+        curated_fields.add(entry.tag.casefold())
+        curated_fields.add(entry.zh.casefold())
+        curated_fields.update(alias.casefold() for alias in entry.aliases)
     entries: list[TagEntry] = []
     for tag, zh in raw.items():
         text = str(tag or "").strip()
         display = str(zh or "").strip()
-        if text and display and text not in _ENTRIES:
+        if text and display and text.casefold() not in curated_fields:
             entries.append(TagEntry(text, display, (text,)))
     return entries
 
@@ -105,10 +112,16 @@ def expand_tag_aliases(value: str) -> set[str]:
 
 
 def tag_info(tag: str) -> TagEntry | None:
-    text = str(tag or "").strip()
-    return _ENTRIES.get(text.lower().replace(" ", "_")) or _GENERATED_BY_TAG.get(
-        text.casefold()
-    )
+    text = str(tag or "").strip().casefold()
+    direct = _ENTRIES.get(text.replace(" ", "_"))
+    if direct is not None:
+        return direct
+    for entry in _TAG_ENTRIES:
+        fields = {entry.tag.casefold(), entry.zh.casefold()}
+        fields.update(alias.casefold() for alias in entry.aliases)
+        if text in fields:
+            return entry
+    return _GENERATED_BY_TAG.get(text)
 
 
 def search_tags(query: str, *, limit: int = 40) -> list[TagEntry]:
