@@ -1105,6 +1105,8 @@
     .viewer-collection-menu-create { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; padding-top: 6px; border-top: 1px solid #4b414f; }
     .viewer-collection-menu-create input { min-width: 0; padding: 8px 9px; border: 1px solid #4b414f; border-radius: 9px; background: #241f28; color: #eee8f0; font-size: 13px; }
     .viewer-collection-menu-create button { min-height: 38px; padding: 8px 10px; background: #4a3d4d; color: #fff; }
+    .search-panel-spacer { display: block; width: 100%; height: 0; }
+    .search-panel-spacer[hidden] { display: none; }
     .search-fab {
       position: fixed; right: 12px; top: calc(env(safe-area-inset-top, 0px) + 10px);
       z-index: 35; width: 44px; height: 44px; min-width: 44px; padding: 0;
@@ -1500,6 +1502,7 @@
         </div>
       </aside>
       <div class="search-column">
+      <div id="search-panel-spacer" class="search-panel-spacer" hidden></div>
       <section class="search-panel" id="panel">
         <form id="search-form" autocomplete="off">
         <div class="search-row">
@@ -3750,7 +3753,7 @@
         && !document.body.classList.contains('file-drag')
         && performance.now() > state.mobileSearchIgnoreScrollUntil
       ) {
-        setMobileSearchOpen(false);
+        setMobileSearchOpen(false, { preserveScroll: false });
       }
       syncSearchFabVisibility();
     }, { passive: true });
@@ -4355,11 +4358,25 @@
       const visible = !state.mobileSearchOpen && window.scrollY > 80;
       $('search-fab').hidden = !visible;
     }
-    function setMobileSearchOpen(open) {
-      state.mobileSearchOpen = Boolean(open);
-      document.body.classList.toggle('mobile-search-open', state.mobileSearchOpen);
-      $('search-fab').setAttribute('aria-expanded', String(state.mobileSearchOpen));
-      if (state.mobileSearchOpen) {
+    function setMobileSearchOpen(open, { preserveScroll = true } = {}) {
+      const next = Boolean(open);
+      if (next === state.mobileSearchOpen) {
+        syncSearchFabVisibility();
+        return;
+      }
+      const scrollY = window.scrollY;
+      const panel = $('panel');
+      const spacer = $('search-panel-spacer');
+      if (next) {
+        spacer.style.height = `${panel.getBoundingClientRect().height}px`;
+        spacer.hidden = false;
+      } else {
+        spacer.style.height = `${panel.getBoundingClientRect().height}px`;
+      }
+      state.mobileSearchOpen = next;
+      document.body.classList.toggle('mobile-search-open', next);
+      $('search-fab').setAttribute('aria-expanded', String(next));
+      if (next) {
         state.mobileSearchIgnoreScrollUntil = performance.now() + 400;
         $('search-fab').hidden = true;
         requestAnimationFrame(() => {
@@ -4367,7 +4384,13 @@
           catch (_) { $('query').focus(); }
         });
       } else {
+        spacer.hidden = true;
         syncSearchFabVisibility();
+      }
+      if (preserveScroll) {
+        requestAnimationFrame(() => {
+          if (window.scrollY !== scrollY) window.scrollTo(0, scrollY);
+        });
       }
     }
     function closeMobileSearchIfOutside(event) {
