@@ -245,7 +245,7 @@ per-domain 最小间隔（pixiv 2s, fxtwitter 1s, saucenao 7.5s, ascii2d 10s）
 估算（单并发）：
 
 - <pixiv-work-count> 个 Pixiv 作品 × 2 请求 / 0.75 秒 ≈ 3.4 小时（作者资料有缓存）。
-- <twitter-status-count> 条推文 / 1 请求/秒 ≈ 4.8 小时。
+- <twitter-status-count> 条推文 / 0.2 秒 ≈ 1 小时。
 - <unresolved-count> 张未识别图，SauceNAO 100 次/天 ≈ **150 天**；这是必须提前告诉用户的数字。
 - ascii2d 不稳定，不作为批量方案。
 
@@ -255,9 +255,11 @@ per-domain 最小间隔（pixiv 2s, fxtwitter 1s, saucenao 7.5s, ascii2d 10s）
 
 1. 只对本轮新增/变更的点做本地解析；
 2. 若 `auto_enrich` 开启，把 `pixiv`/`twitter` 记录放入队列；
-3. 后台 worker 按预算慢慢跑，索引任务本身不等待网络；
+3. 后台 worker 串行限速跑，索引任务本身不等待网络；
 4. 打开网页时显示「来源补全中 123/<twitter-status-count>」；
 5. 永不自动调用 SauceNAO/ascii2d。
+
+待补全顺序按文件 `mtime_ns` **从新到旧**；缺失 mtime 的旧记录回退到 `updated_at` 从新到旧。旧 sidecar 在下一次 `only-new` 扫描时会自动回填 mtime，之后恢复增量跳过。
 
 ### 5.3 手动粘贴
 
