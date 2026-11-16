@@ -8248,10 +8248,9 @@
       }
     }
     function toggleViewerZoom() {
-      const keepFocusMode = state.viewerUiHidden;
+      // resetView only changes image scale/translation; it must not re-fit the
+      // frame here or an in-flight focus-mode reset snaps (flashes) to fit.
       resetView(false);
-      // Resetting zoom must never pull the viewer out of focus mode.
-      if (keepFocusMode) setViewerUiHidden(true);
     }
     function bindViewerGestures() {
       const stage = $('viewer-stage');
