@@ -3972,11 +3972,12 @@
               config.kind === 'author' ? item.image_count : item.count,
               config.kind === 'author' ? '' : (item.display_zh || ''),
             );
-            $(config.input).value = '';
-            filterSuggestBlurGuard.delete(config.input);
-            updateSuggestToggle(config.input);
+            const input = $(fieldId);
+            input.value = '';
+            filterSuggestBlurGuard.delete(fieldId);
+            updateSuggestToggle(fieldId);
             updateFilterBadge();
-            closeFilterSuggestions(config.input);
+            closeFilterSuggestions(fieldId);
             scheduleFilterApply();
           });
           menu.append(button);
