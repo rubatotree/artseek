@@ -114,6 +114,15 @@ def _run_index(
                 captions=captions,
                 progress=update,
             )
+            if summary.indexed or summary.deleted:
+                console.print("正在更新图片来源…")
+                provenance = ProvenanceStore(cfg.provenance_path)
+                scan_payloads(
+                    provenance,
+                    indexer.store.iter_payloads(),
+                    total=indexer.store.count(),
+                    deep=False,
+                )
     finally:
         indexer.close()
 

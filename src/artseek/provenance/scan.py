@@ -70,8 +70,16 @@ def scan_payloads(
         summary["total"] = max(int(summary["total"]), index)
         digest = str(payload.get("content_hash") or "") or None
         if only_new and point_id in known:
-            known_hash, _updated, known_mtime = known[point_id]
-            if digest is None or (known_hash == digest and known_mtime is not None):
+            known_hash, _updated, known_mtime, known_path = known[point_id]
+            current_path = _path_key(payload)
+            if (
+                digest is None
+                or (
+                    known_hash == digest
+                    and known_mtime is not None
+                    and (known_path or "") == (current_path or "")
+                )
+            ):
                 summary["skipped"] += 1
                 continue
         summary["scanned"] += 1

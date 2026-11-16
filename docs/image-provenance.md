@@ -399,7 +399,7 @@ tag:オリジナル tag:女の子
 
 ### Phase 5：索引后自动补全 + 文档 — 已完成
 
-- `run_index_job` 完成后启动 `only_new` 本地扫描；`auto_enrich=true` 时自动进入低速网络队列。
+- `run_index_job` 完成后启动本地来源扫描（不只处理新图，已有图片的路径/内容变化也会重解析）；`auto_enrich=true` 时自动进入低速网络队列。CLI `artseek index` 在有新增/删除时也会同步执行本地来源扫描。
 - 支持 `artseek provenance scan|enrich`、侧车迁移、WAL checkpoint。
 - 验收：新放入一张 `{pid}_p0.jpg`，索引完成后自动出现来源记录。
 

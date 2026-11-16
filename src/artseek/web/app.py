@@ -2391,7 +2391,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 # Local parsing is cheap; network enrichment is gated by the
                 # provenance job's budgets and never blocks index completion.
                 try:
-                    start_scan_job(deep=False, only_new=True)
+                    start_scan_job(deep=False, only_new=False)
                 except Exception:
                     pass
 

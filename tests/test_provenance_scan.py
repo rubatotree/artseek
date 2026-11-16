@@ -92,6 +92,22 @@ class ProvenanceScanTests(unittest.TestCase):
         self.assertIsNone(record["title"])
         self.assertEqual(record["status"], "pending")
 
+    def test_only_new_revisits_moved_same_content(self) -> None:
+        payload = self._payload(self.pixiv, "a" * 64)
+        scan_payloads(self.store, {"p1": payload}.items(), total=1)
+        moved = self.root / "renamed" / self.pixiv.name
+        moved.parent.mkdir()
+        self.pixiv.rename(moved)
+        moved_payload = self._payload(moved, "a" * 64)
+        summary = scan_payloads(
+            self.store, {"p1": moved_payload}.items(), total=1, only_new=True
+        )
+        self.assertEqual(summary["scanned"], 1)
+        record = self.store.get("p1")
+        self.assertIsNotNone(record)
+        assert record is not None
+        self.assertEqual(record["path_key"], moved_payload["path_key"])
+
     def test_only_new_skips_unchanged_points(self) -> None:
         payload = self._payload(self.pixiv, "a" * 64)
         scan_payloads(self.store, {"p1": payload}.items(), total=1)

@@ -242,16 +242,18 @@ class ProvenanceStore:
                     result[str(row["point_id"])] = self._row_to_record(row)
         return result
 
-    def known_points(self) -> dict[str, tuple[str | None, int, int | None]]:
+    def known_points(self) -> dict[str, tuple[str | None, int, int | None, str | None]]:
         with self._read() as connection:
             rows = connection.execute(
-                "SELECT point_id, content_hash, updated_at, mtime_ns FROM image_source"
+                "SELECT point_id, content_hash, updated_at, mtime_ns, path_key "
+                "FROM image_source"
             ).fetchall()
         return {
             str(row["point_id"]): (
                 row["content_hash"],
                 int(row["updated_at"]),
                 _int_or_none(row["mtime_ns"]),
+                row["path_key"],
             )
             for row in rows
         }
