@@ -39,6 +39,10 @@ class _Store:
     def count(self) -> int:
         return len(self.payloads)
 
+    def visual_vectors(self, point_ids: list[str]) -> dict[str, list[float]]:
+        del point_ids
+        return {}
+
     def point_ids_for_image_tags(self, tags: list[str]) -> list[str]:
         wanted = {str(tag).casefold() for tag in tags}
         return [
@@ -823,7 +827,7 @@ class ProvenanceApiTests(unittest.TestCase):
                 break
             time.sleep(0.02)
         self.assertFalse(status["running"])
-        self.assertEqual(status["kind"], "scan")
+        self.assertEqual(status["kind"], "auto_tag")
         self.assertEqual(self.store.get("p1")["platform"], "pixiv")
         stats = self.client.get("/api/provenance/stats").json()
         self.assertGreaterEqual(stats["total"], 1)

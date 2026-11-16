@@ -530,6 +530,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     app.state.provenance = ProvenanceStore(config.provenance_path)
     app.state.provenance_job = ProvenanceJob()
     app.state.provenance_lock = threading.RLock()
+    app.state.provenance_refresh_pending = False
     app.state.search_snapshots = SearchSnapshotStore(config.search_snapshot_dir)
     app.state.active_qdrant_path = config.qdrant_path
     app.state.storage_lock = threading.Lock()
@@ -2154,6 +2155,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         point_ids: list[str] | None = None,
         reset_stop: bool = True,
         allow_running: bool = False,
+        then_auto_tag: bool = False,
     ) -> bool:
         store: ProvenanceStore = app.state.provenance
         job: ProvenanceJob = app.state.provenance_job
@@ -2195,6 +2197,9 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             job.pause_event.clear()
         if not records:
             job.running = False
+            if then_auto_tag:
+                return start_auto_tag_job(limit=None)
+            drain_provenance_refresh()
             return True
 
         def progress(done: int, total: int, label: str) -> None:
@@ -2221,6 +2226,10 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 service.close()
                 job.running = False
                 job.paused = False
+                if then_auto_tag and not job.stop_event.is_set():
+                    start_auto_tag_job(limit=None)
+                else:
+                    drain_provenance_refresh()
 
         threading.Thread(target=run, daemon=True, name="artseek-provenance").start()
         return True
@@ -2248,6 +2257,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             job.pause_event.clear()
         if not point_ids:
             job.running = False
+            drain_provenance_refresh()
             return True
 
         def progress(done: int) -> None:
@@ -2348,9 +2358,24 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             finally:
                 job.running = False
                 job.paused = False
+                drain_provenance_refresh()
 
         threading.Thread(target=run, daemon=True, name="artseek-auto-tag").start()
         return True
+
+    def drain_provenance_refresh() -> None:
+        if not app.state.provenance_refresh_pending:
+            return
+        if app.state.provenance_job.running:
+            return
+        try:
+            start_scan_job(deep=False, only_new=False)
+        except Exception:
+            pass
+
+    def request_provenance_refresh() -> None:
+        app.state.provenance_refresh_pending = True
+        drain_provenance_refresh()
 
     def start_scan_job(
         *,
@@ -2365,6 +2390,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 return False
             job.running = True
             job.paused = False
+            app.state.provenance_refresh_pending = False
             job.kind = "scan"
             job.done = 0
             job.total = 0
@@ -2406,16 +2432,23 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 job.error = str(exc)
                 job.message = "来源扫描失败"
             finally:
-                started_enrich = False
-                if should_enrich and not job.stop_event.is_set() and job.error is None:
-                    started_enrich = start_enrich_job(
-                        platforms=["pixiv", "twitter"],
-                        reset_stop=False,
-                        allow_running=True,
-                    )
-                if not started_enrich:
+                started_next = False
+                if not job.stop_event.is_set() and job.error is None:
+                    if should_enrich:
+                        started_next = start_enrich_job(
+                            platforms=["pixiv", "twitter"],
+                            reset_stop=False,
+                            allow_running=True,
+                            then_auto_tag=True,
+                        )
+                    else:
+                        job.running = False
+                        job.paused = False
+                        started_next = start_auto_tag_job(limit=None)
+                if not started_next:
                     job.running = False
                     job.paused = False
+                    drain_provenance_refresh()
 
         threading.Thread(target=run, daemon=True, name="artseek-provenance-scan").start()
         return True
@@ -3003,7 +3036,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 # Local parsing is cheap; network enrichment is gated by the
                 # provenance job's budgets and never blocks index completion.
                 try:
-                    start_scan_job(deep=False, only_new=False)
+                    request_provenance_refresh()
                 except Exception:
                     pass
 
