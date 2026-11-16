@@ -1689,8 +1689,9 @@
     const routeCtl = { applying: false, seq: 0, dismissAll: false };
     const state = {
       references: [], refSeq: 0, current: null, currentRefKey: null, viewerSource: 'gallery',
-      results: [], baseResults: [], offset: 0, hasMore: false, loadingMore: false, searchSeq: 0,
+      results: [], offset: 0, hasMore: false, loadingMore: false, searchSeq: 0,
       searchSnapshotId: '', searchRequest: null, filterApplyTimer: 0,
+      tempReturn: null,
       searchSort: 'mtime_desc',
       colHeights: [],
       mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
@@ -2555,7 +2556,7 @@
       if ($('viewer').open) finishDismissViewer();
       commitGalleryRoute({ forcePush: true });
       if (state.mode === 'search') {
-        applyLocalFilters();
+        fetchResults({ reset: true });
       } else if (state.mode === 'author') {
         fetchAuthorImages({ reset: true });
       } else {
@@ -2569,7 +2570,7 @@
       addFilterChip(kind, text);
       updateFilterBadge();
       setFilterPanelOpen(true);
-      applyFilterChanges();
+      scheduleFilterApply();
     }
     function clearAuthorFilter() {
       if ($('viewer').open) finishDismissViewer();
@@ -2592,7 +2593,7 @@
       }
       commitGalleryRoute({ forcePush: true });
       if (state.mode === 'search') {
-        applyLocalFilters();
+        applyFilterChanges();
       } else if (!wasAuthor) {
         reloadCurrentGallery();
       }
@@ -3903,65 +3904,22 @@
         applyFilterChanges();
       }, 180);
     }
-    function localFilterItems(items, filters) {
-      const wantedAuthor = String(filters.author || '').toLocaleLowerCase();
-      const titleTerms = String(filters.title_query || '')
-        .trim().split(/\s+/).filter(Boolean).map((term) => term.toLocaleLowerCase());
-      const exactTags = (filters.text_tags || []).map((tag) => String(tag).toLocaleLowerCase());
-      const textTerms = (filters.tag_text || []).map((tag) => String(tag).toLocaleLowerCase());
-      return items.filter((item) => {
-        const source = item.source || {};
-        if (wantedAuthor) {
-          const keys = [
-            String(source.author_key || ''),
-            ...(Array.isArray(source.author_members) ? source.author_members : []).map((member) => String(member.key || '')),
-          ].map((key) => key.toLocaleLowerCase());
-          const names = [String(source.author_name || ''), ...keys].map((name) => name.toLocaleLowerCase());
-          if (!names.some((name) => name === wantedAuthor || name.includes(wantedAuthor))) return false;
-        }
-        const title = String(source.title || '').toLocaleLowerCase();
-        if (titleTerms.some((term) => !title.includes(term))) return false;
-        const sourceTags = (source.tags || []).map((tag) => String(tag).toLocaleLowerCase());
-        if (exactTags.some((tag) => !sourceTags.includes(tag))) return false;
-        if (textTerms.some((term) => !sourceTags.some((tag) => tag.includes(term)))) return false;
-        return true;
-      });
-    }
-    function sortLocalResults(items, sort) {
-      if (sort !== 'mtime_desc' && sort !== 'mtime_asc') return items;
-      const factor = sort === 'mtime_desc' ? -1 : 1;
-      return items.slice().sort((left, right) => {
-        const delta = Number(left.mtime_ns || 0) - Number(right.mtime_ns || 0);
-        return delta === 0 ? 0 : delta * factor;
-      });
-    }
-    function searchUsesTimeOrder() {
-      return Boolean(
-        !$('query').value.trim()
-        && !librarySearchRefs().length
-        && !state.references.some((ref) => ref.file)
-      );
-    }
-    function applyLocalFilters() {
-      if (state.mode !== 'search' || !state.baseResults.length) return;
-      const filters = readAdvancedFilters();
-      const filtered = localFilterItems(state.baseResults, filters);
-      const visible = searchUsesTimeOrder()
-        ? sortLocalResults(filtered, state.searchSort)
-        : filtered;
-      state.results = visible;
-      state.hasMore = false;
-      renderGallery(visible, { append: false });
-      $('load-more').hidden = true;
-      const count = visible.length;
-      $('query-info').textContent = `当前结果筛选 · ${count} / ${state.baseResults.length} 张图`;
-    }
     async function applyFilterChanges() {
-      if (state.mode === 'search' && state.baseResults.length) {
-        applyLocalFilters();
-        return;
+      const filters = readAdvancedFilters();
+      const hasQuery = Boolean(
+        $('query').value.trim()
+        || librarySearchRefs().length
+        || state.references.some((ref) => ref.file)
+        || hasAdvancedFilters(filters)
+      );
+      if (hasQuery) {
+        await fetchResults({ reset: true });
+      } else if (treeState.selected.size) {
+        startScopeBrowse();
+      } else {
+        resetGalleryToIdle();
+        $('query-info').textContent = '勾选左侧目录后，这里会显示所有已勾选目录中的图片。';
       }
-      // Before the first explicit search there is no result range to filter.
     }
     function chipValues(containerId) {
       return [...$(containerId).querySelectorAll('.filter-chip')]
@@ -4031,7 +3989,7 @@
       input.value = '';
       updateSuggestToggle(config.input);
       updateFilterBadge();
-      applyFilterChanges();
+      scheduleFilterApply();
     }
     function commitAllFilterInputs() {
       Object.keys(FILTER_CHIP_CONFIG).forEach(commitFilterInput);
@@ -4555,7 +4513,7 @@
         state.searchSort = sort;
         closeCollectionSortMenu({ restoreFocus: true });
         renderCollectionSort();
-        applyLocalFilters();
+        await fetchResults({ reset: true, skipRoute: true });
         return;
       }
       if (browseSortActive()) {
@@ -5371,6 +5329,7 @@
       }
     }
     async function selectCollection(collection, { skipRoute = false } = {}) {
+      rememberTemporaryReturn();
       state.mode = 'collection';
       state.collectionId = collection.id;
       state.collectionName = collection.name;
@@ -5629,11 +5588,7 @@
         updateAuthorFilter();
         if (reset) state.searchSnapshotId = '';
         if (reset) {
-          const filtered = localFilterItems(state.baseResults, readAdvancedFilters());
-          const visible = searchUsesTimeOrder()
-            ? sortLocalResults(filtered, state.searchSort)
-            : filtered;
-          state.results = visible;
+          state.results = incoming;
           renderGallery(state.results, { append: false });
         } else {
           state.results = state.results.concat(incoming);
@@ -5949,7 +5904,64 @@
       $('query-info').textContent = `随机浏览当前范围 · ${shown} / ${state.randomTotal} 张图${more}`;
     }
 
+    function rememberTemporaryReturn() {
+      if (['browse', 'collection'].includes(state.mode)) return;
+      state.tempReturn = {
+        mode: state.mode,
+        route: currentGalleryRoute(),
+        selected: [...treeState.selected],
+        mtimeAfter: treeState.mtimeAfter,
+        mtimeBefore: treeState.mtimeBefore,
+        browseSort: state.browseSort,
+        searchSort: state.searchSort,
+        authorKey: state.authorKey,
+        authorName: state.authorName,
+        filters: readAdvancedFilters(),
+        query: $('query').value,
+      };
+    }
+    async function exitTemporaryBrowse() {
+      if (!['browse', 'collection'].includes(state.mode)) return;
+      const snapshot = state.tempReturn;
+      state.tempReturn = null;
+      if (!snapshot) {
+        if (treeState.selected.size) startScopeBrowse();
+        else resetGalleryToIdle();
+        return;
+      }
+      const valid = new Set(allFolderKeys(treeState.roots));
+      treeState.selected = new Set(snapshot.selected.filter((key) => valid.has(key)));
+      treeState.mtimeAfter = snapshot.mtimeAfter || '';
+      treeState.mtimeBefore = snapshot.mtimeBefore || '';
+      state.browseSort = snapshot.browseSort || 'name';
+      state.searchSort = snapshot.searchSort || 'mtime_desc';
+      state.authorKey = snapshot.authorKey || '';
+      state.authorName = snapshot.authorName || '';
+      setAdvancedFilters(snapshot.filters || {});
+      $('query').value = snapshot.query || '';
+      syncTimeInputs();
+      updateAuthorFilter();
+      if (snapshot.mode === 'search') {
+        commitRoute(snapshot.route, { replace: true, overlay: 0 });
+        await applySearchRoute(snapshot.route);
+        return;
+      }
+      if (snapshot.mode === 'scope') {
+        commitRoute({ kind: 'home' }, { replace: true, overlay: 0 });
+        startScopeBrowse({ skipRoute: true });
+        return;
+      }
+      if (snapshot.mode === 'home' || snapshot.mode === 'idle') {
+        commitRoute({ kind: 'home' }, { replace: true, overlay: 0 });
+        if (treeState.selected.size) startScopeBrowse({ skipRoute: true });
+        else resetGalleryToIdle();
+        return;
+      }
+      commitRoute(snapshot.route, { replace: true, overlay: 0 });
+      await applyAppRoute(snapshot.route);
+    }
     function previewFolder(key, name, { skipRoute = false } = {}) {
+      rememberTemporaryReturn();
       state.mode = 'browse';
       state.browseKey = key;
       state.browseName = name || key;
@@ -6311,7 +6323,6 @@
         const data = await parseResponse(response);
         if (seq !== state.searchSeq) return;
         const incoming = data.results || [];
-        state.baseResults = reset ? incoming.slice() : state.baseResults.concat(incoming);
         if (reset) {
           state.searchRequest = {
             query: common.query,
@@ -8765,6 +8776,18 @@
       applyAppRoute(route);
     });
     document.addEventListener('click', handleAppLink, true);
+    document.addEventListener('click', (event) => {
+      if (!['browse', 'collection'].includes(state.mode) || event.defaultPrevented) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) return;
+      if (target.closest('a, button, input, label, select, textarea, [role="button"], [contenteditable="true"], #gallery, #tree-panel, #viewer, dialog, .modal-bar')) return;
+      exitTemporaryBrowse();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || $('viewer').open) return;
+      if (!['browse', 'collection'].includes(state.mode)) return;
+      exitTemporaryBrowse();
+    });
     bootApp().catch((error) => {
       $('query-info').textContent = `页面未能还原：${error.message}`;
     });
