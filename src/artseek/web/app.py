@@ -2210,6 +2210,37 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "results": results,
         }
 
+    @app.get("/api/tags/{tag}/images")
+    def tag_images(
+        tag: str,
+        limit: int = 40,
+        offset: int = Query(default=0, ge=0, le=50_000),
+    ) -> dict[str, Any]:
+        store: ProvenanceStore = app.state.provenance
+        clean = str(tag or "").strip()
+        if not clean:
+            raise HTTPException(400, "标签不能为空")
+        ids = store.point_ids_for_tags([clean])
+        total = len(ids)
+        page_size = max(1, min(int(limit), 200))
+        page_ids = ids[offset : offset + page_size]
+        payloads = retrieve_collection_payloads(page_ids)
+        results = attach_provenance(
+            [
+                gallery_result(point_id, payloads[point_id])
+                for point_id in page_ids
+                if isinstance(payloads.get(point_id), dict)
+            ]
+        )
+        return {
+            "tag": clean,
+            "offset": offset,
+            "limit": page_size,
+            "total": total,
+            "has_more": offset + len(page_ids) < total,
+            "results": results,
+        }
+
     def ensure_tagger():
         if app.state.tagger is None and config.tagger.enabled:
             from ..models.tagger import WDTagger

@@ -470,9 +470,10 @@
     .provenance-author:hover { transform: none; background: #efd6e0; }
     .provenance-tags { display: flex; flex-wrap: wrap; gap: 4px; }
     .provenance-tag {
-      padding: 3px 8px; border-radius: 999px; background: #f6f1f5; color: #665866;
-      font-size: 11px;
+      display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 999px;
+      background: #f6f1f5; color: #665866; font-size: 11px; text-decoration: none;
     }
+    .provenance-tag:hover { background: #efd6e0; color: #8a5268; }
     .provenance-actions { display: flex; flex-wrap: wrap; gap: 6px; }
     .provenance-actions button, .provenance-form button {
       min-height: 0; padding: 7px 10px; border-radius: 10px;
@@ -1358,6 +1359,10 @@
             <span id="author-filter-label" class="author-filter-label"></span>
             <button id="author-filter-clear" type="button" aria-label="清除作者筛选" title="清除作者筛选">×</button>
           </div>
+          <div id="tag-filter" class="author-filter" hidden>
+            <span id="tag-filter-label" class="author-filter-label"></span>
+            <button id="tag-filter-clear" type="button" aria-label="清除标签筛选" title="清除标签筛选">×</button>
+          </div>
           <div id="collection-sort" class="collection-sort" hidden>
             <button class="collection-sort-toggle" id="collection-sort-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="collection-sort-menu" aria-label="收藏夹排序" title="收藏夹排序"></button>
             <button class="collection-sort-pin" id="collection-sort-pin" type="button" aria-label="保存为收藏夹排序" title="保存为收藏夹排序" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 4h12v17l-6-4-6 4z"/></svg></button>
@@ -1566,6 +1571,7 @@
       cardActionGesture: null, cardActionClickUntil: 0,
       galleryDragItem: null,
       authorKey: '', authorName: '', authorTotal: 0,
+      tagName: '', tagTotal: 0,
       provenance: { open: false, imageId: '', data: null, seq: 0, loading: false },
       provenancePoll: 0, provenanceIdlePolls: 0,
       viewerTitleCache: new Map(), viewerTitlePending: new Set(), viewerTitleTimer: 0,
@@ -2125,7 +2131,7 @@
           ? (data.path || '未识别来源')
           : (record.platform === 'other' ? '其他来源' : '无题'));
       const title = record.title || provenancePlainText(record.description).slice(0, 80) || emptyTitle;
-      const tags = (record.tags || []).map((tag) => `<span class="provenance-tag">${escapeHtml(tag)}</span>`).join('');
+      const tags = (record.tags || []).map((tag) => `<a class="provenance-tag" href="/tag/${encodeURIComponent(tag)}" data-tag="${escapeHtml(tag)}" title="筛选该标签（Ctrl+点击在新标签页打开）">${escapeHtml(tag)}</a>`).join('');
       const authorName = author ? (author.name || author.handle || author.key) : '';
       const authorButton = author
         ? `<a class="provenance-author" href="/author/${encodeURIComponent(author.key)}" data-author-key="${escapeHtml(author.key)}" data-author-name="${escapeHtml(authorName)}" title="查看该作者（Ctrl+点击在新标签页打开）">${escapeHtml(authorName)}</a>`
@@ -2195,6 +2201,13 @@
         event.preventDefault();
         const button = event.currentTarget;
         setAuthorFilter(button.dataset.authorKey || '', button.dataset.authorName || '');
+      });
+      body.querySelectorAll('.provenance-tag').forEach((link) => {
+        link.addEventListener('click', (event) => {
+          if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+          event.preventDefault();
+          applyTagFilter(link.dataset.tag || '');
+        });
       });
       body.querySelector('#provenance-form')?.addEventListener('submit', (event) => {
         event.preventDefault();
@@ -2334,13 +2347,72 @@
       bar.hidden = false;
       $('author-filter-label').textContent = `作者：${state.authorName || state.authorKey}`;
     }
+    function updateTagFilter() {
+      const bar = $('tag-filter');
+      if (!state.tagName) {
+        bar.hidden = true;
+        return;
+      }
+      bar.hidden = false;
+      $('tag-filter-label').textContent = `标签：#${state.tagName}`;
+    }
     function reloadCurrentGallery() {
       if (state.mode === 'search') return fetchResults({ reset: true, skipRoute: true });
       if (state.mode === 'browse') return fetchFolderImages({ reset: true });
       if (state.mode === 'collection') return fetchCollectionImages({ reset: true });
       if (state.mode === 'random') return fetchRandomBrowse({ reset: true });
       if (state.mode === 'author') return fetchAuthorImages({ reset: true });
+      if (state.mode === 'tag') return fetchTagImages({ reset: true });
       return Promise.resolve();
+    }
+    function applyTagFilter(tag) {
+      const name = String(tag || '').trim();
+      if (!name) return;
+      if ($('viewer').open) finishDismissViewer();
+      state.mode = 'tag';
+      state.tagName = name;
+      state.tagTotal = 0;
+      state.authorKey = '';
+      state.authorName = '';
+      state.authorTotal = 0;
+      state.searchSnapshotId = '';
+      state.searchRequest = null;
+      state.results = [];
+      state.hasMore = false;
+      state.browseKey = '';
+      state.browseName = '';
+      state.browseTotal = 0;
+      state.collectionId = '';
+      state.collectionName = '';
+      state.collectionTotal = null;
+      updateAuthorFilter();
+      updateTagFilter();
+      renderTree();
+      renderCollectionList();
+      renderGallery(state.results, { append: false });
+      commitGalleryRoute({ forcePush: true });
+      fetchTagImages({ reset: true });
+    }
+    function clearTagFilter() {
+      if ($('viewer').open) finishDismissViewer();
+      if (state.mode !== 'tag') {
+        state.tagName = '';
+        state.tagTotal = 0;
+        updateTagFilter();
+        return;
+      }
+      state.mode = 'idle';
+      state.tagName = '';
+      state.tagTotal = 0;
+      state.results = [];
+      state.hasMore = false;
+      updateTagFilter();
+      renderTree();
+      renderCollectionList();
+      renderGallery(state.results, { append: false });
+      $('query-info').textContent = '标签筛选已清除。';
+      $('load-more').hidden = true;
+      commitGalleryRoute({ forcePush: true });
     }
     function setAuthorFilter(key, name = '') {
       const next = key || '';
@@ -2350,6 +2422,11 @@
       }
       state.authorKey = next;
       state.authorName = name || '';
+      if (state.mode === 'tag') {
+        state.tagName = '';
+        state.tagTotal = 0;
+        updateTagFilter();
+      }
       state.searchSnapshotId = '';
       state.searchRequest = null;
       updateAuthorFilter();
@@ -3437,6 +3514,7 @@
     $('viewer-provenance').addEventListener('click', () => toggleProvenancePane());
     $('provenance-close').addEventListener('click', () => closeProvenancePane());
     $('author-filter-clear').addEventListener('click', () => clearAuthorFilter());
+    $('tag-filter-clear').addEventListener('click', () => clearTagFilter());
     $('provenance-tools').addEventListener('click', () => openProvenanceDialog());
     $('provenance-dialog-close').addEventListener('click', () => closeProvenanceDialog());
     $('provenance-dialog').addEventListener('close', () => {
@@ -5032,6 +5110,61 @@
       }
     }
 
+    async function fetchTagImages({ reset }) {
+      if (!state.tagName) return;
+      if (!reset && (state.loadingMore || !state.hasMore)) return;
+      const seq = reset ? ++state.searchSeq : state.searchSeq;
+      if (reset) {
+        state.hasMore = false;
+        $('panel').classList.add('loading');
+        $('query-info').textContent = `正在载入标签 #${state.tagName} 的图片…`;
+        $('load-more').hidden = true;
+      } else {
+        state.loadingMore = true;
+        $('load-more').textContent = '正在载入更多该标签的图片…';
+        $('load-more').hidden = false;
+      }
+      try {
+        const params = new URLSearchParams({
+          limit: String(Number($('limit').value) || 40),
+          offset: String(reset ? 0 : state.results.length),
+        });
+        const data = await parseResponse(await fetch(`/api/tags/${encodeURIComponent(state.tagName)}/images?${params}`));
+        if (seq !== state.searchSeq) return;
+        const incoming = data.results || [];
+        state.tagName = data.tag || state.tagName;
+        state.tagTotal = Number(data.total || 0);
+        updateTagFilter();
+        if (reset) {
+          state.results = incoming;
+          renderGallery(state.results, { append: false });
+        } else {
+          state.results = state.results.concat(incoming);
+          renderGallery(incoming, { append: true });
+        }
+        state.hasMore = Boolean(data.has_more) && incoming.length > 0;
+        $('load-more').hidden = !state.hasMore;
+        $('query-info').textContent = `标签「#${state.tagName}」· ${state.results.length} / ${state.tagTotal} 张图${state.hasMore ? ' · 下滑加载更多' : ''}`;
+        if ($('viewer').open) {
+          updateViewerNav();
+          updateProvenanceButton();
+          syncNeighborImages();
+          prefetchViewerAhead();
+        }
+      } catch (error) {
+        if (seq !== state.searchSeq) return;
+        if (reset) $('query-info').textContent = `标签图片载入失败：${error.message}`;
+        else $('load-more').textContent = `继续载入失败：${error.message}`;
+        if (!reset) state.hasMore = false;
+      } finally {
+        if (seq === state.searchSeq) {
+          $('panel').classList.remove('loading');
+          state.loadingMore = false;
+          if (!state.hasMore && state.results.length) $('load-more').hidden = true;
+        }
+      }
+    }
+
     async function fetchCollectionImages({ reset }) {
       const collectionId = state.collectionId;
       if (!collectionId || (!reset && (state.loadingMore || !state.hasMore))) return;
@@ -5146,6 +5279,7 @@
       if (state.mode === 'random') return fetchRandomBrowse({ reset: false });
       if (state.mode === 'collection') return fetchCollectionImages({ reset: false });
       if (state.mode === 'author') return fetchAuthorImages({ reset: false });
+      if (state.mode === 'tag') return fetchTagImages({ reset: false });
       if (state.mode === 'scope') return fetchScopeImages({ reset: false });
       if (state.mode === 'search') return fetchResults({ reset: false });
       return Promise.resolve();
@@ -5366,6 +5500,13 @@
 
     function resetGalleryToIdle() {
       state.mode = 'idle';
+      state.authorKey = '';
+      state.authorName = '';
+      state.authorTotal = 0;
+      state.tagName = '';
+      state.tagTotal = 0;
+      updateAuthorFilter();
+      updateTagFilter();
       state.results = [];
       state.hasMore = false;
       state.loadingMore = false;
@@ -7456,6 +7597,9 @@
       if (parts[0] === 'author' && parts[1]) {
         return { kind: 'author', key: decodeURIComponent(parts[1]), author: params.get('author') || '' };
       }
+      if (parts[0] === 'tag' && parts[1]) {
+        return { kind: 'tag', tag: decodeURIComponent(parts[1]) };
+      }
       return { kind: 'home' };
     }
     function appRouteHref(route) {
@@ -7488,6 +7632,9 @@
       if (route.kind === 'author') {
         return `/author/${encodeURIComponent(route.key || '')}`;
       }
+      if (route.kind === 'tag') {
+        return `/tag/${encodeURIComponent(route.tag || '')}`;
+      }
       if (route.kind === 'image') return `/i/${encodeURIComponent(route.imageId || '')}`;
       if (route.kind === 'notes') {
         const base = `/i/${encodeURIComponent(route.imageId || '')}/notes`;
@@ -7517,6 +7664,9 @@
       if (state.mode === 'author' && state.authorKey) {
         return { kind: 'author', key: state.authorKey };
       }
+      if (state.mode === 'tag' && state.tagName) {
+        return { kind: 'tag', tag: state.tagName };
+      }
       return { kind: 'home' };
     }
     function syncDocumentTitle(route = parseAppRoute()) {
@@ -7541,6 +7691,10 @@
       }
       if (route.kind === 'author') {
         document.title = `${state.authorName || state.authorKey || '作者'} · ArtSeek`;
+        return;
+      }
+      if (route.kind === 'tag') {
+        document.title = `#${state.tagName || route.tag || '标签'} · ArtSeek`;
         return;
       }
       if (route.kind === 'folder') {
@@ -7790,8 +7944,29 @@
         } else if (route.kind === 'author' && route.key) {
           state.authorKey = route.key;
           state.mode = 'author';
+          state.tagName = '';
+          state.tagTotal = 0;
           updateAuthorFilter();
+          updateTagFilter();
           await fetchAuthorImages({ reset: true });
+        } else if (route.kind === 'tag' && route.tag) {
+          state.authorKey = '';
+          state.authorName = '';
+          state.authorTotal = 0;
+          state.mode = 'tag';
+          state.tagName = route.tag;
+          state.tagTotal = 0;
+          state.browseKey = '';
+          state.browseName = '';
+          state.browseTotal = 0;
+          state.collectionId = '';
+          state.collectionName = '';
+          state.collectionTotal = null;
+          updateAuthorFilter();
+          updateTagFilter();
+          renderTree();
+          renderCollectionList();
+          await fetchTagImages({ reset: true });
         } else if (route.kind === 'random') {
           if (route.seed) {
             const seed = Number(route.seed);

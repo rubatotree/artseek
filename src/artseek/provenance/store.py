@@ -789,7 +789,7 @@ class ProvenanceStore:
         with self._read() as connection:
             rows = connection.execute(
                 f"SELECT point_id FROM image_source WHERE {clauses} "
-                "ORDER BY updated_at DESC",
+                "ORDER BY mtime_ns IS NULL, mtime_ns DESC, updated_at DESC, point_id",
                 clean,
             ).fetchall()
         return [str(row["point_id"]) for row in rows]
