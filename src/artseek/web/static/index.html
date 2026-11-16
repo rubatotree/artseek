@@ -1436,31 +1436,11 @@
         </div>
         <div id="search-filters" class="search-filters" hidden>
           <div class="filter-field-wrap">
-            <label class="filter-field"><span>作者</span>
-              <div class="filter-control">
-                <div id="filter-author-chips" class="filter-chips" aria-label="作者筛选标签"></div>
-                <input id="filter-author" type="text" placeholder="作者名/key，回车生成" autocomplete="off" spellcheck="false">
-                <button class="filter-suggest-toggle" type="button" data-suggest-kind="author" aria-label="显示作者列表" title="显示作者列表">+</button>
-              </div>
-            </label>
-            <div id="filter-author-suggestions" class="filter-suggestions" hidden></div>
-          </div>
-          <div class="filter-field-wrap">
             <label class="filter-field"><span>标题模糊词</span>
               <div class="filter-control">
                 <input id="filter-title" type="text" placeholder="标题中的词" autocomplete="off" spellcheck="false">
               </div>
             </label>
-          </div>
-          <div class="filter-field-wrap">
-            <label class="filter-field"><span>来源 Tag</span>
-              <div class="filter-control">
-                <div id="filter-text-chips" class="filter-chips" aria-label="来源标签筛选"></div>
-                <input id="filter-text-tags" type="text" placeholder="Pixiv/X tag，回车生成" title="精确匹配 Pixiv/X 来源 tag" autocomplete="off" spellcheck="false">
-                <button class="filter-suggest-toggle" type="button" data-suggest-kind="source" aria-label="显示来源标签列表" title="显示来源标签列表">+</button>
-              </div>
-            </label>
-            <div id="filter-text-suggestions" class="filter-suggestions" hidden></div>
           </div>
           <div class="filter-field-wrap">
             <label class="filter-field"><span>文字标签</span>
@@ -1473,14 +1453,24 @@
             <div id="filter-tag-text-suggestions" class="filter-suggestions" hidden></div>
           </div>
           <div class="filter-field-wrap">
-            <label class="filter-field"><span>图片标签</span>
+            <label class="filter-field"><span>作者</span>
               <div class="filter-control">
-                <div id="filter-image-chips" class="filter-chips" aria-label="图片标签筛选"></div>
-                <input id="filter-image-tags" type="text" placeholder="WD tag，回车生成" title="本地画面标签，例如 long_hair" autocomplete="off" spellcheck="false">
-                <button class="filter-suggest-toggle" type="button" data-suggest-kind="image" aria-label="显示图片标签列表" title="显示图片标签列表">+</button>
+                <div id="filter-author-chips" class="filter-chips" aria-label="作者筛选标签"></div>
+                <input id="filter-author" type="text" placeholder="作者名/key，回车生成" autocomplete="off" spellcheck="false">
+                <button class="filter-suggest-toggle" type="button" data-suggest-kind="author" aria-label="显示作者列表" title="显示作者列表">+</button>
               </div>
             </label>
-            <div id="filter-image-suggestions" class="filter-suggestions" hidden></div>
+            <div id="filter-author-suggestions" class="filter-suggestions" hidden></div>
+          </div>
+          <div class="filter-field-wrap">
+            <label class="filter-field"><span>来源 Tag</span>
+              <div class="filter-control">
+                <div id="filter-text-chips" class="filter-chips" aria-label="来源标签筛选"></div>
+                <input id="filter-text-tags" type="text" placeholder="Pixiv/X tag，回车生成" title="精确匹配 Pixiv/X 来源 tag" autocomplete="off" spellcheck="false">
+                <button class="filter-suggest-toggle" type="button" data-suggest-kind="source" aria-label="显示来源标签列表" title="显示来源标签列表">+</button>
+              </div>
+            </label>
+            <div id="filter-text-suggestions" class="filter-suggestions" hidden></div>
           </div>
         </div>
         </form>
@@ -3619,7 +3609,7 @@
     $('filter-toggle').addEventListener('click', () => {
       setFilterPanelOpen($('search-filters').hidden);
     });
-    ['filter-author', 'filter-title', 'filter-text-tags', 'filter-tag-text', 'filter-image-tags'].forEach((id) => {
+    ['filter-author', 'filter-title', 'filter-text-tags', 'filter-tag-text'].forEach((id) => {
       $(id).addEventListener('input', updateFilterBadge);
     });
     $('filter-title').addEventListener('change', scheduleFilterApply);
@@ -3742,7 +3732,6 @@
       author: { input: 'filter-author', chips: 'filter-author-chips', single: true },
       text_tags: { input: 'filter-text-tags', chips: 'filter-text-chips', single: false },
       tag_text: { input: 'filter-tag-text', chips: 'filter-tag-text-chips', single: false },
-      image_tags: { input: 'filter-image-tags', chips: 'filter-image-chips', single: false },
     };
     const FILTER_SUGGEST_CONFIG = {
       'filter-author': {
@@ -3753,9 +3742,6 @@
       },
       'filter-tag-text': {
         menu: 'filter-tag-text-suggestions', kind: 'source', chipKind: 'tag_text',
-      },
-      'filter-image-tags': {
-        menu: 'filter-image-suggestions', kind: 'image', chipKind: 'image_tags',
       },
     };
     const filterSuggestSeq = {};
@@ -3943,7 +3929,6 @@
         title_query: $('filter-title').value.trim(),
         text_tags: chipValues('filter-text-chips'),
         tag_text: chipValues('filter-tag-text-chips'),
-        image_tags: chipValues('filter-image-chips'),
       };
     }
     function hasAdvancedFilters(filters = readAdvancedFilters()) {
@@ -3952,7 +3937,6 @@
         || filters.title_query
         || filters.text_tags.length
         || filters.tag_text.length
-        || filters.image_tags.length
       );
     }
     function updateFilterBadge() {
@@ -3962,7 +3946,6 @@
         filters.title_query,
         ...filters.text_tags,
         ...filters.tag_text,
-        ...filters.image_tags,
       ].filter(Boolean).length;
       const badge = $('filter-count');
       badge.textContent = String(count);
@@ -3973,13 +3956,11 @@
       $('filter-title').value = filters.title_query || '';
       $('filter-text-tags').value = '';
       $('filter-tag-text').value = '';
-      $('filter-image-tags').value = '';
       Object.keys(FILTER_SUGGEST_CONFIG).forEach(updateSuggestToggle);
       Object.values(FILTER_CHIP_CONFIG).forEach((config) => $(config.chips).replaceChildren());
       if (filters.author) addFilterChip('author', filters.author);
       for (const tag of filters.text_tags || []) addFilterChip('text_tags', tag);
       for (const tag of filters.tag_text || []) addFilterChip('tag_text', tag);
-      for (const tag of filters.image_tags || []) addFilterChip('image_tags', tag);
       updateFilterBadge();
     }
     Object.entries(FILTER_CHIP_CONFIG).forEach(([kind, config]) => {
@@ -6074,7 +6055,7 @@
       const libraryRefs = frozen ? frozen.references : librarySearchRefs();
       const fileRefs = state.references.filter((ref) => ref.file);
       const advanced = frozen
-        ? (frozen.advanced || { author: '', title_query: '', text_tags: [], tag_text: [], image_tags: [] })
+        ? (frozen.advanced || { author: '', title_query: '', text_tags: [], tag_text: [] })
         : readAdvancedFilters();
       const hasFilters = hasAdvancedFilters(advanced);
       const filterOnly = !query && !libraryRefs.length && !fileRefs.length;
@@ -6137,7 +6118,6 @@
           title_query: frozen.title_query || '',
           text_tags: frozen.text_tags || [],
           tag_text: frozen.tag_text || [],
-          image_tags: frozen.image_tags || [],
           exclude_ids: state.results.map((item) => item.id),
           snapshot_id: keepSnapshot ? (state.searchSnapshotId || '') : '',
         } : {
@@ -6155,7 +6135,6 @@
           title_query: advanced.title_query || '',
           text_tags: advanced.text_tags || [],
           tag_text: advanced.tag_text || [],
-          image_tags: advanced.image_tags || [],
           exclude_ids: reset ? [] : state.results.map((item) => item.id),
           snapshot_id: keepSnapshot && !reset ? (state.searchSnapshotId || '') : '',
         };
@@ -6176,7 +6155,6 @@
           form.append('title_query', common.title_query || '');
           form.append('text_tags', JSON.stringify(common.text_tags || []));
           form.append('tag_text', JSON.stringify(common.tag_text || []));
-          form.append('image_tags', JSON.stringify(common.image_tags || []));
           form.append('references', JSON.stringify(libraryRefs));
           if (common.snapshot_id) form.append('snapshot_id', common.snapshot_id);
           fileRefs.forEach((ref) => form.append('files', ref.file, ref.file.name));
@@ -6207,13 +6185,11 @@
             title_query: common.title_query,
             text_tags: common.text_tags,
             tag_text: common.tag_text,
-            image_tags: common.image_tags,
             advanced: {
               author: advanced.author || '',
               title_query: advanced.title_query || '',
               text_tags: advanced.text_tags || [],
               tag_text: advanced.tag_text || [],
-              image_tags: advanced.image_tags || [],
             },
           };
         }
@@ -6228,7 +6204,6 @@
             title: common.title_query,
             text_tags: common.text_tags,
             tag_text: common.tag_text,
-            image_tags: common.image_tags,
           };
           if (appRouteHref(next) !== currentHref()) {
             commitRoute(next, { replace: true, overlay: (history.state && history.state.overlay) || 0 });
@@ -6281,7 +6256,6 @@
       if (filters.title_query) filterChips.push(`<span class="chip">标题：${escapeHtml(filters.title_query)}</span>`);
       for (const tag of filters.tags || []) filterChips.push(`<span class="chip">来源：${escapeHtml(tag)}</span>`);
       for (const tag of filters.tag_text || []) filterChips.push(`<span class="chip">文字：${escapeHtml(tag)}</span>`);
-      for (const tag of filters.image_tags || []) filterChips.push(`<span class="chip">画面：${escapeHtml(tag)}</span>`);
       const onlyFilters = !(data.query_plan && data.query_plan.original);
       const label = onlyFilters ? '筛选' : (plan.used_llm ? '本地大模型已解析' : '内置插画词典已解析');
       const warning = data.llm_warning ? ` · Ollama 未就绪，已自动回退` : '';
@@ -8089,7 +8063,6 @@
           title: params.get('title') || '',
           text_tags: parseRouteTagList(params.get('text_tags') || '[]'),
           tag_text: parseRouteTagList(params.get('tag_text') || '[]'),
-          image_tags: parseRouteTagList(params.get('image_tags') || '[]'),
         };
       }
       if (parts[0] === 'folder') {
@@ -8121,7 +8094,6 @@
         if (route.title) params.set('title', route.title);
         if (route.text_tags && route.text_tags.length) params.set('text_tags', JSON.stringify(route.text_tags));
         if (route.tag_text && route.tag_text.length) params.set('tag_text', JSON.stringify(route.tag_text));
-        if (route.image_tags && route.image_tags.length) params.set('image_tags', JSON.stringify(route.image_tags));
         const query = params.toString();
         return query ? `/search?${query}` : '/search';
       }
@@ -8165,7 +8137,6 @@
           title: filters.title_query,
           text_tags: filters.text_tags,
           tag_text: filters.tag_text,
-          image_tags: filters.image_tags,
         };
       }
       if (state.mode === 'browse' && state.browseKey) {
@@ -8204,7 +8175,6 @@
         || route.title
         || (route.text_tags && route.text_tags.length)
         || (route.tag_text && route.tag_text.length)
-        || (route.image_tags && route.image_tags.length)
       )) {
         document.title = `${route.query || '筛选'} · ArtSeek`;
         return;
@@ -8341,11 +8311,6 @@
       if (!anchor || event.defaultPrevented || event.button !== 0) return;
       if (anchor.dataset.authorKey || anchor.classList.contains('provenance-tag')) return;
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      if (anchor.classList.contains('card-tag')) {
-        event.preventDefault();
-        addTagFilterChip(anchor.dataset.tag || '', 'image_tags');
-        return;
-      }
       if (anchor.target && anchor.target !== '_self') return;
       const href = anchor.getAttribute('href');
       if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('javascript:')) return;
@@ -8412,7 +8377,6 @@
         title_query: route.title || '',
         text_tags: route.text_tags || [],
         tag_text: route.tag_text || [],
-        image_tags: route.image_tags || [],
       };
       $('query').value = route.query || '';
       setAdvancedFilters(routeFilters);
@@ -8440,8 +8404,7 @@
         && currentFilters.author === routeFilters.author
         && currentFilters.title_query === routeFilters.title_query
         && currentFilters.text_tags.join('\n') === routeFilters.text_tags.join('\n')
-        && currentFilters.tag_text.join('\n') === routeFilters.tag_text.join('\n')
-        && currentFilters.image_tags.join('\n') === routeFilters.image_tags.join('\n'),
+        && currentFilters.tag_text.join('\n') === routeFilters.tag_text.join('\n'),
       );
       if (sameSnapshot || sameQuery) return;
       if (snapshotId) {
