@@ -1567,13 +1567,13 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 store,
                 PIXIV_DOMAIN,
                 min_interval=max(0.0, cfg.pixiv_min_interval),
-                daily_limit=max(1, cfg.pixiv_daily_limit),
+                daily_limit=cfg.pixiv_daily_limit,
             ).snapshot().as_dict(),
             RateLimiter(
                 store,
                 TWITTER_DOMAIN,
                 min_interval=max(0.0, cfg.twitter_min_interval),
-                daily_limit=max(1, cfg.twitter_daily_limit),
+                daily_limit=cfg.twitter_daily_limit,
             ).snapshot().as_dict(),
         ]
 
@@ -1656,13 +1656,13 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 store,
                 PIXIV_DOMAIN,
                 min_interval=max(0.0, cfg.pixiv_min_interval),
-                daily_limit=max(1, cfg.pixiv_daily_limit),
+                daily_limit=cfg.pixiv_daily_limit,
             ),
             twitter_limiter=RateLimiter(
                 store,
                 TWITTER_DOMAIN,
                 min_interval=max(0.0, cfg.twitter_min_interval),
-                daily_limit=max(1, cfg.twitter_daily_limit),
+                daily_limit=cfg.twitter_daily_limit,
             ),
         )
 

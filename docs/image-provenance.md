@@ -190,7 +190,7 @@ CREATE TABLE fetch_state (
 
 | 平台 | 端点 | 实测/文档 | 建议 |
 |---|---|---|---|
-| Pixiv 作品 | `https://www.pixiv.net/ajax/illust/{id}` | 未登录可返回公开作品；限流、Cloudflare、reCAPTCHA | 1 请求 / 2 秒，单并发 |
+| Pixiv 作品 | `https://www.pixiv.net/ajax/illust/{id}` | 未登录可返回公开作品；限流、Cloudflare、reCAPTCHA | 1 请求 / 0.75 秒，单并发 |
 | Pixiv 分页 | `https://www.pixiv.net/ajax/illust/{id}/pages` | 返回每页原图 URL、宽高 | 与作品信息合并，最多 2 请求/作品 |
 | Pixiv 作者 | `https://www.pixiv.net/ajax/user/{uid}?full=1` | 返回 `social.twitter.url` | 每个作者只取一次 |
 | X/Twitter | `https://api.fxtwitter.com/status/{id}` | 公开 API；文档标称 1000 请求/分钟/IP | 1–2 请求/秒，单并发 |
@@ -201,7 +201,7 @@ CREATE TABLE fetch_state (
 
 | 风险 | 触发条件 | 后果 | 缓解 |
 |---|---|---|---|
-| Pixiv IP 限流 | 短时间大量 `ajax/illust` | 429 / 403 / Cloudflare 挑战 | 2 秒间隔 + 抖动；收到 429/403 立即停 30 分钟，指数退避到 24 小时 |
+| Pixiv IP 限流 | 短时间大量 `ajax/illust` | 429 / 403 / Cloudflare 挑战 | 0.75 秒间隔；收到 429/403 立即停 30 分钟，指数退避到 24 小时 |
 | Pixiv 账号风险 | 使用自己的 `PHPSESSID` 批量请求 | 账号被限流或封禁 | **默认不带 Cookie**；高级设置中明确警告，仍建议不要用 |
 | Pixiv ToS | 「通常范围を超えてサーバーに負担」/「機械的に大量操作」 | 法律/账号风险 | 只做个人元数据、低频率、可暂停、不绕过 CAPTCHA、不转售数据 |
 | X 直接抓取 | 请求 `x.com` 页面/API | 需要登录、ToS 禁止、容易封 IP | 不直接抓 X；只调用 FxTwitter 的公开 JSON |
@@ -220,7 +220,7 @@ per-domain 单并发
 per-domain 最小间隔（pixiv 2s, fxtwitter 1s, saucenao 7.5s, ascii2d 10s）
 全局指数退避：30m → 2h → 12h → 24h
 收到 403/429：立即写入 blocked_until，当前任务暂停，不重试
-每日预算：pixiv 2,000；fxtwitter 5,000；saucenao = long_remaining；ascii2d 200
+每日预算：默认不设上限（`0`）；仍保留每域名最小间隔；saucenao = long_remaining；ascii2d 200
 ```
 
 预算与 `blocked_until` 持久化在 `fetch_state`。进程重启后继续遵守，不会「一启动就冲一波」。
@@ -244,7 +244,7 @@ per-domain 最小间隔（pixiv 2s, fxtwitter 1s, saucenao 7.5s, ascii2d 10s）
 
 估算（单并发）：
 
-- <pixiv-work-count> 个 Pixiv 作品 × 2 请求 / 2 秒 ≈ 4.5 小时。
+- <pixiv-work-count> 个 Pixiv 作品 × 2 请求 / 0.75 秒 ≈ 3.4 小时（作者资料有缓存）。
 - <twitter-status-count> 条推文 / 1 请求/秒 ≈ 4.8 小时。
 - <unresolved-count> 张未识别图，SauceNAO 100 次/天 ≈ **150 天**；这是必须提前告诉用户的数字。
 - ascii2d 不稳定，不作为批量方案。
@@ -396,7 +396,7 @@ tag:オリジナル tag:女の子
 2. **Pixiv Cookie**：不使用登录 Cookie；公开作品直接读取元信息。
 3. **作者筛选**：有图库范围时在当前范围内过滤；直接打开图片时进入 `/author/{key}` 作者页。
 4. **自动补全**：`[provenance] auto_enrich = true` 默认开启，只自动补 Pixiv/X；不自动反向搜图。
-5. **限速**：Pixiv 2 秒/请求、2000/天；FxTwitter 1 秒/请求、5000/天；可在 `config.toml` 调整。
+5. **限速**：Pixiv 0.75 秒/请求、FxTwitter 0.2 秒/请求；默认不设每日上限；可在 `config.toml` 调整或恢复 `daily_limit > 0`。
 
 ---
 

@@ -256,6 +256,17 @@ class RateLimiterTests(unittest.TestCase):
             with self.assertRaises(BudgetExhausted):
                 limiter.wait()
 
+    def test_zero_daily_limit_is_unlimited(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = ProvenanceStore(Path(temporary) / "provenance.sqlite3")
+            limiter = RateLimiter(store, "pixiv.net", min_interval=0, daily_limit=0)
+            for _ in range(5):
+                limiter.wait()
+                limiter.record()
+            snapshot = limiter.snapshot()
+            self.assertIsNone(snapshot.daily_limit)
+            self.assertEqual(snapshot.used_today, 5)
+
     def test_blocked_domain_waits_until_clock_passes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             store = ProvenanceStore(Path(temporary) / "provenance.sqlite3")

@@ -14,10 +14,11 @@ from .store import ProvenanceStore
 
 PIXIV_DOMAIN = "pixiv.net"
 TWITTER_DOMAIN = "api.fxtwitter.com"
-PIXIV_MIN_INTERVAL = 2.0
-TWITTER_MIN_INTERVAL = 1.0
-PIXIV_DAILY_LIMIT = 2000
-TWITTER_DAILY_LIMIT = 5000
+PIXIV_MIN_INTERVAL = 0.75
+TWITTER_MIN_INTERVAL = 0.2
+# 0 means no daily request cap; the per-domain interval remains the guardrail.
+PIXIV_DAILY_LIMIT = 0
+TWITTER_DAILY_LIMIT = 0
 DEFAULT_TIMEOUT = 20.0
 PIXIV_HEADERS = {
     "User-Agent": (
@@ -105,7 +106,7 @@ class FetchResult:
 class BudgetSnapshot:
     domain: str
     min_interval: float
-    daily_limit: int
+    daily_limit: int | None
     used_today: int
     blocked_until: int
     long_remaining: int | None
@@ -145,7 +146,8 @@ class RateLimiter:
         self.store = store
         self.domain = domain
         self.min_interval = max(0.0, float(min_interval))
-        self.daily_limit = max(1, int(daily_limit))
+        limit = int(daily_limit)
+        self.daily_limit = limit if limit > 0 else None
         self.sleep = sleep
         self.clock = clock
         self._lock = _domain_lock(store, domain)
@@ -184,8 +186,10 @@ class RateLimiter:
                 continue
             day = time.strftime("%Y-%m-%d", time.gmtime(now))
             used = int(state.get("day_count") or 0) if state.get("day") == day else 0
-            if used >= self.daily_limit:
-                raise BudgetExhausted(f"{self.domain} 今日预算已用完（{used}/{self.daily_limit}）")
+            if self.daily_limit is not None and used >= self.daily_limit:
+                raise BudgetExhausted(
+                    f"{self.domain} 今日预算已用完（{used}/{self.daily_limit}）"
+                )
             last = float(state.get("last_request") or 0.0)
             wait_for = last + self.min_interval - self.clock()
             if wait_for > 0:

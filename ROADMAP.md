@@ -309,7 +309,7 @@ Source metadata is user-owned state, not index state. `provenance.sqlite3` in
 X/Twitter status, or an unresolved record, plus a cross-platform author group.
 Filename and embedded XMP parsing run offline; only explicit enrichment jobs
 touch the network. `[provenance]` in `config.toml` controls auto-enrichment,
-per-domain intervals, and daily budgets. See `docs/image-provenance.md` for the
+per-domain intervals, and optional daily caps (0 = unlimited). See `docs/image-provenance.md` for the
 verified filename rules, data model, rate limits, and failure handling.
 
 1. Complete: offline parser, unresolved rows, deep embedded-metadata scan, and

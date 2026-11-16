@@ -89,10 +89,10 @@ class ProvenanceConfig:
     """Rate and automation policy for source metadata enrichment."""
 
     auto_enrich: bool = True
-    pixiv_min_interval: float = 2.0
-    twitter_min_interval: float = 1.0
-    pixiv_daily_limit: int = 2000
-    twitter_daily_limit: int = 5000
+    pixiv_min_interval: float = 0.75
+    twitter_min_interval: float = 0.2
+    pixiv_daily_limit: int = 0
+    twitter_daily_limit: int = 0
     author_ttl_days: int = 30
 
 
@@ -239,10 +239,11 @@ full_verification_interval_seconds = 86400
 # 索引完成后自动为能识别的 Pixiv/X 文件名补全来源；不自动调用反向搜图。
 auto_enrich = true
 # 单并发、按域名限速。提高额度前请先了解 pixiv 的限流与风控。
-pixiv_min_interval = 2.0
-twitter_min_interval = 1.0
-pixiv_daily_limit = 2000
-twitter_daily_limit = 5000
+pixiv_min_interval = 0.75
+twitter_min_interval = 0.2
+# 0 表示不设每日请求上限，仅保留每个域名的请求间隔。
+pixiv_daily_limit = 0
+twitter_daily_limit = 0
 author_ttl_days = 30
 '''
 

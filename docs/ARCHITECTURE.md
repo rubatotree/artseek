@@ -92,7 +92,7 @@ $$
 
 ## 来源元信息
 
-`{index_dir}/provenance.sqlite3` 保存每张图的 Pixiv 作品或 X/Twitter 推文来源、作者组、抓取状态与限速预算。文件名与嵌入 XMP/EXIF 的解析完全离线；网络补全只走一个按域名串行的调度器，Pixiv 默认 2 秒/请求、2000/天，FxTwitter 1 秒/请求、5000/天，额度与 `blocked_until` 持久化。SauceNAO/ascii2d 不配置 API key，查看器只提供打开页面和 URL 粘贴。搜索、目录、收藏、随机接口都接受 `author_key`，作者页 `/author/{key}` 直接展示该作者组的分页结果。索引完成后只对新点做本地扫描，并按 `[provenance] auto_enrich` 决定是否启动低速网络补全。详见 `docs/image-provenance.md`。
+`{index_dir}/provenance.sqlite3` 保存每张图的 Pixiv 作品或 X/Twitter 推文来源、作者组、抓取状态与限速预算。文件名与嵌入 XMP/EXIF 的解析完全离线；网络补全只走一个按域名串行的调度器，Pixiv 默认 0.75 秒/请求、FxTwitter 0.2 秒/请求，默认不设每日请求上限（`0` = 不限），`blocked_until` 仍持久化。SauceNAO/ascii2d 不配置 API key，查看器只提供打开页面和 URL 粘贴。搜索、目录、收藏、随机接口都接受 `author_key`，作者页 `/author/{key}` 直接展示该作者组的分页结果。索引完成后只对新点做本地扫描，并按 `[provenance] auto_enrich` 决定是否启动低速网络补全。详见 `docs/image-provenance.md`。
 
 ## 可扩展点
 

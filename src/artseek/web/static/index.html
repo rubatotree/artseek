@@ -2247,10 +2247,10 @@
       const percent = total > 0 ? Math.min(100, Math.round(done * 100 / total)) : 0;
       const budgets = (job.budgets || []).map((budget) => {
         const used = Number(budget.used_today || 0);
-        const limit = Number(budget.daily_limit || 0);
+        const limitText = budget.daily_limit == null ? '不限' : String(Number(budget.daily_limit));
         const blocked = Number(budget.blocked_until || 0);
         const blockedHint = blocked > Date.now() / 1000 ? ` · 暂停到 ${formatBudgetTime(blocked)}` : '';
-        return `<div class="provenance-hint">${escapeHtml(budget.domain)}：今日 ${used}/${limit}${escapeHtml(blockedHint)}</div>`;
+        return `<div class="provenance-hint">${escapeHtml(budget.domain)}：今日 ${used} / ${escapeHtml(limitText)}${escapeHtml(blockedHint)}</div>`;
       }).join('');
       const controls = [];
       controls.push('<button type="button" data-prov-job="scan">本地扫描</button>');
