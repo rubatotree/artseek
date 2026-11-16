@@ -309,7 +309,10 @@ class NotesApiTests(unittest.TestCase):
         self.assertIn("function dismissNotes", html)
         self.assertIn("history.pushState", html)
         self.assertIn("popstate", html)
-        self.assertIn("`/i/${encodeURIComponent(route.imageId || '')}`", html)
+        self.assertIn(
+            "`/i/${encodeURIComponent(route.imageId || '')}${route.gallery || ''}`",
+            html,
+        )
         self.assertIn("params.set('q', route.query)", html)
         self.assertIn("params.set('ref', ref)", html)
         self.assertIn("params.set('s', route.snapshot)", html)

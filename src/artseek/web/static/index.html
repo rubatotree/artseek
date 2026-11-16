@@ -8144,9 +8144,14 @@
       if (parts[0] === 'i' && parts[1]) {
         const imageId = parts[1];
         if (parts[2] === 'notes') {
-          return { kind: 'notes', imageId, noteName: parts.slice(3).join('/') };
+          return {
+            kind: 'notes',
+            imageId,
+            noteName: parts.slice(3).join('/'),
+            gallery: url.search || '',
+          };
         }
-        return { kind: 'image', imageId };
+        return { kind: 'image', imageId, gallery: url.search || '' };
       }
       if (parts[0] === 'search') {
         return {
@@ -8213,10 +8218,13 @@
       if (route.kind === 'tag') {
         return `/tag/${encodeURIComponent(route.tag || '')}`;
       }
-      if (route.kind === 'image') return `/i/${encodeURIComponent(route.imageId || '')}`;
+      if (route.kind === 'image') {
+        return `/i/${encodeURIComponent(route.imageId || '')}${route.gallery || ''}`;
+      }
       if (route.kind === 'notes') {
         const base = `/i/${encodeURIComponent(route.imageId || '')}/notes`;
-        return route.noteName ? `${base}/${encodeURIComponent(route.noteName)}` : base;
+        const path = route.noteName ? `${base}/${encodeURIComponent(route.noteName)}` : base;
+        return `${path}${route.gallery || ''}`;
       }
       return '/';
     }
@@ -8321,9 +8329,20 @@
       if (routeCtl.applying) return;
       const imageId = currentImageId();
       if (!imageId) return;
+      let gallery = '';
+      if (state.mode === 'search') {
+        try {
+          gallery = new URL(appRouteHref(currentGalleryRoute()), location.origin).search;
+        } catch (_) { /* keep empty */ }
+      }
       const route = notes.open
-        ? { kind: 'notes', imageId, noteName: notes.currentName || notes.pendingName || '' }
-        : { kind: 'image', imageId };
+        ? {
+            kind: 'notes',
+            imageId,
+            noteName: notes.currentName || notes.pendingName || '',
+            gallery,
+          }
+        : { kind: 'image', imageId, gallery };
       const prev = (history.state && history.state.artseek) ? Number(history.state.overlay || 0) : 0;
       const overlay = replace ? prev : prev + 1;
       commitRoute(route, { replace, overlay });
@@ -8513,6 +8532,15 @@
       await restoreLibraryReferences(route.refs || []);
       await fetchResults({ reset: true, skipRoute: true });
     }
+    async function restoreOverlayGallery(gallery) {
+      if (!gallery) return;
+      try {
+        const base = parseAppRoute(new URL(`/search${gallery}`, location.origin));
+        if (base.kind === 'search') await applySearchRoute(base);
+      } catch (_) {
+        // Keep the image available even if the saved gallery URL is malformed.
+      }
+    }
     async function applyAppRoute(route) {
       const seq = ++routeCtl.seq;
       routeCtl.applying = true;
@@ -8582,6 +8610,8 @@
         if (seq !== routeCtl.seq) return;
         if (route.kind === 'image' || route.kind === 'notes') {
           if (!route.imageId) return;
+          await restoreOverlayGallery(route.gallery || '');
+          if (seq !== routeCtl.seq) return;
           notes.pendingName = route.kind === 'notes' ? (route.noteName || '') : '';
           try {
             const item = await ensureGalleryItem(route.imageId);
