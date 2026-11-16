@@ -20,11 +20,12 @@
       --page-gutter: 20px;
     }
     * { box-sizing: border-box; }
-    html { -webkit-text-size-adjust: 100%; overflow-x: hidden; }
+    html { -webkit-text-size-adjust: 100%; overflow-x: hidden; overflow-x: clip; }
     body {
       margin: 0;
       min-height: 100dvh;
       overflow-x: hidden;
+      overflow-x: clip;
       -webkit-tap-highlight-color: rgba(201, 122, 152, .18);
       color: var(--ink);
       background:
@@ -1101,7 +1102,7 @@
       :root { --page-gutter: 12px; }
       .shell { padding-inline: 0; width: 100%; }
       header {
-        padding: 10px var(--page-gutter) 4px;
+        padding: calc(10px + env(safe-area-inset-top, 0px)) var(--page-gutter) 4px;
         display: flex; align-items: baseline; gap: 8px;
       }
       .search-layout {
@@ -1113,11 +1114,13 @@
         width: 100%;
       }
       .results-column { width: 100%; max-width: 100%; }
-      .search-column { display: contents; }
-      .search-panel {
-        order: -3;
+      .search-column {
+        display: block; order: -3; width: 100%;
         position: static;
-        z-index: auto;
+      }
+      .search-panel {
+        order: 0;
+        position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
         width: 100%;
         margin: 0;
         padding: 8px var(--page-gutter) 12px;
@@ -1144,7 +1147,7 @@
       .search-actions { gap: 6px; }
       #search { min-height: 44px; padding: 10px 12px; box-shadow: none; }
       .filter-toggle { width: 44px; min-width: 44px; height: 44px; }
-      .tree-panel { order: -1; }
+      .tree-panel { order: -4; }
       .results-column { order: 0; }
       .search-panel.loading { opacity: .55; pointer-events: none; }
       .fold-toggle { display: flex; }
@@ -1238,8 +1241,23 @@
       }
       .card, .image-wrap, .image-wrap img { width: 100%; max-width: 100%; min-width: 0; }
     }
+    @media (max-width: 360px) {
+      .subtitle { display: none; }
+      header { padding-bottom: 8px; }
+    }
     @media (max-width: 720px) {
       .search-filters { grid-template-columns: 1fr; }
+      .search-panel { max-height: calc(100dvh - env(safe-area-inset-top, 0px)); overflow-y: auto; }
+      .filter-control input[type="text"],
+      .filter-control input[type="text"]:focus,
+      .filter-inline-weight input { font-size: 16px; }
+      .filter-inline-weight input { width: 48px; height: 28px; line-height: 26px; }
+      .ref-inline .ref-add, .ref-inline .ref-card { width: 44px; height: 44px; border-radius: 10px; }
+      .ref-inline .ref-card .ref-remove { width: 22px; height: 22px; font-size: 13px; }
+      #viewer-index { padding-right: 8px; border-right: 1px solid rgba(255,255,255,.16); }
+      .modal-bar-break { display: block; flex: 1 1 100%; height: 0; margin: 0; }
+      #viewer-provenance, #viewer-notes, #viewer-collection-toggle { flex: 1 1 0; min-width: 0; }
+      #viewer-remove-collection { flex: 1 1 100%; }
       .search-input-wrap { flex-wrap: nowrap; }
       .ref-drop-zone.ref-inline { flex: 0 1 auto; max-width: 50%; padding: 0 5px 0 0; }
       .search-row #query { flex: 1 1 auto; }
@@ -1249,7 +1267,7 @@
         flex: 1 1 100%; max-width: 100%; padding: 0 6px 4px;
       }
       .search-input-wrap.has-refs .ref-inline .ref-strip { flex: 1 1 auto; }
-      header { padding-top: 8px; }
+      header { padding-top: calc(8px + env(safe-area-inset-top, 0px)); }
       .brand { font-size: 20px; line-height: 1.1; }
       .subtitle { margin: 0; padding: 0; font-size: 11px; }
       .fold-toggle { min-height: 44px; }
@@ -1578,6 +1596,7 @@
       </label>
       <button id="viewer-remove-ref" type="button" hidden>从参考中移除</button>
       <button id="viewer-reference" type="button">添加为参考</button>
+      <span class="modal-bar-break" aria-hidden="true"></span>
       <button id="viewer-provenance" type="button" aria-pressed="false" aria-controls="provenance-pane" hidden>来源</button>
       <button id="viewer-notes" type="button" aria-pressed="false" aria-controls="notes-pane" hidden>笔记</button>
       <button id="viewer-collection-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="viewer-collection-menu">收藏到…</button>
@@ -4275,8 +4294,19 @@
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') closeAllFilterSuggestions();
     });
+    function syncQueryPlaceholder() {
+      const width = window.innerWidth;
+      $('query').placeholder = width <= 360
+        ? '搜索画面或标签'
+        : (width <= 720 ? '搜索画面、标签或作者' : '搜索画面、标签、作者或作品链接');
+    }
+    function compactInfo() {
+      return window.matchMedia('(max-width: 720px)').matches;
+    }
     function setFilterPanelOpen(open) {
       $('search-filters').hidden = !open;
+      $('panel').classList.toggle('is-filters-open', open);
+      $('panel').closest('.search-column')?.classList.toggle('is-filters-open', open);
       $('filter-toggle').setAttribute('aria-expanded', String(open));
       if (!open) closeAllFilterSuggestions();
     }
@@ -5946,7 +5976,9 @@
         }
         state.hasMore = Boolean(data.has_more) && incoming.length > 0;
         $('load-more').hidden = !state.hasMore;
-        $('query-info').textContent = `作者「${state.authorName || state.authorKey}」· ${state.results.length} / ${state.authorTotal} 张图 · ${FOLDER_SORT_LABELS[state.authorSort] || state.authorSort}${state.hasMore ? ' · 下滑加载更多' : ''}`;
+        $('query-info').textContent = compactInfo()
+          ? `${state.results.length} / ${state.authorTotal} 张图 · ${FOLDER_SORT_LABELS[state.authorSort] || state.authorSort}`
+          : `作者「${state.authorName || state.authorKey}」· ${state.results.length} / ${state.authorTotal} 张图 · ${FOLDER_SORT_LABELS[state.authorSort] || state.authorSort}${state.hasMore ? ' · 下滑加载更多' : ''}`;
         if ($('viewer').open) {
           updateViewerNav();
           updateProvenanceButton();
@@ -6007,7 +6039,9 @@
         }
         state.hasMore = Boolean(data.has_more) && incoming.length > 0;
         $('load-more').hidden = !state.hasMore;
-        $('query-info').textContent = `标签「#${state.tagName}」· ${state.results.length} / ${state.tagTotal} 张图 · ${FOLDER_SORT_LABELS[state.tagSort] || state.tagSort}${state.hasMore ? ' · 下滑加载更多' : ''}`;
+        $('query-info').textContent = compactInfo()
+          ? `${state.results.length} / ${state.tagTotal} 张图 · ${FOLDER_SORT_LABELS[state.tagSort] || state.tagSort}`
+          : `标签「#${state.tagName}」· ${state.results.length} / ${state.tagTotal} 张图 · ${FOLDER_SORT_LABELS[state.tagSort] || state.tagSort}${state.hasMore ? ' · 下滑加载更多' : ''}`;
         if ($('viewer').open) {
           updateViewerNav();
           updateProvenanceButton();
@@ -6104,7 +6138,9 @@
       const sort = effectiveCollectionSort();
       const sortHint = ` · ${COLLECTION_SORT_LABELS[sort] || sort}${state.collectionViewSort ? '（临时）' : ''}`;
       const manualHint = sort === 'manual' ? ' · 拖动卡片上手柄微调' : '';
-      $('query-info').textContent = `收藏夹「${state.collectionName}」· ${count}${sortHint}${queryHint}${more}${manualHint}`;
+      $('query-info').textContent = compactInfo()
+        ? `${count}${sortHint}${more}`
+        : `收藏夹「${state.collectionName}」· ${count}${sortHint}${queryHint}${more}${manualHint}`;
       $('gallery').classList.toggle('is-ordering', sort === 'manual');
       renderCollectionSort();
     }
@@ -6464,8 +6500,12 @@
 
     function renderScopeInfo(shown) {
       const sort = FOLDER_SORT_LABELS[state.browseSort] || state.browseSort;
-      const more = state.hasMore ? ' · 下滑加载更多' : '';
-      $('query-info').textContent = `已勾选 ${treeState.selected.size} 个目录 · ${shown} / ${state.scopeTotal} 张图 · ${sort}${more}`;
+      if (compactInfo()) {
+        $('query-info').textContent = `${shown} / ${state.scopeTotal} 张图 · ${sort}`;
+      } else {
+        const more = state.hasMore ? ' · 下滑加载更多' : '';
+        $('query-info').textContent = `已勾选 ${treeState.selected.size} 个目录 · ${shown} / ${state.scopeTotal} 张图 · ${sort}${more}`;
+      }
       renderCollectionSort();
     }
 
@@ -6583,8 +6623,12 @@
         $('query-info').textContent = `「${data.folder_name || state.browseName}」及其子目录里没有已索引的图片。`;
         return;
       }
-      const more = state.hasMore ? ' · 下滑加载更多' : '';
-      $('query-info').textContent = `浏览「${data.folder_name || state.browseName}」· ${shown} / ${total} 张图 · ${sortLabel}${more}`;
+      if (compactInfo()) {
+        $('query-info').textContent = `${shown} / ${total} 张图 · ${sortLabel}`;
+      } else {
+        const more = state.hasMore ? ' · 下滑加载更多' : '';
+        $('query-info').textContent = `浏览「${data.folder_name || state.browseName}」· ${shown} / ${total} 张图 · ${sortLabel}${more}`;
+      }
     }
 
     function renderSearchFailure(error, prefix) {
@@ -6868,7 +6912,11 @@
       const warning = data.llm_warning ? ` · Ollama 未就绪，已自动回退` : '';
       const more = state.hasMore ? ' · 下滑加载更多' : '';
       const resultTotal = Number.isFinite(Number(data.total)) ? Number(data.total) : total;
-      $('query-info').innerHTML = `${label}${warning} · ${resultTotal} 个结果${more}　${positive}${negative}${filterChips.join('')}`;
+      if (compactInfo()) {
+        $('query-info').textContent = `${label} · ${resultTotal} 个结果${more}`;
+      } else {
+        $('query-info').innerHTML = `${label}${warning} · ${resultTotal} 个结果${more}　${positive}${negative}${filterChips.join('')}`;
+      }
     }
 
     function galleryColumnCount() {
@@ -8484,6 +8532,7 @@
     scrollObserver.observe(loadMore);
     let galleryResizeTimer = 0;
     window.addEventListener('resize', () => {
+      syncQueryPlaceholder();
       clearTimeout(galleryResizeTimer);
       galleryResizeTimer = setTimeout(() => {
         const gallery = $('gallery');
@@ -9246,6 +9295,7 @@
           $('model-hint').textContent = modelApiErrorMessage(error);
         }),
       ]);
+      syncQueryPlaceholder();
       const route = parseAppRoute();
       if (!restoreCachedFolderSelection()) {
         // No browser cache yet: keep the server-persisted scope for deep links,
