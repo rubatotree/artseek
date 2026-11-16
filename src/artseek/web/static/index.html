@@ -264,6 +264,63 @@
     }
     .search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
     .search-actions { display: flex; gap: 8px; }
+    .filter-toggle {
+      position: relative; display: inline-flex; align-items: center; justify-content: center;
+      width: 42px; min-width: 42px; min-height: 0; padding: 0; border-radius: 12px;
+      background: var(--rose-soft); color: #8a5268;
+    }
+    .filter-toggle::before {
+      content: ""; display: block; width: 20px; height: 20px;
+      background: currentColor;
+      -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 5h18l-7 8v6l-4 2v-8z'/%3E%3C/svg%3E") center / contain no-repeat;
+      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 5h18l-7 8v6l-4 2v-8z'/%3E%3C/svg%3E") center / contain no-repeat;
+    }
+    .filter-toggle svg { display: none; }
+    .filter-toggle[aria-expanded="true"] { background: #eabfce; color: #7a4058; }
+    .filter-toggle:hover { transform: none; background: #efd6e0; }
+    .filter-count {
+      position: absolute; top: -5px; right: -5px; min-width: 16px; padding: 0 4px;
+      border-radius: 999px; background: #b85f7e; color: #fff; font-size: 10px;
+      line-height: 16px; text-align: center;
+    }
+    .search-filters {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px;
+      margin: 7px 0 1px; padding: 8px; border: 1px solid var(--line);
+      border-radius: 12px; background: #fcf8fa;
+    }
+    .search-filters[hidden] { display: none; }
+    .filter-field-wrap { display: block; min-width: 0; }
+    .filter-field {
+      display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center;
+      gap: 7px; min-width: 0; color: var(--muted); font-size: 11px;
+    }
+    .filter-field > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .filter-control {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
+      min-width: 0; padding: 2px 6px; border: 1px solid var(--line);
+      border-radius: 9px; background: #fff;
+    }
+    .filter-control input[type="text"],
+    .filter-control input[type="text"]:focus {
+      flex: 1 1 72px; width: auto; min-width: 40px; padding: 5px 2px;
+      border: 0; border-radius: 0; background: transparent; box-shadow: none;
+      color: var(--ink); font: inherit; font-size: 12px; outline: none;
+    }
+    .filter-chips { display: contents; }
+    .filter-chip {
+      display: inline-flex; align-items: center; gap: 2px; min-width: 0;
+      max-width: 100%; padding: 2px 3px 2px 7px; border-radius: 999px;
+      background: var(--rose-soft); color: #8a5268; font-size: 11px;
+    }
+    .filter-chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .filter-chip-links { display: inline-flex; align-items: center; gap: 2px; }
+    .filter-chip .platform-icon { width: 14px; height: 14px; }
+    .filter-chip .platform-icon svg { width: 8px; height: 8px; }
+    .filter-chip button {
+      width: 16px; height: 16px; min-height: 0; padding: 0; border-radius: 999px;
+      background: transparent; color: #8a5268; font-size: 12px; line-height: 1;
+    }
+    .filter-chip button:hover { transform: none; background: #efd6e0; }
     .composer { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; margin-top: 10px; }
     .text-weight-card, .ref-add {
       width: 72px; height: 72px; padding: 0; border-radius: 12px;
@@ -1340,7 +1397,7 @@
           <div class="search-actions">
             <button class="primary" id="search" type="submit">查询</button>
             <button class="filter-toggle" id="filter-toggle" type="button" aria-expanded="false" aria-controls="search-filters" aria-label="高级筛选" title="高级筛选">
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 5h16l-6 7v5l-4 2v-7z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 5h18l-7 8v6l-4 2v-8z" fill="currentColor"/></svg>
               <span id="filter-count" class="filter-count" hidden></span>
             </button>
           </div>
@@ -1362,34 +1419,43 @@
         <div id="search-filters" class="search-filters" hidden>
           <div class="filter-field-wrap">
             <label class="filter-field"><span>作者</span>
-              <input id="filter-author" type="text" placeholder="输入后回车生成标签" autocomplete="off" spellcheck="false">
+              <div class="filter-control">
+                <div id="filter-author-chips" class="filter-chips" aria-label="作者筛选标签"></div>
+                <input id="filter-author" type="text" placeholder="作者名/key，回车生成" autocomplete="off" spellcheck="false">
+              </div>
             </label>
-            <div id="filter-author-chips" class="filter-chips" aria-label="作者筛选标签"></div>
           </div>
           <div class="filter-field-wrap">
             <label class="filter-field"><span>标题模糊词</span>
-              <input id="filter-title" type="text" placeholder="标题中的词" autocomplete="off" spellcheck="false">
+              <div class="filter-control">
+                <input id="filter-title" type="text" placeholder="标题中的词" autocomplete="off" spellcheck="false">
+              </div>
             </label>
           </div>
           <div class="filter-field-wrap">
             <label class="filter-field"><span>来源 Tag</span>
-              <input id="filter-text-tags" type="text" placeholder="Pixiv/X 标签，回车或逗号生成标签" title="精确匹配 Pixiv/X 来源 tag" autocomplete="off" spellcheck="false">
+              <div class="filter-control">
+                <div id="filter-text-chips" class="filter-chips" aria-label="来源标签筛选"></div>
+                <input id="filter-text-tags" type="text" placeholder="Pixiv/X tag，回车生成" title="精确匹配 Pixiv/X 来源 tag" autocomplete="off" spellcheck="false">
+              </div>
             </label>
-            <div id="filter-text-chips" class="filter-chips" aria-label="来源标签筛选"></div>
           </div>
           <div class="filter-field-wrap">
             <label class="filter-field"><span>文字标签</span>
-              <input id="filter-tag-text" type="text" placeholder="按文字模糊匹配来源 tag" title="在来源 tag 名称中做文字包含匹配" autocomplete="off" spellcheck="false">
+              <div class="filter-control">
+                <div id="filter-tag-text-chips" class="filter-chips" aria-label="文字标签筛选"></div>
+                <input id="filter-tag-text" type="text" placeholder="模糊匹配来源 tag" title="在来源 tag 名称中做文字包含匹配" autocomplete="off" spellcheck="false">
+              </div>
             </label>
-            <div id="filter-tag-text-chips" class="filter-chips" aria-label="文字标签筛选"></div>
           </div>
           <div class="filter-field-wrap">
             <label class="filter-field"><span>图片标签</span>
-              <input id="filter-image-tags" type="text" placeholder="WD 画面标签，回车或逗号生成标签" title="本地画面标签，例如 long_hair" autocomplete="off" spellcheck="false">
+              <div class="filter-control">
+                <div id="filter-image-chips" class="filter-chips" aria-label="图片标签筛选"></div>
+                <input id="filter-image-tags" type="text" placeholder="WD tag，回车生成" title="本地画面标签，例如 long_hair" autocomplete="off" spellcheck="false">
+              </div>
             </label>
-            <div id="filter-image-chips" class="filter-chips" aria-label="图片标签筛选"></div>
           </div>
-          <p class="search-filter-hint">筛选标签可用 × 快速删除；无模糊文字时直接做简单过滤，不载入向量模型。</p>
         </div>
         </form>
       </section>
@@ -1600,7 +1666,7 @@
     const state = {
       references: [], refSeq: 0, current: null, currentRefKey: null, viewerSource: 'gallery',
       results: [], offset: 0, hasMore: false, loadingMore: false, searchSeq: 0,
-      searchSnapshotId: '', searchRequest: null,
+      searchSnapshotId: '', searchRequest: null, filterApplyTimer: 0,
       colHeights: [],
       mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
       browseSort: loadFolderSort(), browseSeed: null, scopeTotal: 0,
@@ -3548,6 +3614,7 @@
     ['filter-author', 'filter-title', 'filter-text-tags', 'filter-tag-text', 'filter-image-tags'].forEach((id) => {
       $(id).addEventListener('input', updateFilterBadge);
     });
+    $('filter-title').addEventListener('change', scheduleFilterApply);
     $('upload').addEventListener('change', (event) => {
       addReferenceFiles(event.target.files);
       event.target.value = '';
@@ -3669,10 +3736,49 @@
       tag_text: { input: 'filter-tag-text', chips: 'filter-tag-text-chips', single: false },
       image_tags: { input: 'filter-image-tags', chips: 'filter-image-chips', single: false },
     };
+    function scheduleFilterApply() {
+      clearTimeout(state.filterApplyTimer);
+      state.filterApplyTimer = setTimeout(() => {
+        state.filterApplyTimer = 0;
+        applyFilterChanges();
+      }, 180);
+    }
+    async function applyFilterChanges() {
+      const filters = readAdvancedFilters();
+      const hasQuery = Boolean(
+        $('query').value.trim()
+        || librarySearchRefs().length
+        || state.references.some((ref) => ref.file)
+        || hasAdvancedFilters(filters)
+      );
+      if (hasQuery) {
+        await fetchResults({ reset: true });
+      } else if (treeState.selected.size) {
+        startScopeBrowse();
+      } else {
+        resetGalleryToIdle();
+        $('query-info').textContent = '勾选左侧目录后，这里会显示所有已勾选目录中的图片。';
+      }
+    }
     function chipValues(containerId) {
       return [...$(containerId).querySelectorAll('.filter-chip')]
         .map((chip) => chip.dataset.value || '')
         .filter(Boolean);
+    }
+    async function enrichAuthorChip(chip, key, label, links) {
+      if (!key.includes(':')) return;
+      try {
+        const data = await parseResponse(await fetch(`/api/authors/${encodeURIComponent(key)}`));
+        if (!chip.isConnected) return;
+        const author = data.author || {};
+        label.textContent = author.name || author.handle || key;
+        label.title = key;
+        if (Array.isArray(author.members) && author.members.length) {
+          links.innerHTML = platformIconLinks(author.members);
+        }
+      } catch (_) {
+        // Keep the key as a readable fallback.
+      }
     }
     function addFilterChip(kind, value) {
       const config = FILTER_CHIP_CONFIG[kind];
@@ -3685,7 +3791,9 @@
       chip.className = 'filter-chip';
       chip.dataset.value = text;
       const label = document.createElement('span');
-      label.textContent = text;
+      label.textContent = kind === 'author' ? text : `#${text}`;
+      const links = kind === 'author' ? document.createElement('span') : null;
+      if (links) links.className = 'filter-chip-links';
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.textContent = '×';
@@ -3700,9 +3808,13 @@
           updateAuthorFilter();
         }
         updateFilterBadge();
+        scheduleFilterApply();
       });
-      chip.append(label, remove);
+      chip.append(label);
+      if (links) chip.append(links);
+      chip.append(remove);
       host.append(chip);
+      if (kind === 'author') enrichAuthorChip(chip, text, label, links);
     }
     function commitFilterInput(kind) {
       const config = FILTER_CHIP_CONFIG[kind];
@@ -3713,6 +3825,7 @@
       for (const value of splitFilterTags(raw)) addFilterChip(kind, value);
       input.value = '';
       updateFilterBadge();
+      scheduleFilterApply();
     }
     function commitAllFilterInputs() {
       Object.keys(FILTER_CHIP_CONFIG).forEach(commitFilterInput);
@@ -5452,6 +5565,8 @@
 
     async function runSearch() {
       commitAllFilterInputs();
+      clearTimeout(state.filterApplyTimer);
+      state.filterApplyTimer = 0;
       await fetchResults({ reset: true });
     }
 
@@ -5525,7 +5640,7 @@
         const data = await parseResponse(response);
         if (seq !== state.searchSeq) return;
         const appliedAuthor = data.applied_filters && data.applied_filters.author_key;
-        if (reset && appliedAuthor && appliedAuthor !== state.authorKey) {
+        if (reset && appliedAuthor) {
           state.authorKey = appliedAuthor;
           updateAuthorFilter();
         }
