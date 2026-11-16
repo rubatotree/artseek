@@ -324,3 +324,33 @@ verified filename rules, data model, rate limits, and failure handling.
    without an API key.
 6. Complete: post-index local scan and optional automatic Pixiv/X enrichment
    for newly stored images, plus `artseek provenance scan|enrich` CLI commands.
+
+## Reference retrieval (refine)
+
+Reference-oriented browsing is a second, derived index: character identity,
+variant grouping, framing, composition, pose, hands/eyes, palette. It never
+changes the main collection schema and never joins the fused search score; the
+channels are separate browse modes and filters. Design, data model, thresholds,
+dependencies and risks live in `docs/reference-search.md`.
+
+Sidecar: Qdrant `artseek_refine` with `character`, `pose`, `layout` and
+`palette` named vectors (mixed dimensions; points may omit person-dependent
+ones), plus `refine.sqlite3` in
+`index_dir` and crop caches in `cache_dir/refine`. All of it is rebuildable and
+independently disposable.
+
+1. Partial: dependency spike done in an isolated venv — imgutils 0.19.0 installs
+   (numpy 1.26.4, onnxruntime 1.32 CPU-only), CCIP 768-d features, `.body`
+   18×3 keypoints, measured CPU latency ≈ 12 s/image with every model enabled
+   and ≈ 390 MB of deepghs model cache. Remaining: full pytest after the numpy
+   downgrade in `.venv`, model license list, GPU timing.
+2. Pending: extraction pipeline, sidecar stores, incremental `artseek refine`,
+   and `doctor` coverage.
+3. Pending: threshold calibration (`--calibrate`) that writes `ccip_threshold`
+   and gates the character UI while it is zero.
+4. Pending: character clustering and albums, variant grouping with collapse and
+   manual split, cluster naming, per-cluster outfit branches.
+5. Pending: browse layer — framing/completeness filters, composition and palette
+   similarity, hand/eye reference pages, pose skeleton overlay.
+6. Pending: `pull-models --with-refine`, README/ARCHITECTURE updates, timing and
+   sidecar-size records, full test suite and browser checks.
