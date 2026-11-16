@@ -330,20 +330,31 @@ class PixivClient:
         width = _int_or_none(body.get("width"))
         height = _int_or_none(body.get("height"))
         confidence = ref.confidence
+        pages_unavailable = False
         if page is None:
             if page_count == 1:
                 page = 0
             else:
                 confidence = min(confidence, 0.5)
         if page is not None and (page > 0 or (page_count and page_count > 1)):
-            pages = self._get(f"https://www.pixiv.net/ajax/illust/{ref.source_id}/pages")
+            try:
+                pages = self._get(
+                    f"https://www.pixiv.net/ajax/illust/{ref.source_id}/pages"
+                )
+            except (NotFoundError, ProtectedError):
+                # R18 / login-only works often expose the illustration metadata
+                # but return 404/403 for /pages without a session. Keep the
+                # source and author instead of marking the work deleted.
+                pages = None
+                pages_unavailable = True
+                confidence = min(confidence, 0.6)
             if isinstance(pages, list) and 0 <= page < len(pages):
                 info = pages[page]
                 if isinstance(info, dict):
                     width = _int_or_none(info.get("width")) or width
                     height = _int_or_none(info.get("height")) or height
                     page_count = len(pages)
-            else:
+            elif pages is not None:
                 confidence = min(confidence, 0.5)
         if local_size and width and height and tuple(local_size) != (width, height):
             confidence = min(confidence, 0.5)
@@ -380,6 +391,7 @@ class PixivClient:
                 "sl": body.get("sl"),
                 "isLoginOnly": body.get("isLoginOnly"),
                 "pageCount": page_count,
+                "pages_unavailable": pages_unavailable,
             },
             confidence=confidence,
         )

@@ -85,6 +85,40 @@ class PixivClientTests(unittest.TestCase):
         profile = pixiv.fetch_author("1554775")
         self.assertEqual(profile["social"]["twitter"]["url"], "https://twitter.com/yoneyamai")
 
+    def test_restricted_pages_404_keeps_illustration_metadata(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/ajax/illust/678901234":
+                return httpx.Response(
+                    200,
+                    json={
+                        "error": False,
+                        "body": {
+                            "illustId": "678901234",
+                            "illustTitle": "meta",
+                            "userId": "1",
+                            "userName": "author",
+                            "pageCount": 2,
+                            "width": 2480,
+                            "height": 3894,
+                            "xRestrict": 0,
+                            "tags": {"tags": [{"tag": "SFW"}]},
+                        },
+                    },
+                )
+            return httpx.Response(404, json={"error": True, "body": []})
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        result = PixivClient(client).fetch(
+            SourceRef("pixiv", "678901234", 1, "https://www.pixiv.net/artworks/678901234"),
+            local_size=(2480, 3894),
+        )
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.title, "meta")
+        self.assertEqual(result.page_count, 2)
+        self.assertEqual(result.tags, ["SFW"])
+        self.assertTrue(result.raw["pages_unavailable"])
+        self.assertLessEqual(result.confidence, 0.6)
+
     def test_missing_work_is_not_found(self) -> None:
         client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(404)))
         with self.assertRaises(NotFoundError):

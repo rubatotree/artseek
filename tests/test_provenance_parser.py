@@ -149,6 +149,18 @@ class EmbeddedMetadataTests(unittest.TestCase):
             assert parsed is not None
             self.assertEqual(parsed.primary.origin, "embedded")
 
+    def test_xpcomment_utf16le_url_is_extracted(self) -> None:
+        url = "https://x.com/example_artist2/status/1905879515315732000/photo/1"
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "GnLt47zaMAAjCZD.jpg"
+            exif = Image.Exif()
+            exif[40092] = url.encode("utf-16-le")
+            Image.new("RGB", (8, 8), (20, 30, 40)).save(path, exif=exif, quality=90)
+            refs = extract_embedded_refs(path)
+            self.assertEqual(len(refs), 1)
+            self.assertEqual(refs[0].source_id, "1905879515315732000")
+            self.assertEqual(refs[0].page, 1)
+
     def test_embedded_url_wins_over_filename_but_conflict_is_kept(self) -> None:
         xmp = (
             '<x:xmpmeta xmlns:x="adobe:ns:meta/">'

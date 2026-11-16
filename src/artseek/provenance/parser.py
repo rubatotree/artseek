@@ -257,14 +257,33 @@ def hashtags(value: str) -> list[str]:
 
 
 def _decode(value: object) -> str:
-    if isinstance(value, bytes):
-        for encoding in ("utf-8", "utf-16", "latin-1"):
-            try:
-                return value.decode(encoding)
-            except UnicodeDecodeError:
-                continue
-        return value.decode("utf-8", "replace")
-    return str(value)
+    if not isinstance(value, bytes):
+        return str(value)
+    data = value
+    if not data:
+        return ""
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        try:
+            return data.decode("utf-16").rstrip("\x00")
+        except UnicodeDecodeError:
+            pass
+    # Windows XPComment/XPTitle tags are UTF-16LE without a BOM. UTF-8 would
+    # happily decode the interleaved NULs into an unusable string, so detect
+    # the alternating-zero pattern before stripping the terminator: one trailing
+    # NUL belongs to the UTF-16 code unit and must not make the length odd.
+    if len(data) >= 4 and len(data) % 2 == 0:
+        even_nuls = data[0::2].count(0)
+        odd_nuls = data[1::2].count(0)
+        half = len(data) // 2
+        if odd_nuls > half * 0.4 and even_nuls < half * 0.1:
+            return data.decode("utf-16-le", "replace").rstrip("\x00")
+        if even_nuls > half * 0.4 and odd_nuls < half * 0.1:
+            return data.decode("utf-16-be", "replace").rstrip("\x00")
+    data = data.rstrip(b"\x00")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("latin-1", "replace")
 
 
 def _metadata_strings(path: Path) -> list[str]:

@@ -210,6 +210,20 @@ class ProvenanceStoreTests(unittest.TestCase):
         assert record is not None
         self.assertIsNone(record["description"])
 
+    def test_upgrade_requeues_legacy_pixiv_not_found(self) -> None:
+        self.store.upsert_scan("p1", self.payload, _parsed("12345678_p0.png"))
+        self.store.set_status("p1", "not_found", "pages 404")
+        connection = sqlite3.connect(self.path)
+        connection.execute("UPDATE meta SET value = '3' WHERE key = 'schema_version'")
+        connection.commit()
+        connection.close()
+        reopened = ProvenanceStore(self.path)
+        record = reopened.get("p1")
+        self.assertIsNotNone(record)
+        assert record is not None
+        self.assertEqual(record["status"], "pending")
+        self.assertIsNone(record["error"])
+
     def test_stale_detection_uses_content_hash(self) -> None:
         self.store.upsert_scan("p1", self.payload, _parsed("12345678_p0.png"))
         self.assertEqual(self.store.stale_points({"p1": "c" * 64}), ["p1"])

@@ -121,6 +121,29 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(data["page_label"], "p0")
         self.assertEqual(data["reverse_search"]["saucenao"], "https://saucenao.com/")
 
+    def test_unresolved_record_is_reparsed_from_exif_on_view(self) -> None:
+        path = self.root / "GnLt47zaMAAjCZD.jpg"
+        exif = Image.Exif()
+        exif[40092] = (
+            "https://x.com/example_artist2/status/1905879515315732000/photo/1"
+        ).encode("utf-16-le")
+        Image.new("RGB", (8, 8), (20, 30, 40)).save(path, exif=exif, quality=90)
+        payload = {
+            **self.payload,
+            "path": str(path),
+            "path_key": str(path).casefold(),
+            "name": path.name,
+            "width": 8,
+            "height": 8,
+        }
+        self.engine.store.payloads["p1"] = payload
+        self.store.upsert_unresolved("p1", payload)
+        response = self.client.get("/api/images/p1/provenance")
+        self.assertEqual(response.status_code, 200)
+        record = response.json()["record"]
+        self.assertEqual(record["platform"], "twitter")
+        self.assertEqual(record["source_id"], "1905879515315732000")
+
     def test_search_image_endpoint_returns_bounded_jpeg(self) -> None:
         response = self.client.get("/search-image/p1")
         self.assertEqual(response.status_code, 200)

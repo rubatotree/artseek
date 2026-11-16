@@ -339,6 +339,8 @@ tag:オリジナル tag:女の子
 |---|---|
 | 作品/推文已删除 | `not_found`，保留 ID/URL，7 天后可重试；UI 显示「原帖已不可用」 |
 | 受保护/仅登录 | `protected`，不尝试绕过；提示手动确认 |
+| R18 的 `/pages` 返回 404 | 保留 illust 元信息/作者/标签，记录 `pages_unavailable`，不标记 `not_found` |
+| EXIF XPComment 为 UTF-16LE | 先识别交错 NUL 再解码，避免 URL 被当成带 NUL 的普通文本 |
 | 文件名 ID 错 | 尺寸不匹配 → `confidence` 降低，标记需人工确认；不覆盖已有手动记录 |
 | 多图顺序变化 | 用 `media.all` 的顺序；若尺寸不匹配，降级为「同推文，但页码不确定」 |
 | 转推/引用 | 作者取原推作者；额外记录 `reposted_by` / `quoted`，筛选时默认按原推作者 |

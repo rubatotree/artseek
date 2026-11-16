@@ -1772,7 +1772,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     def ensure_provenance_record(point_id: str, payload: dict[str, Any], path: Path):
         store: ProvenanceStore = app.state.provenance
         record = store.get(point_id)
-        if record is not None:
+        if record is not None and record.get("status") != "unresolved":
             return record
         parsed = parse_payload_path(path, deep=True)
         if parsed is not None:
@@ -1783,7 +1783,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 path_key=str(payload.get("path_key") or ""),
                 origin=parsed.primary.origin,
             )
-        else:
+        elif record is None:
             store.upsert_unresolved(
                 point_id, payload, path_key=str(payload.get("path_key") or "")
             )

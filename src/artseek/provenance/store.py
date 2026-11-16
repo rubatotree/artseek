@@ -12,7 +12,7 @@ from typing import Any
 
 from .parser import ParsedSource, SourceRef, canonical_pixiv_url, twitter_photo_url
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 ORIGIN_PRIORITY = {"filename": 1, "embedded": 2, "manual": 3, "saucy": 4, "ascii2d": 4}
 AUTHOR_TTL_SECONDS = 30 * 24 * 60 * 60
 _STATUSES = frozenset(
@@ -171,6 +171,16 @@ class ProvenanceStore:
                     previous_version = 0
             if previous_version < 2:
                 self._repair_twitter_bio_descriptions(connection)
+            if previous_version < 4:
+                # Older builds marked R18/login-only Pixiv works as not_found
+                # because /pages returned 404. Retry them once with the new
+                # metadata-only fallback.
+                connection.execute(
+                    "UPDATE image_source SET status = 'pending', error = NULL, "
+                    "updated_at = ? "
+                    "WHERE platform = 'pixiv' AND status = 'not_found'",
+                    (_now(),),
+                )
             connection.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
