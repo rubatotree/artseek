@@ -67,14 +67,24 @@ _TAG_ENTRIES: tuple[TagEntry, ...] = (
 _ENTRIES = {entry.tag: entry for entry in _TAG_ENTRIES}
 
 
-def _load_generated_translations() -> list[TagEntry]:
-    path = Path(__file__).with_name("tag_translations.json")
+def _read_translation_file(path: Path) -> dict[str, object]:
     if not path.exists():
-        return []
+        return {}
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return []
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _load_generated_translations() -> list[TagEntry]:
+    # The tracked file contains the public-safe seed. An ignored local overlay
+    # keeps the full personal dictionary (including adult tags) out of Git.
+    raw: dict[str, object] = {}
+    raw.update(_read_translation_file(Path(__file__).with_name("tag_translations.json")))
+    raw.update(_read_translation_file(
+        Path(__file__).resolve().parents[2] / ".local-memory" / "tag_translations.local.json"
+    ))
     curated_fields = set()
     for entry in _TAG_ENTRIES:
         curated_fields.add(entry.tag.casefold())

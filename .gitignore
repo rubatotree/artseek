@@ -36,3 +36,6 @@ data/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Local-only dictionaries and notes
+.local-memory/

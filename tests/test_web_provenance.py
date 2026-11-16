@@ -790,7 +790,7 @@ class ProvenanceApiTests(unittest.TestCase):
             "/api/search",
             json={
                 "query": "",
-                "title_query": "晴れ",
+                "title_query": "初音",
                 "text_tags": ["オリジナル"],
                 "tag_text": ["リジナ"],
                 "image_tags": ["long_hair"],
@@ -800,7 +800,7 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual([item["id"] for item in response.json()["results"]], ["p1"])
         self.assertEqual(len(self.engine.search_calls), before)
-        self.assertEqual(response.json()["applied_filters"]["title_query"], "晴れ")
+        self.assertEqual(response.json()["applied_filters"]["title_query"], "初音")
         self.assertEqual(response.json()["applied_filters"]["tag_text"], ["リジナ"])
         self.assertEqual(response.json()["applied_filters"]["image_tags"], ["long_hair"])
 
