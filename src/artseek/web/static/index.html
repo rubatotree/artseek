@@ -803,6 +803,12 @@
     }
     dialog[open] { display: flex; flex-direction: column; }
     dialog::backdrop { background: rgba(16, 13, 18, .22); }
+    #viewer {
+      background: rgba(16, 13, 18, .72); overflow: hidden;
+      backdrop-filter: none; -webkit-backdrop-filter: none;
+    }
+    #viewer::backdrop { background: rgba(16, 13, 18, .36); }
+    html.viewer-open, html.viewer-open body { overflow: hidden; }
     .viewer-body {
       position: relative; flex: 1; min-width: 0; min-height: 0;
       display: flex;
@@ -1924,7 +1930,7 @@
       px: 0, py: 0, startX: 0, startY: 0,
       vx: 0, vy: 0,
       pinchStartDist: 0, pinchStartScale: 1,
-      clickTimer: 0,
+      clickTimer: 0, dismissTimer: 0,
       slideX: 0, slideTarget: 0, swiping: false, flipping: false, preserveSlide: false,
       lastTapAt: 0, lastTapX: 0, lastTapY: 0, suppressClick: 0,
     };
@@ -7875,6 +7881,8 @@
       view.pointerId = null;
       clearTimeout(view.clickTimer);
       view.clickTimer = 0;
+      clearTimeout(view.dismissTimer);
+      view.dismissTimer = 0;
       if (!view.preserveSlide) {
         view.slideX = 0;
         view.slideTarget = 0;
@@ -7906,13 +7914,6 @@
     function fitViewerFrame() {
       const dialog = $('viewer');
       if (!dialog.open) return;
-      const viewport = window.visualViewport;
-      const height = Math.max(1, Math.round(viewport ? viewport.height : window.innerHeight));
-      const top = Math.round(viewport ? viewport.offsetTop : 0);
-      dialog.style.height = `${height}px`;
-      dialog.style.top = `${top}px`;
-      dialog.style.width = '100%';
-      dialog.style.left = '0';
       const previousFit = view.fitScale || 1;
       const wasFitted = Math.abs(view.targetScale - previousFit) < 0.04 * Math.max(previousFit, 0.08);
       updateFitScale();
@@ -8116,8 +8117,11 @@
     }
     function openViewer(item) {
       const alreadyOpen = $('viewer').open;
-      if (!alreadyOpen) state.viewerReturnRoute = appRouteHref(currentGalleryRoute());
-      if (!alreadyOpen) setViewerUiHidden(false);
+      if (!alreadyOpen) {
+        state.viewerReturnRoute = appRouteHref(currentGalleryRoute());
+        setViewerUiHidden(false);
+        document.documentElement.classList.add('viewer-open');
+      }
       applyGalleryViewerState(item);
       resetView();
       if (!alreadyOpen) $('viewer').showModal();
@@ -8131,7 +8135,10 @@
       const ref = state.references.find((item) => item.key === key);
       if (!ref) return;
       const alreadyOpen = $('viewer').open;
-      if (!alreadyOpen) state.viewerReturnRoute = appRouteHref(currentGalleryRoute());
+      if (!alreadyOpen) {
+        state.viewerReturnRoute = appRouteHref(currentGalleryRoute());
+        document.documentElement.classList.add('viewer-open');
+      }
       applyReferenceViewerState(ref);
       resetView();
       if (!alreadyOpen) $('viewer').showModal();
@@ -8353,14 +8360,14 @@
         view.dragging = false;
         view.swiping = false;
         view.pointerId = null;
-        if (wasDragging) {
+        const width = stage.clientWidth || window.innerWidth;
+        const isTap = Math.abs(dx) < 18 && Math.abs(dy) < 18;
+        if (wasDragging && !isTap) {
           view.targetX += view.vx * 6;
           view.targetY += view.vy * 6;
           startViewAnim();
           return;
         }
-        const width = stage.clientWidth || window.innerWidth;
-        const isTap = Math.abs(dx) < 18 && Math.abs(dy) < 18;
         if (wasSwiping && view.moved && Math.abs(dx) > Math.max(56, width * 0.16) && Math.abs(dx) > Math.abs(dy) * 1.15) {
           const delta = dx < 0 ? 1 : -1;
           if (canStepViewer(delta)) {
@@ -8379,6 +8386,8 @@
           view.lastTapAt = 0;
           clearTimeout(view.clickTimer);
           view.clickTimer = 0;
+          clearTimeout(view.dismissTimer);
+          view.dismissTimer = 0;
           view.suppressClick = now;
           toggleViewerZoom(event.clientX, event.clientY);
           return;
@@ -8387,6 +8396,15 @@
         view.lastTapX = event.clientX;
         view.lastTapY = event.clientY;
         clearTimeout(view.clickTimer);
+        if (view.hitImage && !state.viewerUiHidden) {
+          clearTimeout(view.dismissTimer);
+          view.dismissTimer = setTimeout(() => {
+            view.dismissTimer = 0;
+            if (!$('viewer').open) return;
+            if (!state.viewerUiHidden) dismissViewer();
+          }, 360);
+          return;
+        }
         if (!isViewFitted()) return;
         const rect = stage.getBoundingClientRect();
         const ratio = (event.clientX - rect.left) / rect.width;
@@ -8403,6 +8421,8 @@
         event.preventDefault();
         clearTimeout(view.clickTimer);
         view.clickTimer = 0;
+        clearTimeout(view.dismissTimer);
+        view.dismissTimer = 0;
         if (event.target.closest('.viewer-nav, .viewer-close')) return;
         if (performance.now() - view.suppressClick < 450) return;
         toggleViewerZoom(event.clientX, event.clientY);
@@ -8442,10 +8462,7 @@
       }, { passive: true });
       $('viewer').addEventListener('close', () => {
         const dialog = $('viewer');
-        dialog.style.height = '';
-        dialog.style.top = '';
-        dialog.style.width = '';
-        dialog.style.left = '';
+        document.documentElement.classList.remove('viewer-open');
       });
     }
     bindViewerViewport();
