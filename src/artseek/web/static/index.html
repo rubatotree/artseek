@@ -1868,9 +1868,9 @@
         ? (record.title || provenancePlainText(record.description).slice(0, 120))
         : '';
       if (!primary) {
+        if (record.status !== 'ok') return { fallback };
         primary = record.platform === 'other' ? '其他来源' : '无题';
       }
-      if (!primary) return { fallback };
       const tags = (record.tags || [])
         .filter((tag) => tag && !primary.includes(tag))
         .slice(0, 4);
@@ -1929,12 +1929,15 @@
       renderViewerTitle(item, { fallback });
       if (!item.id) return;
       const fromItem = viewerTitleModelFromItem(item);
-      if (fromItem) {
+      if (fromItem && fromItem.title) {
         cacheViewerTitle(item.id, fromItem);
         renderViewerTitle(item, fromItem);
         return;
       }
-      if (item.source) return;
+      if (item.source) {
+        renderViewerTitle(item, fromItem || { fallback });
+        return;
+      }
       const cached = state.viewerTitleCache.get(item.id);
       if (cached) {
         renderViewerTitle(item, cached);
@@ -1946,7 +1949,7 @@
     async function prefetchProvenance(item) {
       if (!item || !item.id) return;
       const fromItem = viewerTitleModelFromItem(item);
-      if (fromItem) {
+      if (fromItem && fromItem.title) {
         cacheViewerTitle(item.id, fromItem);
         if (state.current && state.current.id === item.id) renderViewerTitle(item, fromItem);
         return;
@@ -1963,7 +1966,7 @@
       try {
         const data = await parseResponse(await fetch(`/api/images/${encodeURIComponent(item.id)}/provenance`));
         const model = viewerTitleModel(data, fallback);
-        cacheViewerTitle(item.id, model);
+        if (model.title) cacheViewerTitle(item.id, model);
         if (state.current && state.current.id === item.id) renderViewerTitle(item, model);
       } catch (_) {
         /* keep the path fallback */
@@ -1994,7 +1997,7 @@
       const record = (data && data.record) || {};
       const author = data && data.author;
       const platform = { pixiv: 'Pixiv', twitter: 'X/Twitter', other: '其他来源' }[record.platform] || '未识别';
-      const missing = !data.record || record.status === 'unresolved' || record.status === 'stale';
+      const missing = !data.record || record.status !== 'ok';
       const emptyTitle = missing
         ? (data.path || '未识别来源')
         : (record.platform === 'other' ? '其他来源' : '无题');
@@ -2121,7 +2124,7 @@
         if (seq !== state.provenance.seq || state.provenance.imageId !== pointId) return;
         state.provenance.data = data;
         const title = viewerTitleModel(data, (state.current && state.current.path) || '');
-        cacheViewerTitle(pointId, title);
+        if (title.title) cacheViewerTitle(pointId, title);
         if (state.current && state.current.id === pointId) {
           renderViewerTitle(state.current, title);
         }
@@ -2149,7 +2152,7 @@
         }));
         state.provenance.data = data;
         const title = viewerTitleModel(data, (state.current && state.current.path) || '');
-        cacheViewerTitle(pointId, title);
+        if (title.title) cacheViewerTitle(pointId, title);
         if (state.current && state.current.id === pointId) {
           renderViewerTitle(state.current, title);
         }
@@ -2177,7 +2180,7 @@
         }));
         state.provenance.data = data;
         const title = viewerTitleModel(data, (state.current && state.current.path) || '');
-        cacheViewerTitle(pointId, title);
+        if (title.title) cacheViewerTitle(pointId, title);
         if (state.current && state.current.id === pointId) {
           renderViewerTitle(state.current, title);
         }
