@@ -2286,7 +2286,7 @@
       const tagLinks = (values, extraClass = '') => (values || [])
         .map((tag) => {
           const aliases = Array.isArray(tagAliasMap[tag]) ? tagAliasMap[tag] : [];
-          const title = aliases.length ? aliases.join(' · ') : '';
+          const title = aliases.length ? aliases.join(' · ') : String(tag);
           return `<a class="provenance-tag ${extraClass}" href="/tag/${encodeURIComponent(tag)}" data-tag="${escapeHtml(tag)}" title="${escapeHtml(title)}">${escapeHtml(tag)}</a>`;
         })
         .join('');
