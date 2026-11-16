@@ -2181,7 +2181,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     def start_auto_tag_job(*, limit: int | None = 500) -> bool:
         store: ProvenanceStore = app.state.provenance
         job: ProvenanceJob = app.state.provenance_job
-        point_ids = store.point_ids_without_source_tags(limit)
+        point_ids = store.point_ids_without_auto_tags(limit)
         with app.state.provenance_lock:
             if job.running:
                 return False
@@ -2193,7 +2193,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             job.message = (
                 f"待补 Tag {len(point_ids)} 张"
                 if point_ids
-                else "没有缺少来源 tag 的图片"
+                else "没有待自动 Tag 的图片"
             )
             job.error = None
             job.summary = None
@@ -2243,6 +2243,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                             store.set_auto_tags(point_id, tags, scores)
                             summary["ok"] += 1
                         else:
+                            store.set_auto_tags(point_id, [], {})
                             summary["skipped"] += 1
                     except Exception:
                         summary["failed"] += 1

@@ -844,11 +844,10 @@ class ProvenanceStore:
             )
             connection.commit()
 
-    def point_ids_without_source_tags(self, limit: int | None = None) -> list[str]:
+    def point_ids_without_auto_tags(self, limit: int | None = None) -> list[str]:
         sql = (
             "SELECT point_id FROM image_source "
-            "WHERE (tags_json IS NULL OR tags_json = '[]') "
-            "AND auto_tagged_at IS NULL "
+            "WHERE auto_tagged_at IS NULL "
             "ORDER BY mtime_ns IS NULL, mtime_ns DESC, point_id"
         )
         params: list[Any] = []

@@ -95,6 +95,24 @@ class ProvenanceStoreTests(unittest.TestCase):
         self.assertEqual(record["status"], "ok")
         self.assertEqual(record["page_count"], 2)
 
+    def test_auto_tag_queue_ignores_existing_source_or_manual_tags(self) -> None:
+        self.store.upsert_scan("p1", self.payload, _parsed("12345678_p0.png"))
+        self.store.set_fetch_result(
+            "p1",
+            {
+                "platform": "pixiv",
+                "source_id": "12345678",
+                "page": 0,
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "status": "ok",
+                "tags": ["来源标签"],
+            },
+        )
+        self.store.set_manual("p1", {"manual_tags": ["手动标签"]})
+        self.assertEqual(self.store.point_ids_without_auto_tags(), ["p1"])
+        self.store.set_auto_tags("p1", ["自动标签"], {"自动标签": 0.88})
+        self.assertEqual(self.store.point_ids_without_auto_tags(), [])
+
     def test_manual_and_auto_tags_are_searchable(self) -> None:
         self.store.upsert_scan("p1", self.payload, _parsed("12345678_p0.png"))
         self.store.set_manual("p1", {"manual_tags": ["手动标签"]})
