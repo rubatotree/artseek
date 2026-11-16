@@ -1466,18 +1466,11 @@
             <label class="filter-field"><span>来源 Tag</span>
               <div class="filter-control">
                 <div id="filter-text-chips" class="filter-chips" aria-label="来源标签筛选"></div>
-                <input id="filter-text-tags" type="text" title="精确匹配 Pixiv/X 来源 tag" autocomplete="off" spellcheck="false">
+                <input id="filter-text-tags" type="text" title="输入 Pixiv/X 来源 tag；支持 #a+#b*#c 布尔表达式" placeholder="tag 或 #a+#b" autocomplete="off" spellcheck="false">
                 <button class="filter-suggest-toggle" type="button" data-suggest-kind="source" aria-label="显示来源标签列表" title="显示来源标签列表">+</button>
               </div>
             </label>
             <div id="filter-text-suggestions" class="filter-suggestions" hidden></div>
-          </div>
-          <div class="filter-field-wrap">
-            <label class="filter-field"><span>Tag 表达式</span>
-              <div class="filter-control">
-                <input id="filter-tag-expression" type="text" title="例：(#a+#b*#c)-#d；+ 为 OR，* 为 AND，- 为 NOT" autocomplete="off" spellcheck="false">
-              </div>
-            </label>
           </div>
         </div>
         </form>
@@ -1698,6 +1691,7 @@
       references: [], refSeq: 0, current: null, currentRefKey: null, viewerSource: 'gallery',
       results: [], offset: 0, hasMore: false, loadingMore: false, searchSeq: 0,
       searchSnapshotId: '', searchRequest: null, filterApplyTimer: 0,
+      filterTagExpression: '',
       tempReturn: null,
       searchSort: 'mtime_desc',
       colHeights: [],
@@ -3643,7 +3637,7 @@
     $('filter-toggle').addEventListener('click', () => {
       setFilterPanelOpen($('search-filters').hidden);
     });
-    ['filter-author', 'filter-title', 'filter-text-tags', 'filter-text-label', 'filter-tag-expression'].forEach((id) => {
+    ['filter-author', 'filter-title', 'filter-text-tags', 'filter-text-label'].forEach((id) => {
       $(id).addEventListener('input', updateFilterBadge);
     });
     $('upload').addEventListener('change', (event) => {
@@ -3948,9 +3942,53 @@
       }
     }
     function chipValues(containerId) {
-      return [...$(containerId).querySelectorAll('.filter-chip')]
+      return [...$(containerId).querySelectorAll('.filter-chip:not([data-expression])')]
         .map((chip) => chip.dataset.value || '')
         .filter(Boolean);
+    }
+    function looksLikeTagExpression(value) {
+      const text = String(value || '').trim();
+      return Boolean(
+        text
+        && (
+          /^[#(!-]/.test(text)
+          || /[+*|&]/.test(text)
+          || /(?:^|\s)(?:and|or|not)(?:\s|$)/i.test(text)
+          || /\s-\s|-#/.test(text)
+        )
+      );
+    }
+    function renderTagExpressionChip() {
+      const host = $('filter-text-chips');
+      host.querySelectorAll('.filter-chip[data-expression]').forEach((chip) => chip.remove());
+      const text = state.filterTagExpression.trim();
+      if (!text) return;
+      const chip = document.createElement('span');
+      chip.className = 'filter-chip filter-chip-expression';
+      chip.dataset.expression = '1';
+      chip.title = text;
+      const label = document.createElement('span');
+      label.textContent = `表达式：${text}`;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', `移除表达式：${text}`);
+      remove.title = `移除表达式：${text}`;
+      remove.addEventListener('click', () => {
+        state.filterTagExpression = '';
+        chip.remove();
+        updateFilterBadge();
+        clearTimeout(state.filterApplyTimer);
+        state.filterApplyTimer = 0;
+        applyFilterChanges();
+      });
+      chip.append(label, remove);
+      host.prepend(chip);
+    }
+    function setTagExpression(value) {
+      state.filterTagExpression = String(value || '').trim();
+      renderTagExpressionChip();
+      updateFilterBadge();
     }
     async function enrichAuthorChip(chip, key, label, links, count) {
       if (!key.includes(':')) return;
@@ -4042,7 +4080,11 @@
       const input = $(config.input);
       const raw = input.value.trim();
       if (!raw) return;
-      for (const value of splitFilterTags(raw)) addFilterChip(kind, value);
+      if (kind === 'text_tags' && looksLikeTagExpression(raw)) {
+        setTagExpression(raw);
+      } else {
+        for (const value of splitFilterTags(raw)) addFilterChip(kind, value);
+      }
       input.value = '';
       updateSuggestToggle(config.input);
       updateFilterBadge();
@@ -4056,7 +4098,7 @@
         authors: chipValues('filter-author-chips'),
         title_query: $('filter-title').value.trim(),
         text_label: $('filter-text-label').value.trim(),
-        tag_expression: $('filter-tag-expression').value.trim(),
+        tag_expression: state.filterTagExpression,
         text_tags: chipValues('filter-text-chips'),
       };
     }
@@ -4086,13 +4128,14 @@
       $('filter-author').value = '';
       $('filter-title').value = filters.title_query || '';
       $('filter-text-label').value = filters.text_label || '';
-      $('filter-tag-expression').value = filters.tag_expression || '';
       $('filter-text-tags').value = '';
+      state.filterTagExpression = String(filters.tag_expression || '').trim();
       Object.keys(FILTER_SUGGEST_CONFIG).forEach(updateSuggestToggle);
       Object.values(FILTER_CHIP_CONFIG).forEach((config) => $(config.chips).replaceChildren());
       const authors = filters.authors || (filters.author ? [filters.author] : []);
       for (const author of authors) addFilterChip('author', author);
       for (const tag of filters.text_tags || []) addFilterChip('text_tags', tag);
+      renderTagExpressionChip();
       updateFilterBadge();
     }
     Object.entries(FILTER_CHIP_CONFIG).forEach(([kind, config]) => {

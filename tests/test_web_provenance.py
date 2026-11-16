@@ -159,7 +159,8 @@ class ProvenanceApiTests(unittest.TestCase):
             json={"kind": "source", "q": "scope", "folder_keys": [folder_key]},
         )
         self.assertEqual(tags.status_code, 200)
-        self.assertEqual(tags.json()["tags"][0], {"tag": "scope_tag", "count": 1})
+        self.assertEqual(tags.json()["tags"][0]["tag"], "scope_tag")
+        self.assertEqual(tags.json()["tags"][0]["count"], 1)
         empty_authors = self.client.post(
             "/api/authors",
             json={"q": "", "folder_keys": [], "limit": 5},
@@ -275,6 +276,39 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(suggestions.status_code, 200)
         self.assertEqual(suggestions.json()["tags"][0]["tag"], "long_hair")
         self.assertEqual(suggestions.json()["tags"][0]["display_zh"], "长发")
+        search = self.client.post(
+            "/api/search",
+            json={
+                "query": "",
+                "text_tags": ["长发"],
+                "folder_keys": [],
+            },
+        )
+        self.assertEqual(search.status_code, 200)
+        self.assertEqual([item["id"] for item in search.json()["results"]], ["p1"])
+
+    def test_source_tag_suggestions_group_dictionary_aliases(self) -> None:
+        self.store.upsert_scan(
+            "p1", self.payload, ParsedSource(parse_filename(self.image.name))
+        )
+        self.store.set_fetch_result(
+            "p1",
+            {
+                "platform": "pixiv",
+                "source_id": "12345678",
+                "page": 0,
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "status": "ok",
+                "tags": ["オリジナル", "original"],
+            },
+        )
+        response = self.client.get("/api/tags", params={"kind": "source", "q": "オリ"})
+        self.assertEqual(response.status_code, 200)
+        tags = response.json()["tags"]
+        self.assertEqual(len(tags), 1)
+        self.assertEqual(tags[0]["tag"], "original")
+        self.assertEqual(tags[0]["display_zh"], "原创")
+        self.assertIn("オリジナル", tags[0]["aliases"])
 
     def test_tag_suggestions_cover_source_and_image_tags(self) -> None:
         self.store.upsert_scan(
@@ -294,7 +328,9 @@ class ProvenanceApiTests(unittest.TestCase):
         self.engine.store.payloads["p1"]["tags"] = ["long_hair"]
         source = self.client.get("/api/tags", params={"kind": "source", "q": "オリ"})
         self.assertEqual(source.status_code, 200)
-        self.assertEqual(source.json()["tags"][0]["tag"], "オリジナル")
+        self.assertEqual(source.json()["tags"][0]["tag"], "original")
+        self.assertEqual(source.json()["tags"][0]["display_zh"], "原创")
+        self.assertIn("オリジナル", source.json()["tags"][0]["aliases"])
         image = self.client.get("/api/tags", params={"kind": "image", "q": "hair"})
         self.assertEqual(image.status_code, 200)
         self.assertEqual(image.json()["tags"][0]["tag"], "long_hair")

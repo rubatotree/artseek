@@ -1897,8 +1897,10 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 allowed.update(store.point_ids_for_author(author))
             result = allowed
         if tag_tokens:
-            tagged = set(store.point_ids_for_tags(tag_tokens))
-            result = tagged if result is None else result & tagged
+            for tag in tag_tokens:
+                group = expand_tag_aliases(tag)
+                matching = set(store.point_ids_for_any_tags(sorted(group)))
+                result = matching if result is None else result & matching
         if title_query.strip():
             titled = set(store.point_ids_for_title(title_query))
             result = titled if result is None else result & titled
@@ -2645,6 +2647,55 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             app.state.image_tag_suggestions = {"generation": generation, "items": items}
             return list(items)
 
+    def group_source_tag_items(
+        items: list[dict[str, Any]], query: str = "", scope_ids: list[str] | None = None
+    ) -> list[dict[str, Any]]:
+        groups: dict[str, dict[str, Any]] = {}
+        for item in items:
+            tag = str(item.get("tag") or "").strip()
+            if not tag:
+                continue
+            info = tag_info(tag)
+            canonical = info.tag if info is not None else tag
+            group = groups.setdefault(
+                canonical,
+                {"tag": canonical, "count": 0, "display_zh": "", "aliases": set()},
+            )
+            group["count"] += int(item.get("count") or 0)
+            if info is not None:
+                group["display_zh"] = group["display_zh"] or info.zh
+                group["aliases"].update(info.aliases)
+            group["aliases"].add(tag)
+        result: list[dict[str, Any]] = []
+        for group in groups.values():
+            aliases = sorted(
+                {alias for alias in group["aliases"] if alias and alias != group["tag"]},
+                key=lambda value: (len(value), value.casefold()),
+            )
+            result.append({
+                "tag": group["tag"],
+                "count": group["count"],
+                "display_zh": group["display_zh"],
+                "aliases": aliases,
+            })
+        if not result and str(query or "").strip():
+            seen = {item["tag"].casefold() for item in result}
+            scope = set(scope_ids) if scope_ids is not None else None
+            for entry in search_tags(query, limit=20):
+                if entry.tag.casefold() in seen:
+                    continue
+                points = set(app.state.provenance.point_ids_for_tags([entry.tag]))
+                if scope is not None:
+                    points &= scope
+                result.append({
+                    "tag": entry.tag,
+                    "count": len(points),
+                    "display_zh": entry.zh,
+                    "aliases": list(entry.aliases),
+                })
+        result.sort(key=lambda item: (-int(item["count"]), item["tag"].casefold()))
+        return result
+
     def decorate_tag_items(
         items: list[dict[str, Any]], query: str = "", scope_ids: list[str] | None = None
     ) -> list[dict[str, Any]]:
@@ -2696,21 +2747,24 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 if not needle or needle in item["tag"].casefold()
             ]
             page = items[start : start + page_size + 1]
+            has_more = len(page) > page_size
         elif folder_keys is not None:
             ids = suggestion_scope_ids(folder_keys, mtime_after, mtime_before) or []
-            page = app.state.provenance.source_tag_counts_for_points(
+            raw_page = app.state.provenance.source_tag_counts_for_points(
                 ids, q, limit=page_size + 1, offset=start
             )
-            page = decorate_tag_items(page, q, ids)
+            has_more = len(raw_page) > page_size
+            page = group_source_tag_items(raw_page, q, ids)
         else:
-            page = app.state.provenance.list_source_tags(
+            raw_page = app.state.provenance.list_source_tags(
                 q, limit=page_size + 1, offset=start
             )
-            page = decorate_tag_items(page, q)
+            has_more = len(raw_page) > page_size
+            page = group_source_tag_items(raw_page, q)
         return {
             "kind": kind,
             "tags": page[:page_size],
-            "has_more": len(page) > page_size,
+            "has_more": has_more,
             "offset": start,
         }
 
