@@ -1098,6 +1098,16 @@
     .viewer-collection-menu-create { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; padding-top: 6px; border-top: 1px solid #4b414f; }
     .viewer-collection-menu-create input { min-width: 0; padding: 8px 9px; border: 1px solid #4b414f; border-radius: 9px; background: #241f28; color: #eee8f0; font-size: 13px; }
     .viewer-collection-menu-create button { min-height: 38px; padding: 8px 10px; background: #4a3d4d; color: #fff; }
+    .search-fab {
+      position: fixed; right: 12px; top: calc(env(safe-area-inset-top, 0px) + 10px);
+      z-index: 35; width: 44px; height: 44px; min-width: 44px; padding: 0;
+      display: grid; place-items: center; border: 1px solid #e4d9e1; border-radius: 999px;
+      background: rgba(255,255,255,.96); color: #8a5268;
+      box-shadow: 0 8px 22px rgba(69,51,76,.18);
+    }
+    .search-fab[hidden] { display: none; }
+    .search-fab svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+    .search-fab:hover { transform: none; background: #fff; }
     @media (max-width: 900px) {
       :root { --page-gutter: 12px; }
       .shell { padding-inline: 0; width: 100%; }
@@ -1120,7 +1130,8 @@
       }
       .search-panel {
         order: 0;
-        position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
+        position: static;
+        z-index: auto;
         width: 100%;
         margin: 0;
         padding: 8px var(--page-gutter) 12px;
@@ -1130,6 +1141,15 @@
         background: var(--paper);
         box-shadow: none;
         backdrop-filter: none;
+      }
+      body.mobile-search-open .search-panel {
+        position: fixed; top: env(safe-area-inset-top, 0px); left: 0; right: 0;
+        z-index: 60; width: 100%; margin: 0;
+        max-height: calc(100dvh - env(safe-area-inset-top, 0px));
+        overflow-y: auto;
+        border: 0; border-bottom: 1px solid var(--line);
+        border-radius: 0 0 18px 18px;
+        box-shadow: 0 14px 34px rgba(69,51,76,.18);
       }
       .search-row {
         display: grid;
@@ -1247,7 +1267,6 @@
     }
     @media (max-width: 720px) {
       .search-filters { grid-template-columns: 1fr; }
-      .search-panel { max-height: calc(100dvh - env(safe-area-inset-top, 0px)); overflow-y: auto; }
       .filter-control input[type="text"],
       .filter-control input[type="text"]:focus,
       .filter-inline-weight input { font-size: 16px; }
@@ -1352,6 +1371,9 @@
       <button class="brand" id="home-logo" type="button" title="回到主页，显示勾选目录" aria-label="回到主页，显示勾选目录">ArtSeek</button>
       <div class="subtitle">本地插画收藏 · 语义与相似图检索</div>
     </header>
+    <button id="search-fab" class="search-fab" type="button" aria-label="打开搜索" aria-controls="panel" aria-expanded="false" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>
+    </button>
     <div class="search-layout">
       <aside class="tree-panel" id="tree-panel" aria-label="查询范围">
         <button class="fold-toggle" id="scope-toggle" type="button" aria-expanded="false" aria-controls="tree-body">
@@ -1758,6 +1780,7 @@
       provenanceTagAliasCache: new Map(),
       tempReturn: null,
       searchSort: 'mtime_desc', searchSeed: null,
+      mobileSearchOpen: false, mobileSearchIgnoreScrollUntil: 0,
       authorSort: 'mtime', authorSeed: null, tagSort: 'mtime', tagSeed: null,
       colHeights: [],
       mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
@@ -3711,6 +3734,20 @@
       }
     });
     $('home-logo').addEventListener('click', () => goHome());
+    $('search-fab').addEventListener('click', () => setMobileSearchOpen(true));
+    document.addEventListener('click', closeMobileSearchIfOutside, true);
+    window.addEventListener('scroll', () => {
+      if (!mobileSearchViewport()) return;
+      if (
+        state.mobileSearchOpen
+        && !state.galleryDragItem
+        && !document.body.classList.contains('file-drag')
+        && performance.now() > state.mobileSearchIgnoreScrollUntil
+      ) {
+        setMobileSearchOpen(false);
+      }
+      syncSearchFabVisibility();
+    }, { passive: true });
     $('search-form').addEventListener('submit', (event) => { event.preventDefault(); runSearch(); });
     $('filter-toggle').addEventListener('click', () => {
       setFilterPanelOpen($('search-filters').hidden);
@@ -4302,6 +4339,45 @@
     }
     function compactInfo() {
       return window.matchMedia('(max-width: 720px)').matches;
+    }
+    function mobileSearchViewport() {
+      return window.matchMedia('(max-width: 900px)').matches;
+    }
+    function syncSearchFabVisibility() {
+      const visible = mobileSearchViewport()
+        && !state.mobileSearchOpen
+        && window.scrollY > 80;
+      $('search-fab').hidden = !visible;
+    }
+    function setMobileSearchOpen(open) {
+      if (!mobileSearchViewport()) {
+        state.mobileSearchOpen = false;
+        document.body.classList.remove('mobile-search-open');
+        $('search-fab').hidden = true;
+        $('search-fab').setAttribute('aria-expanded', 'false');
+        return;
+      }
+      state.mobileSearchOpen = Boolean(open);
+      document.body.classList.toggle('mobile-search-open', state.mobileSearchOpen);
+      $('search-fab').setAttribute('aria-expanded', String(state.mobileSearchOpen));
+      if (state.mobileSearchOpen) {
+        state.mobileSearchIgnoreScrollUntil = performance.now() + 400;
+        $('search-fab').hidden = true;
+        requestAnimationFrame(() => {
+          try { $('query').focus({ preventScroll: true }); }
+          catch (_) { $('query').focus(); }
+        });
+      } else {
+        syncSearchFabVisibility();
+      }
+    }
+    function closeMobileSearchIfOutside(event) {
+      if (!state.mobileSearchOpen) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) return;
+      if (target.closest('#panel, #search-fab')) return;
+      if (state.galleryDragItem || document.body.classList.contains('file-drag')) return;
+      setMobileSearchOpen(false);
     }
     function setFilterPanelOpen(open) {
       $('search-filters').hidden = !open;
@@ -8533,6 +8609,8 @@
     let galleryResizeTimer = 0;
     window.addEventListener('resize', () => {
       syncQueryPlaceholder();
+      if (!mobileSearchViewport() && state.mobileSearchOpen) setMobileSearchOpen(false);
+      syncSearchFabVisibility();
       clearTimeout(galleryResizeTimer);
       galleryResizeTimer = setTimeout(() => {
         const gallery = $('gallery');
@@ -9296,6 +9374,7 @@
         }),
       ]);
       syncQueryPlaceholder();
+      syncSearchFabVisibility();
       const route = parseAppRoute();
       if (!restoreCachedFolderSelection()) {
         // No browser cache yet: keep the server-persisted scope for deep links,
