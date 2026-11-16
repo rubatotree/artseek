@@ -561,6 +561,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     @app.get("/search", response_class=HTMLResponse)
     @app.get("/folder", response_class=HTMLResponse)
     @app.get("/random", response_class=HTMLResponse)
+    @app.get("/scope", response_class=HTMLResponse)
     def spa_gallery() -> HTMLResponse:
         return spa_page()
 

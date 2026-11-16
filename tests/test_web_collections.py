@@ -430,6 +430,11 @@ class CollectionsApiTests(unittest.TestCase):
             422,
         )
 
+    def test_scope_route_serves_spa_shell(self) -> None:
+        response = self.client.get("/scope")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("ArtSeek", response.text)
+
     def test_homepage_exposes_collection_controls(self) -> None:
         html = self.client.get("/").text
         self.assertIn('viewport-fit=cover', html)
