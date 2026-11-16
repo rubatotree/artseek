@@ -772,7 +772,7 @@ class ProvenanceStore:
         with self._read() as connection:
             rows = connection.execute(
                 f"SELECT point_id FROM image_source WHERE author_key IN ({placeholders}) "
-                "ORDER BY updated_at DESC",
+                "ORDER BY mtime_ns IS NULL, mtime_ns DESC, updated_at DESC, point_id",
                 members,
             ).fetchall()
         return [str(row["point_id"]) for row in rows]

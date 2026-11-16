@@ -136,6 +136,32 @@ class ProvenanceStoreTests(unittest.TestCase):
         self.assertEqual(summary["image_count"], 1)
         self.assertEqual(len(summary["members"]), 2)
 
+    def test_author_images_are_newest_first_by_file_mtime(self) -> None:
+        author = self.store.ensure_author("pixiv", "1554775", name="作者")
+        older = dict(self.payload, mtime_ns=1_000)
+        newer = dict(
+            self.payload,
+            path="D:/pics/50640084_p0.png",
+            path_key="d:/pics/50640084_p0.png",
+            mtime_ns=3_000,
+            content_hash="b" * 64,
+        )
+        self.store.upsert_scan("p1", older, _parsed("12345678_p0.png"))
+        self.store.upsert_scan("p2", newer, _parsed("50640084_p0.png"))
+        for point_id in ("p1", "p2"):
+            self.store.set_fetch_result(
+                point_id,
+                {
+                    "platform": "pixiv",
+                    "source_id": point_id,
+                    "page": 0,
+                    "url": f"https://www.pixiv.net/artworks/{point_id}",
+                    "status": "ok",
+                },
+                author_key=author,
+            )
+        self.assertEqual(self.store.point_ids_for_author(author), ["p2", "p1"])
+
     def test_author_search_is_fuzzy_and_ranked(self) -> None:
         key = self.store.ensure_author(
             "twitter",
