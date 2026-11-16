@@ -3900,7 +3900,9 @@
           updateAuthorFilter();
         }
         updateFilterBadge();
-        scheduleFilterApply();
+        clearTimeout(state.filterApplyTimer);
+        state.filterApplyTimer = 0;
+        applyFilterChanges();
       });
       chip.append(label);
       if (links) chip.append(links);
@@ -8041,6 +8043,14 @@
     });
     function currentHref() {
       return `${location.pathname}${location.search}`;
+    }
+    function parseRouteTagList(raw) {
+      try {
+        const value = JSON.parse(raw || '[]');
+        return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+      } catch (_) {
+        return [];
+      }
     }
     function parseAppRoute(url = window.location) {
       const path = (url.pathname || '/').replace(/\/+$/, '') || '/';
