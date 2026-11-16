@@ -316,6 +316,7 @@
     .filter-chip-links { display: inline-flex; align-items: center; gap: 2px; }
     .filter-chip .platform-icon { width: 14px; height: 14px; }
     .filter-chip .platform-icon svg { width: 8px; height: 8px; }
+    .filter-chip-count { color: #a06b80; font-size: 9px; white-space: nowrap; }
     .filter-chip button {
       width: 16px; height: 16px; min-height: 0; padding: 0; border-radius: 999px;
       background: transparent; color: #8a5268; font-size: 12px; line-height: 1;
@@ -1445,12 +1446,9 @@
           <div class="filter-field-wrap">
             <label class="filter-field"><span>文字标签</span>
               <div class="filter-control">
-                <div id="filter-tag-text-chips" class="filter-chips" aria-label="文字标签筛选"></div>
-                <input id="filter-tag-text" type="text" title="在来源 tag 名称中做文字包含匹配" autocomplete="off" spellcheck="false">
-                <button class="filter-suggest-toggle" type="button" data-suggest-kind="source" aria-label="显示文字标签列表" title="显示文字标签列表">+</button>
+                <input id="filter-text-label" type="text" autocomplete="off" spellcheck="false">
               </div>
             </label>
-            <div id="filter-tag-text-suggestions" class="filter-suggestions" hidden></div>
           </div>
           <div class="filter-field-wrap">
             <label class="filter-field"><span>作者</span>
@@ -2481,14 +2479,10 @@
       const bar = $('author-filter');
       if (!state.authorKey) {
         bar.hidden = true;
-        $('filter-author-chips').replaceChildren();
-        updateFilterBadge();
         return;
       }
       bar.hidden = false;
       $('author-filter-label').textContent = `作者：${state.authorName || state.authorKey}`;
-      addFilterChip('author', state.authorKey);
-      updateFilterBadge();
     }
     function updateTagFilter() {
       const bar = $('tag-filter');
@@ -2545,6 +2539,7 @@
       }
       state.searchSnapshotId = '';
       state.searchRequest = null;
+      addFilterChip('author', next);
       updateAuthorFilter();
       setFilterPanelOpen(true);
       if (!['search', 'browse', 'collection', 'random', 'scope', 'author'].includes(state.mode)) {
@@ -2575,9 +2570,11 @@
     function clearAuthorFilter() {
       if ($('viewer').open) finishDismissViewer();
       const wasAuthor = state.mode === 'author';
+      const previousAuthor = state.authorKey;
       state.authorKey = '';
       state.authorName = '';
       state.authorTotal = 0;
+      if (previousAuthor) removeFilterChipByValue('author', previousAuthor);
       updateAuthorFilter();
       if (wasAuthor) {
         if (treeState.selected.size) {
@@ -3628,7 +3625,7 @@
     $('filter-toggle').addEventListener('click', () => {
       setFilterPanelOpen($('search-filters').hidden);
     });
-    ['filter-author', 'filter-title', 'filter-text-tags', 'filter-tag-text'].forEach((id) => {
+    ['filter-author', 'filter-title', 'filter-text-tags', 'filter-text-label'].forEach((id) => {
       $(id).addEventListener('input', updateFilterBadge);
     });
     $('upload').addEventListener('change', (event) => {
@@ -3747,9 +3744,8 @@
         .filter(Boolean);
     }
     const FILTER_CHIP_CONFIG = {
-      author: { input: 'filter-author', chips: 'filter-author-chips', single: true },
+      author: { input: 'filter-author', chips: 'filter-author-chips', single: false },
       text_tags: { input: 'filter-text-tags', chips: 'filter-text-chips', single: false },
-      tag_text: { input: 'filter-tag-text', chips: 'filter-tag-text-chips', single: false },
     };
     const FILTER_SUGGEST_CONFIG = {
       'filter-author': {
@@ -3757,9 +3753,6 @@
       },
       'filter-text-tags': {
         menu: 'filter-text-suggestions', kind: 'source', chipKind: 'text_tags',
-      },
-      'filter-tag-text': {
-        menu: 'filter-tag-text-suggestions', kind: 'source', chipKind: 'tag_text',
       },
     };
     const filterSuggestSeq = {};
@@ -3807,7 +3800,11 @@
           button.innerHTML = `<span>${escapeHtml(label)}</span><small>${escapeHtml(hint)}</small>`;
           button.addEventListener('click', () => {
             const value = config.kind === 'author' ? item.key : item.tag;
-            addFilterChip(config.chipKind, value);
+            addFilterChip(
+              config.chipKind,
+              value,
+              config.kind === 'author' ? item.image_count : item.count,
+            );
             $(config.input).value = '';
             updateSuggestToggle(config.input);
             updateFilterBadge();
@@ -3828,6 +3825,14 @@
         }
       }
       menu.hidden = false;
+    }
+    function suggestionScopePayload() {
+      const range = currentTimeRange();
+      return {
+        folder_keys: [...treeState.selected],
+        mtime_after: range.after || null,
+        mtime_before: range.before || null,
+      };
     }
     async function loadFilterSuggestions(
       fieldId,
@@ -3852,23 +3857,23 @@
       const seq = (filterSuggestSeq[fieldId] || 0) + 1;
       filterSuggestSeq[fieldId] = seq;
       const pageSize = 200;
-      const cacheKey = `${fieldId}|${query}|${offset}`;
+      const scope = suggestionScopePayload();
+      const cacheKey = `${fieldId}|${query}|${offset}|${JSON.stringify(scope)}`;
       let data = filterSuggestCache.get(cacheKey);
       if (!data) {
-        let url;
-        if (config.kind === 'author') {
-          const params = new URLSearchParams({
-            q: query, limit: String(pageSize), offset: String(offset),
-          });
-          url = `/api/authors?${params}`;
-        } else {
-          const params = new URLSearchParams({
-            q: query, kind: config.kind, limit: String(pageSize), offset: String(offset),
-          });
-          url = `/api/tags?${params}`;
-        }
+        const body = {
+          q: query, limit: pageSize, offset, ...scope,
+          ...(config.kind === 'author' ? {} : { kind: config.kind }),
+        };
         try {
-          data = await parseResponse(await fetch(url));
+          data = await parseResponse(await fetch(
+            config.kind === 'author' ? '/api/authors' : '/api/tags',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            },
+          ));
           filterSuggestCache.set(cacheKey, data);
         } catch (error) {
           if (filterSuggestSeq[fieldId] !== seq) return;
@@ -3926,10 +3931,17 @@
         .map((chip) => chip.dataset.value || '')
         .filter(Boolean);
     }
-    async function enrichAuthorChip(chip, key, label, links) {
+    async function enrichAuthorChip(chip, key, label, links, count) {
       if (!key.includes(':')) return;
       try {
-        const data = await parseResponse(await fetch(`/api/authors/${encodeURIComponent(key)}`));
+        const data = await parseResponse(await fetch(
+          `/api/authors/${encodeURIComponent(key)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(suggestionScopePayload()),
+          },
+        ));
         if (!chip.isConnected) return;
         const author = data.author || {};
         label.textContent = author.name || author.handle || key;
@@ -3937,11 +3949,12 @@
         if (Array.isArray(author.members) && author.members.length) {
           links.innerHTML = platformIconLinks(author.members);
         }
+        if (count) count.textContent = `${Number(author.image_count || 0)} 张`;
       } catch (_) {
         // Keep the key as a readable fallback.
       }
     }
-    function addFilterChip(kind, value) {
+    function addFilterChip(kind, value, countValue = null) {
       const config = FILTER_CHIP_CONFIG[kind];
       const text = String(value || '').trim();
       if (!config || !text) return;
@@ -3955,6 +3968,13 @@
       label.textContent = kind === 'author' ? text : `#${text}`;
       const links = kind === 'author' ? document.createElement('span') : null;
       if (links) links.className = 'filter-chip-links';
+      const count = kind === 'author' || countValue != null
+        ? document.createElement('small')
+        : null;
+      if (count) {
+        count.className = 'filter-chip-count';
+        if (countValue != null) count.textContent = `${Number(countValue || 0)} 张`;
+      }
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.textContent = '×';
@@ -3975,9 +3995,20 @@
       });
       chip.append(label);
       if (links) chip.append(links);
+      if (count) chip.append(count);
       chip.append(remove);
       host.append(chip);
-      if (kind === 'author') enrichAuthorChip(chip, text, label, links);
+      if (kind === 'author') enrichAuthorChip(chip, text, label, links, count);
+    }
+    function removeFilterChipByValue(kind, value) {
+      const config = FILTER_CHIP_CONFIG[kind];
+      if (!config) return false;
+      const chip = [...$(config.chips).querySelectorAll('.filter-chip')]
+        .find((item) => item.dataset.value === value);
+      if (!chip) return false;
+      chip.remove();
+      updateFilterBadge();
+      return true;
     }
     function commitFilterInput(kind) {
       const config = FILTER_CHIP_CONFIG[kind];
@@ -3996,27 +4027,27 @@
     }
     function readAdvancedFilters() {
       return {
-        author: chipValues('filter-author-chips')[0] || '',
+        authors: chipValues('filter-author-chips'),
         title_query: $('filter-title').value.trim(),
+        text_label: $('filter-text-label').value.trim(),
         text_tags: chipValues('filter-text-chips'),
-        tag_text: chipValues('filter-tag-text-chips'),
       };
     }
     function hasAdvancedFilters(filters = readAdvancedFilters()) {
       return Boolean(
-        filters.author
+        filters.authors.length
         || filters.title_query
+        || filters.text_label
         || filters.text_tags.length
-        || filters.tag_text.length
       );
     }
     function updateFilterBadge() {
       const filters = readAdvancedFilters();
       const count = [
-        filters.author,
+        ...filters.authors,
         filters.title_query,
+        filters.text_label,
         ...filters.text_tags,
-        ...filters.tag_text,
       ].filter(Boolean).length;
       const badge = $('filter-count');
       badge.textContent = String(count);
@@ -4025,13 +4056,13 @@
     function setAdvancedFilters(filters = {}) {
       $('filter-author').value = '';
       $('filter-title').value = filters.title_query || '';
+      $('filter-text-label').value = filters.text_label || '';
       $('filter-text-tags').value = '';
-      $('filter-tag-text').value = '';
       Object.keys(FILTER_SUGGEST_CONFIG).forEach(updateSuggestToggle);
       Object.values(FILTER_CHIP_CONFIG).forEach((config) => $(config.chips).replaceChildren());
-      if (filters.author) addFilterChip('author', filters.author);
+      const authors = filters.authors || (filters.author ? [filters.author] : []);
+      for (const author of authors) addFilterChip('author', author);
       for (const tag of filters.text_tags || []) addFilterChip('text_tags', tag);
-      for (const tag of filters.tag_text || []) addFilterChip('tag_text', tag);
       updateFilterBadge();
     }
     Object.entries(FILTER_CHIP_CONFIG).forEach(([kind, config]) => {
@@ -4422,6 +4453,7 @@
       return Boolean(
         state.mode === 'search'
         && !$('query').value.trim()
+        && !$('filter-text-label').value.trim()
         && !librarySearchRefs().length
         && !state.references.some((ref) => ref.file)
       );
@@ -5853,9 +5885,10 @@
         });
         const data = await parseResponse(response);
         if (seq !== state.searchSeq) return;
-        const appliedAuthor = data.applied_filters && data.applied_filters.author_key;
-        if (reset && appliedAuthor) {
-          state.authorKey = appliedAuthor;
+        const appliedAuthors = (data.applied_filters && data.applied_filters.author_keys)
+          || (data.applied_filters && data.applied_filters.author_key ? [data.applied_filters.author_key] : []);
+        if (reset) {
+          state.authorKey = appliedAuthors.length === 1 ? appliedAuthors[0] : '';
           updateAuthorFilter();
         }
         const incoming = data.results || [];
@@ -6206,10 +6239,10 @@
       const libraryRefs = frozen ? frozen.references : librarySearchRefs();
       const fileRefs = state.references.filter((ref) => ref.file);
       const advanced = frozen
-        ? (frozen.advanced || { author: '', title_query: '', text_tags: [], tag_text: [] })
+        ? (frozen.advanced || { authors: [], title_query: '', text_label: '', text_tags: [] })
         : readAdvancedFilters();
       const hasFilters = hasAdvancedFilters(advanced);
-      const filterOnly = !query && !libraryRefs.length && !fileRefs.length;
+      const filterOnly = !query && !advanced.text_label && !libraryRefs.length && !fileRefs.length;
       if (filterOnly && !hasFilters) {
         if (reset) $('query-info').textContent = '请先输入描述、添加参考图片或展开筛选。也可点击左侧目录名预览其中的图片。';
         return;
@@ -6266,9 +6299,10 @@
           mtime_after: frozen.mtime_after,
           mtime_before: frozen.mtime_before,
           author_key: frozen.author_key || null,
+          author_keys: frozen.author_keys || [],
           title_query: frozen.title_query || '',
+          text_label: frozen.text_label || '',
           text_tags: frozen.text_tags || [],
-          tag_text: frozen.tag_text || [],
           sort: frozen.sort || state.searchSort,
           exclude_ids: state.results.map((item) => item.id),
           snapshot_id: keepSnapshot ? (state.searchSnapshotId || '') : '',
@@ -6283,10 +6317,11 @@
           folder_keys: [...treeState.selected],
           mtime_after: timeRange.after || null,
           mtime_before: timeRange.before || null,
-          author_key: advanced.author || state.authorKey || null,
+          author_key: advanced.authors.length ? null : (state.authorKey || null),
+          author_keys: advanced.authors,
           title_query: advanced.title_query || '',
+          text_label: advanced.text_label || '',
           text_tags: advanced.text_tags || [],
-          tag_text: advanced.tag_text || [],
           sort: state.searchSort,
           exclude_ids: reset ? [] : state.results.map((item) => item.id),
           snapshot_id: keepSnapshot && !reset ? (state.searchSnapshotId || '') : '',
@@ -6305,9 +6340,10 @@
           form.append('mtime_before', common.mtime_before || '');
           form.append('exclude_ids', JSON.stringify(common.exclude_ids));
           form.append('author_key', common.author_key || '');
+          form.append('author_keys', JSON.stringify(common.author_keys || []));
           form.append('title_query', common.title_query || '');
           form.append('text_tags', JSON.stringify(common.text_tags || []));
-          form.append('tag_text', JSON.stringify(common.tag_text || []));
+          form.append('text_label', common.text_label || '');
           form.append('sort', common.sort || state.searchSort);
           form.append('references', JSON.stringify(libraryRefs));
           if (common.snapshot_id) form.append('snapshot_id', common.snapshot_id);
@@ -6336,15 +6372,16 @@
             mtime_after: common.mtime_after,
             mtime_before: common.mtime_before,
             author_key: common.author_key,
+            author_keys: common.author_keys,
             title_query: common.title_query,
+            text_label: common.text_label,
             text_tags: common.text_tags,
-            tag_text: common.tag_text,
             sort: common.sort,
             advanced: {
-              author: advanced.author || '',
+              authors: advanced.authors || [],
               title_query: advanced.title_query || '',
+              text_label: advanced.text_label || '',
               text_tags: advanced.text_tags || [],
-              tag_text: advanced.tag_text || [],
             },
           };
         }
@@ -6356,9 +6393,10 @@
             refs: libraryRefs,
             snapshot: data.snapshot_id,
             author: common.author_key || state.authorKey || '',
+            authors: common.author_keys || [],
             title: common.title_query,
+            text_label: common.text_label,
             text_tags: common.text_tags,
-            tag_text: common.tag_text,
           };
           if (appRouteHref(next) !== currentHref()) {
             commitRoute(next, { replace: true, overlay: (history.state && history.state.overlay) || 0 });
@@ -6407,15 +6445,17 @@
       const negative = (plan.negative_tags || []).map(tag => `<span class="chip negative">${escapeHtml(tag.replaceAll('_', ' '))}</span>`).join('');
       const filters = data.applied_filters || {};
       const filterChips = [];
-      if (filters.author_key) filterChips.push(`<span class="chip">作者：${escapeHtml(filters.author_key)}</span>`);
+      const appliedAuthors = filters.author_keys || (filters.author_key ? [filters.author_key] : []);
+      for (const author of appliedAuthors) filterChips.push(`<span class="chip">作者：${escapeHtml(author)}</span>`);
       if (filters.title_query) filterChips.push(`<span class="chip">标题：${escapeHtml(filters.title_query)}</span>`);
       for (const tag of filters.tags || []) filterChips.push(`<span class="chip">来源：${escapeHtml(tag)}</span>`);
-      for (const tag of filters.tag_text || []) filterChips.push(`<span class="chip">文字：${escapeHtml(tag)}</span>`);
+      if (filters.text_label) filterChips.push(`<span class="chip">文字：${escapeHtml(filters.text_label)}</span>`);
       const onlyFilters = !(data.query_plan && data.query_plan.original);
       const label = onlyFilters ? '筛选' : (plan.used_llm ? '本地大模型已解析' : '内置插画词典已解析');
       const warning = data.llm_warning ? ` · Ollama 未就绪，已自动回退` : '';
       const more = state.hasMore ? ' · 下滑加载更多' : '';
-      $('query-info').innerHTML = `${label}${warning} · ${total} 个结果${more}　${positive}${negative}${filterChips.join('')}`;
+      const resultTotal = Number.isFinite(Number(data.total)) ? Number(data.total) : total;
+      $('query-info').innerHTML = `${label}${warning} · ${resultTotal} 个结果${more}　${positive}${negative}${filterChips.join('')}`;
     }
 
     function galleryColumnCount() {
@@ -8259,9 +8299,10 @@
           refs: parseSearchRefs(params.get('ref') || ''),
           snapshot: params.get('s') || '',
           author: params.get('author') || '',
+          authors: parseRouteTagList(params.get('authors') || '[]'),
           title: params.get('title') || '',
+          text_label: params.get('text_label') || '',
           text_tags: parseRouteTagList(params.get('text_tags') || '[]'),
-          tag_text: parseRouteTagList(params.get('tag_text') || '[]'),
         };
       }
       if (parts[0] === 'folder') {
@@ -8290,9 +8331,10 @@
         if (ref) params.set('ref', ref);
         if (route.snapshot) params.set('s', route.snapshot);
         if (route.author) params.set('author', route.author);
+        if (route.authors && route.authors.length) params.set('authors', JSON.stringify(route.authors));
         if (route.title) params.set('title', route.title);
+        if (route.text_label) params.set('text_label', route.text_label);
         if (route.text_tags && route.text_tags.length) params.set('text_tags', JSON.stringify(route.text_tags));
-        if (route.tag_text && route.tag_text.length) params.set('tag_text', JSON.stringify(route.tag_text));
         const query = params.toString();
         return query ? `/search?${query}` : '/search';
       }
@@ -8335,10 +8377,11 @@
           query: $('query').value.trim(),
           refs: librarySearchRefs(),
           snapshot: state.searchSnapshotId || '',
-          author: filters.author || state.authorKey || '',
+          author: state.authorKey || '',
+          authors: filters.authors,
           title: filters.title_query,
+          text_label: filters.text_label,
           text_tags: filters.text_tags,
-          tag_text: filters.tag_text,
         };
       }
       if (state.mode === 'browse' && state.browseKey) {
@@ -8374,9 +8417,10 @@
         route.query
         || (route.refs && route.refs.length)
         || route.author
+        || (route.authors && route.authors.length)
         || route.title
+        || route.text_label
         || (route.text_tags && route.text_tags.length)
-        || (route.tag_text && route.tag_text.length)
       )) {
         document.title = `${route.query || '筛选'} · ArtSeek`;
         return;
@@ -8586,10 +8630,10 @@
     }
     async function applySearchRoute(route) {
       const routeFilters = {
-        author: route.author || '',
+        authors: route.authors || [],
         title_query: route.title || '',
+        text_label: route.text_label || '',
         text_tags: route.text_tags || [],
-        tag_text: route.tag_text || [],
       };
       $('query').value = route.query || '';
       setAdvancedFilters(routeFilters);
@@ -8614,10 +8658,10 @@
         && state.results.length
         && $('query').value.trim() === (route.query || '')
         && searchRefsEqual(librarySearchRefs(), route.refs || [])
-        && currentFilters.author === routeFilters.author
+        && currentFilters.authors.join('\n') === routeFilters.authors.join('\n')
         && currentFilters.title_query === routeFilters.title_query
-        && currentFilters.text_tags.join('\n') === routeFilters.text_tags.join('\n')
-        && currentFilters.tag_text.join('\n') === routeFilters.tag_text.join('\n'),
+        && currentFilters.text_label === routeFilters.text_label
+        && currentFilters.text_tags.join('\n') === routeFilters.text_tags.join('\n'),
       );
       if (sameSnapshot || sameQuery) return;
       if (snapshotId) {

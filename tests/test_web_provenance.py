@@ -129,6 +129,49 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(data["page_label"], "p0")
         self.assertEqual(data["reverse_search"]["saucenao"], "https://saucenao.com/")
 
+    def test_suggestion_counts_follow_selected_scope(self) -> None:
+        author = self.store.ensure_author("pixiv", "1", name="Alice", handle="alice")
+        self.store.upsert_scan(
+            "p1", self.payload, ParsedSource(parse_filename(self.image.name))
+        )
+        self.store.set_fetch_result(
+            "p1",
+            {
+                "platform": "pixiv",
+                "source_id": "12345678",
+                "page": 0,
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "status": "ok",
+                "tags": ["scope_tag"],
+            },
+            author_key=author,
+        )
+        folder_key = canonical_path("d:/art/收藏")
+        authors = self.client.post(
+            "/api/authors",
+            json={"q": "", "folder_keys": [folder_key], "limit": 5},
+        )
+        self.assertEqual(authors.status_code, 200)
+        alice = next(item for item in authors.json()["authors"] if item["key"] == author)
+        self.assertEqual(alice["image_count"], 1)
+        tags = self.client.post(
+            "/api/tags",
+            json={"kind": "source", "q": "scope", "folder_keys": [folder_key]},
+        )
+        self.assertEqual(tags.status_code, 200)
+        self.assertEqual(tags.json()["tags"][0], {"tag": "scope_tag", "count": 1})
+        empty_authors = self.client.post(
+            "/api/authors",
+            json={"q": "", "folder_keys": [], "limit": 5},
+        )
+        self.assertEqual(empty_authors.status_code, 200)
+        self.assertTrue(all(item["image_count"] == 0 for item in empty_authors.json()["authors"]))
+        empty_tags = self.client.post(
+            "/api/tags",
+            json={"kind": "source", "folder_keys": []},
+        )
+        self.assertEqual(empty_tags.json()["tags"], [])
+
     def test_suggestion_endpoints_paginate(self) -> None:
         first = self.store.ensure_author("pixiv", "1", name="Alice", handle="alice")
         second = self.store.ensure_author("pixiv", "2", name="Bob", handle="bob")
@@ -376,6 +419,53 @@ class ProvenanceApiTests(unittest.TestCase):
         )
         self.assertEqual(oldest.status_code, 200)
         self.assertEqual([item["id"] for item in oldest.json()["results"]], ["p1", "p2"])
+
+    def test_text_label_is_a_model_search_input(self) -> None:
+        before = len(self.engine.search_calls)
+        response = self.client.post(
+            "/api/search",
+            json={"query": "", "text_label": "blue hair", "folder_keys": []},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self.engine.search_calls), before + 1)
+        self.assertEqual(self.engine.search_calls[-1]["text"], "blue hair")
+
+    def test_multiple_author_keys_are_unioned(self) -> None:
+        first = self.store.ensure_author("pixiv", "1", name="Alice", handle="alice")
+        second = self.store.ensure_author("twitter", "2", name="Bob", handle="bob")
+        for point_id, author in (("p1", first), ("p2", second)):
+            payload = dict(
+                self.payload,
+                path=str(self.root / f"{point_id}.png"),
+                path_key=str(self.root / f"{point_id}.png").casefold(),
+                content_hash=("a" if point_id == "p1" else "b") * 64,
+            )
+            self.engine.store.payloads[point_id] = payload
+            self.store.upsert_scan(
+                point_id, payload, ParsedSource(parse_filename(self.image.name))
+            )
+            self.store.set_fetch_result(
+                point_id,
+                {
+                    "platform": author.split(":", 1)[0],
+                    "source_id": point_id,
+                    "page": 0,
+                    "url": f"https://www.pixiv.net/artworks/{point_id}",
+                    "status": "ok",
+                },
+                author_key=author,
+            )
+        response = self.client.post(
+            "/api/search",
+            json={"query": "", "author_keys": [first, second], "folder_keys": []},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            {item["id"] for item in response.json()["results"]}, {"p1", "p2"}
+        )
+        self.assertEqual(
+            set(response.json()["applied_filters"]["author_keys"]), {first, second}
+        )
 
     def test_ambiguous_author_error_lists_candidate_payload(self) -> None:
         first = self.store.ensure_author("pixiv", "1", name="alice", handle="alice")

@@ -132,7 +132,9 @@ class TextSearchRequest(BaseModel):
     dedupe: bool = False
     snapshot_id: str | None = None
     author_key: str | None = None
+    author_keys: list[str] = Field(default_factory=list)
     title_query: str = ""
+    text_label: str = ""
     sort: str = "mtime_desc"
     text_tags: list[str] = Field(default_factory=list)
     tag_text: list[str] = Field(default_factory=list)
@@ -224,6 +226,16 @@ class ScopeImagesRequest(BaseModel):
         if value is None or value == "":
             return None
         return str(value)
+
+
+class SuggestionRequest(BaseModel):
+    q: str = ""
+    limit: int = Field(default=200, ge=1, le=500)
+    offset: int = Field(default=0, ge=0, le=50_000)
+    folder_keys: list[str] | None = None
+    mtime_after: str | None = None
+    mtime_before: str | None = None
+    kind: str = "source"
 
 
 class IndexAddRequest(BaseModel):
@@ -1480,14 +1492,20 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             specs.append(ReferenceSpec(id=request.reference_id, weight=1.0))
         paths, weights = resolve_library_references(specs)
         cleaned_query, author_token, tag_tokens = parse_query_filters(request.query)
-        author_key = (
-            resolve_author_token(request.author_key)
-            if request.author_key
-            else (resolve_author_token(author_token) if author_token else None)
-        )
+        requested_authors = [*request.author_keys]
+        if request.author_key:
+            requested_authors.append(request.author_key)
+        if author_token:
+            requested_authors.append(author_token)
+        resolved_authors = list(dict.fromkeys(
+            resolve_author_token(token)
+            for token in requested_authors
+            if str(token or "").strip()
+        ))
+        author_key = resolved_authors[0] if len(resolved_authors) == 1 else None
         text_tags = [*tag_tokens, *request.text_tags]
         restrict_ids = restricted_ids(
-            author_key=author_key,
+            author_keys=resolved_authors,
             tag_tokens=text_tags,
             title_query=request.title_query,
             tag_text=request.tag_text,
@@ -1496,11 +1514,14 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         search_text = cleaned_query
         if tag_tokens:
             search_text = " ".join([search_text, *tag_tokens]).strip()
+        if request.text_label.strip():
+            search_text = " ".join([search_text, request.text_label.strip()]).strip()
         folder_keys = resolve_folder_keys(request.folder_keys)
         if not search_text and not specs and restrict_ids is not None:
             payload = filter_only_search(
                 query=request.query,
                 author_key=author_key,
+                author_keys=resolved_authors,
                 tag_tokens=text_tags,
                 point_ids=restrict_ids,
                 title_query=request.title_query,
@@ -1536,8 +1557,10 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             payload = dataclasses.asdict(response)
             payload["applied_filters"] = {
                 "author_key": author_key,
+                "author_keys": resolved_authors,
                 "tags": text_tags,
                 "title_query": request.title_query,
+                "text_label": request.text_label,
                 "tag_text": request.tag_text,
                 "image_tags": request.image_tags,
             }
@@ -1581,7 +1604,9 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         dedupe: bool = Form(default=False),
         snapshot_id: str = Form(default=""),
         author_key: str = Form(default=""),
+        author_keys: str = Form(default="[]"),
         title_query: str = Form(default=""),
+        text_label: str = Form(default=""),
         sort: str = Form(default="mtime_desc"),
         text_tags: str = Form(default="[]"),
         tag_text: str = Form(default="[]"),
@@ -1601,11 +1626,23 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                     handle.write(await file.read())
             folder_keys_list = resolve_folder_keys(parse_folder_keys(folder_keys))
             cleaned_query, author_token, tag_tokens = parse_query_filters(query)
-            resolved_author = (
-                resolve_author_token(author_key)
-                if author_key.strip()
-                else (resolve_author_token(author_token) if author_token else None)
-            )
+            try:
+                extra_authors = json.loads(author_keys or "[]")
+            except json.JSONDecodeError as exc:
+                raise HTTPException(400, "作者筛选参数不合法") from exc
+            if not isinstance(extra_authors, list):
+                raise HTTPException(400, "作者筛选参数不合法")
+            requested_authors = [*extra_authors]
+            if author_key.strip():
+                requested_authors.append(author_key)
+            if author_token:
+                requested_authors.append(author_token)
+            resolved_authors = list(dict.fromkeys(
+                resolve_author_token(token)
+                for token in requested_authors
+                if str(token or "").strip()
+            ))
+            resolved_author = resolved_authors[0] if len(resolved_authors) == 1 else None
             try:
                 extra_text_tags = json.loads(text_tags or "[]")
                 extra_tag_text = json.loads(tag_text or "[]")
@@ -1631,6 +1668,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             search_text = " ".join(
                 [cleaned_query, *tag_tokens]
             ).strip()
+            if text_label.strip():
+                search_text = " ".join([search_text, text_label.strip()]).strip()
             if (
                 not search_text
                 and not library_paths
@@ -1640,6 +1679,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 payload = filter_only_search(
                     query=query,
                     author_key=resolved_author,
+                    author_keys=resolved_authors,
                     tag_tokens=text_tags,
                     point_ids=restrict_ids,
                     offset=max(0, min(offset, 4000)),
@@ -1672,8 +1712,10 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 payload = dataclasses.asdict(response)
                 payload["applied_filters"] = {
                     "author_key": resolved_author,
+                    "author_keys": resolved_authors,
                     "tags": text_tags,
                     "title_query": title_query,
+                    "text_label": text_label,
                     "tag_text": tag_text,
                     "image_tags": image_tags,
                 }
@@ -1814,7 +1856,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
 
     def restricted_ids(
         *,
-        author_key: str | None,
+        author_key: str | None = None,
+        author_keys: list[str] | None = None,
         tag_tokens: list[str],
         title_query: str = "",
         tag_text: list[str] | None = None,
@@ -1822,8 +1865,15 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     ) -> list[str] | None:
         store: ProvenanceStore = app.state.provenance
         result: set[str] | None = None
-        if author_key:
-            result = set(store.point_ids_for_author(author_key))
+        authors = list(dict.fromkeys([
+            *(author_keys or []),
+            *([author_key] if author_key else []),
+        ]))
+        if authors:
+            allowed: set[str] = set()
+            for author in authors:
+                allowed.update(store.point_ids_for_author(author))
+            result = allowed
         if tag_tokens:
             tagged = set(store.point_ids_for_tags(tag_tokens))
             result = tagged if result is None else result & tagged
@@ -1842,6 +1892,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         *,
         query: str,
         author_key: str | None,
+        author_keys: list[str] | None = None,
         tag_tokens: list[str],
         point_ids: list[str],
         offset: int,
@@ -1884,11 +1935,13 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         return {
             "query_plan": dataclasses.asdict(plan),
             "results": results,
+            "total": len(scoped),
             "has_more": offset + len(page_ids) < len(scoped),
             "offset": offset,
             "sort": order,
             "applied_filters": {
                 "author_key": author_key,
+                "author_keys": author_keys or [],
                 "tags": tag_tokens,
                 "title_query": title_query,
                 "tag_text": tag_text or [],
@@ -2320,17 +2373,67 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                     service.close()
         return provenance_payload(point_id, payload, path)
 
-    @app.get("/api/authors")
-    def list_authors(q: str = "", limit: int = 40, offset: int = 0) -> dict[str, Any]:
+    def suggestion_scope_ids(
+        folder_keys: list[str] | None,
+        mtime_after: str | None,
+        mtime_before: str | None,
+    ) -> list[str] | None:
+        if folder_keys is None:
+            return None
+        if not folder_keys:
+            return []
+        catalog = app.state.engine.folder_catalog()
+        ids = catalog.point_ids(
+            folder_keys,
+            after_ns=day_start_ns(mtime_after),
+            before_ns=day_end_ns(mtime_before),
+        )
+        if ids is None:
+            ids = [point_id for acc in catalog.folders.values() for point_id in acc.ids]
+        return ids
+
+    def authors_payload(
+        q: str,
+        limit: int,
+        offset: int,
+        folder_keys: list[str] | None = None,
+        mtime_after: str | None = None,
+        mtime_before: str | None = None,
+    ) -> dict[str, Any]:
         page_size = max(1, min(int(limit), 500))
+        start = max(0, int(offset))
+        scope_ids = suggestion_scope_ids(folder_keys, mtime_after, mtime_before)
+        counts = (
+            app.state.provenance.author_counts_for_points(scope_ids)
+            if scope_ids is not None
+            else None
+        )
         authors = app.state.provenance.list_authors(
-            q, limit=page_size + 1, offset=max(0, int(offset))
+            q,
+            limit=page_size + 1,
+            offset=start,
+            image_counts=counts,
         )
         return {
             "authors": authors[:page_size],
             "has_more": len(authors) > page_size,
-            "offset": max(0, int(offset)),
+            "offset": start,
         }
+
+    @app.get("/api/authors")
+    def list_authors(q: str = "", limit: int = 40, offset: int = 0) -> dict[str, Any]:
+        return authors_payload(q, limit, offset)
+
+    @app.post("/api/authors")
+    def list_authors_post(request: SuggestionRequest) -> dict[str, Any]:
+        return authors_payload(
+            request.q,
+            request.limit,
+            request.offset,
+            request.folder_keys,
+            request.mtime_after,
+            request.mtime_before,
+        )
 
     @app.get("/api/authors/{author_key}")
     def get_author(author_key: str) -> dict[str, Any]:
@@ -2338,6 +2441,24 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         if summary is None:
             raise HTTPException(404, "作者不存在")
         ids = app.state.provenance.point_ids_for_author(author_key)
+        return {"author": summary, "point_ids": ids, "total": len(ids)}
+
+    @app.post("/api/authors/{author_key}")
+    def get_scoped_author(
+        author_key: str, request: SuggestionRequest
+    ) -> dict[str, Any]:
+        summary = app.state.provenance.author_summary(author_key)
+        if summary is None:
+            raise HTTPException(404, "作者不存在")
+        ids = app.state.provenance.point_ids_for_author(author_key)
+        scope_ids = suggestion_scope_ids(
+            request.folder_keys, request.mtime_after, request.mtime_before
+        )
+        if scope_ids is not None:
+            allowed = set(scope_ids)
+            ids = [point_id for point_id in ids if point_id in allowed]
+            summary = dict(summary)
+            summary["image_count"] = len(ids)
         return {"author": summary, "point_ids": ids, "total": len(ids)}
 
     @app.get("/api/authors/{author_key}/images")
@@ -2392,12 +2513,14 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             app.state.image_tag_suggestions = {"generation": generation, "items": items}
             return list(items)
 
-    @app.get("/api/tags")
-    def tag_suggestions(
-        q: str = "",
-        kind: str = "source",
-        limit: int = 60,
-        offset: int = 0,
+    def tags_payload(
+        q: str,
+        kind: str,
+        limit: int,
+        offset: int,
+        folder_keys: list[str] | None = None,
+        mtime_after: str | None = None,
+        mtime_before: str | None = None,
     ) -> dict[str, Any]:
         page_size = max(1, min(int(limit), 500))
         start = max(0, int(offset))
@@ -2409,6 +2532,11 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 if not needle or needle in item["tag"].casefold()
             ]
             page = items[start : start + page_size + 1]
+        elif folder_keys is not None:
+            ids = suggestion_scope_ids(folder_keys, mtime_after, mtime_before) or []
+            page = app.state.provenance.source_tag_counts_for_points(
+                ids, q, limit=page_size + 1, offset=start
+            )
         else:
             page = app.state.provenance.list_source_tags(
                 q, limit=page_size + 1, offset=start
@@ -2419,6 +2547,27 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "has_more": len(page) > page_size,
             "offset": start,
         }
+
+    @app.get("/api/tags")
+    def tag_suggestions(
+        q: str = "",
+        kind: str = "source",
+        limit: int = 60,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        return tags_payload(q, kind, limit, offset)
+
+    @app.post("/api/tags")
+    def tag_suggestions_post(request: SuggestionRequest) -> dict[str, Any]:
+        return tags_payload(
+            request.q,
+            request.kind,
+            request.limit,
+            request.offset,
+            request.folder_keys,
+            request.mtime_after,
+            request.mtime_before,
+        )
 
     @app.get("/api/tags/{tag}/images")
     def tag_images(

@@ -799,6 +799,56 @@ class ProvenanceStore:
             ).fetchall()
         return [{"tag": str(row["tag"]), "count": int(row["count"])} for row in rows]
 
+    def _scope_temp_table(self, connection: sqlite3.Connection, point_ids: Sequence[str]) -> None:
+        connection.execute(
+            "CREATE TEMP TABLE IF NOT EXISTS _scope_points "
+            "(point_id TEXT PRIMARY KEY)"
+        )
+        connection.execute("DELETE FROM _scope_points")
+        rows = [(str(item),) for item in dict.fromkeys(point_ids) if item]
+        if rows:
+            connection.executemany(
+                "INSERT OR IGNORE INTO _scope_points(point_id) VALUES (?)", rows
+            )
+
+    def author_counts_for_points(self, point_ids: Sequence[str]) -> dict[str, int]:
+        with self._read() as connection:
+            self._scope_temp_table(connection, point_ids)
+            rows = connection.execute(
+                "SELECT image_source.author_key AS key, COUNT(*) AS count "
+                "FROM image_source JOIN _scope_points USING(point_id) "
+                "WHERE image_source.author_key IS NOT NULL "
+                "GROUP BY image_source.author_key"
+            ).fetchall()
+        return {str(row["key"]): int(row["count"]) for row in rows}
+
+    def source_tag_counts_for_points(
+        self,
+        point_ids: Sequence[str],
+        query: str = "",
+        *,
+        limit: int = 60,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        needle = f"%{str(query or '').strip().casefold()}%"
+        params: list[Any] = []
+        where = "image_source.tags_json IS NOT NULL AND TRIM(value) <> ''"
+        if str(query or "").strip():
+            where += " AND LOWER(value) LIKE ?"
+            params.append(needle)
+        params.extend([max(1, min(int(limit), 500)), max(0, int(offset))])
+        with self._read() as connection:
+            self._scope_temp_table(connection, point_ids)
+            rows = connection.execute(
+                "SELECT value AS tag, COUNT(*) AS count "
+                "FROM image_source JOIN _scope_points USING(point_id), "
+                "json_each(image_source.tags_json) "
+                f"WHERE {where} GROUP BY value "
+                "ORDER BY count DESC, value COLLATE NOCASE LIMIT ? OFFSET ?",
+                params,
+            ).fetchall()
+        return [{"tag": str(row["tag"]), "count": int(row["count"])} for row in rows]
+
     def point_mtimes(self, point_ids: Sequence[str]) -> dict[str, int]:
         clean = [str(item) for item in dict.fromkeys(point_ids) if item]
         result: dict[str, int] = {}
@@ -983,12 +1033,17 @@ class ProvenanceStore:
         return best
 
     def list_authors(
-        self, query: str = "", *, limit: int = 40, offset: int = 0
+        self,
+        query: str = "",
+        *,
+        limit: int = 40,
+        offset: int = 0,
+        image_counts: dict[str, int] | None = None,
     ) -> list[dict[str, Any]]:
         needle = query.strip()
         page_size = max(1, min(int(limit), 500))
         start = max(0, int(offset))
-        if not needle:
+        if not needle and image_counts is None:
             with self._read() as connection:
                 rows = connection.execute(
                     """
@@ -1019,6 +1074,17 @@ class ProvenanceStore:
             self._row_to_author(row) | {"image_count": int(row["image_count"])}
             for row in rows
         ]
+        if image_counts is not None:
+            for author in authors:
+                author["image_count"] = int(image_counts.get(str(author["key"]), 0))
+        if not needle:
+            authors.sort(
+                key=lambda item: (
+                    -int(item.get("image_count") or 0),
+                    str(item.get("name") or item.get("handle") or item["key"]).casefold(),
+                )
+            )
+            return authors[start : start + page_size]
         scored: list[dict[str, Any]] = []
         for author in authors:
             score = self._author_score(
