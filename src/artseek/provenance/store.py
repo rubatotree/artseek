@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
+import re
 import sqlite3
 import threading
 import time
+import unicodedata
 from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -880,24 +883,79 @@ class ProvenanceStore:
         author["image_count"] = int(count)
         return author
 
+    @staticmethod
+    def _author_text(value: Any) -> str:
+        text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+        text = text.lstrip("@")
+        return re.sub(r"\s+", " ", text).strip()
+
+    @classmethod
+    def _author_score(cls, query: str, *values: Any) -> float:
+        needle = cls._author_text(query)
+        if not needle:
+            return 1.0
+        best = 0.0
+        for raw in values:
+            text = cls._author_text(raw)
+            if not text:
+                continue
+            if text == needle:
+                return 1.0
+            if needle in text:
+                best = max(
+                    best,
+                    0.85 + 0.15 * (len(needle) / max(len(text), 1)),
+                )
+                continue
+            ratio = difflib.SequenceMatcher(None, needle, text).ratio()
+            if ratio >= 0.45:
+                best = max(best, ratio * 0.8)
+        return best
+
     def list_authors(self, query: str = "", *, limit: int = 40) -> list[dict[str, Any]]:
-        needle = f"%{query.strip().casefold()}%"
         with self._read() as connection:
             rows = connection.execute(
                 """
                 SELECT author.*, COUNT(image_source.point_id) AS image_count
                 FROM author
                 LEFT JOIN image_source ON image_source.author_key = author.key
-                WHERE (? = '%%' OR LOWER(author.key) LIKE ?
-                       OR LOWER(COALESCE(author.name, '')) LIKE ?
-                       OR LOWER(COALESCE(author.handle, '')) LIKE ?)
                 GROUP BY author.key
-                ORDER BY image_count DESC, author.name COLLATE NOCASE
-                LIMIT ?
-                """,
-                (needle, needle, needle, needle, max(1, min(int(limit), 200))),
+                """
             ).fetchall()
-        return [self._row_to_author(row) | {"image_count": int(row["image_count"])} for row in rows]
+        authors = [
+            self._row_to_author(row) | {"image_count": int(row["image_count"])}
+            for row in rows
+        ]
+        needle = query.strip()
+        if not needle:
+            authors.sort(
+                key=lambda item: (
+                    -int(item.get("image_count") or 0),
+                    str(item.get("name") or item.get("handle") or item["key"]).casefold(),
+                )
+            )
+            return authors[: max(1, min(int(limit), 200))]
+        scored: list[dict[str, Any]] = []
+        for author in authors:
+            score = self._author_score(
+                needle,
+                author.get("key"),
+                author.get("name"),
+                author.get("handle"),
+                author.get("platform_id"),
+            )
+            if score <= 0:
+                continue
+            author["score"] = round(score, 3)
+            scored.append(author)
+        scored.sort(
+            key=lambda item: (
+                -float(item.get("score") or 0),
+                -int(item.get("image_count") or 0),
+                str(item.get("name") or item.get("handle") or item["key"]).casefold(),
+            )
+        )
+        return scored[: max(1, min(int(limit), 200))]
 
     # -------------------------------------------------------------- fetch state
 

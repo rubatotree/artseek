@@ -306,7 +306,7 @@ author:@yoneyamai
 tag:オリジナル tag:女の子
 ```
 
-`author:` / `artist:` 会解析为作者组（完整 key、显示名或 handle）；`tag:` 匹配已保存的 Pixiv 标签/推文 hashtag，多个 tag 取交集。作者与标签同时存在时取交集。只有过滤器、没有自由文本时走 payload 分页，不做向量检索。
+`author:` / `artist:` 会解析为作者组（完整 key、显示名或 handle），名称/handle 支持模糊匹配；`tag:` 匹配已保存的 Pixiv 标签/推文 hashtag，多个 tag 取交集。作者与标签同时存在时取交集。只有过滤器、没有自由文本时走 payload 分页，不做向量检索。
 
 ### 6.2 查看器
 

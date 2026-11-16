@@ -1674,6 +1674,11 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             return str(matches[0]["key"])
         if not matches:
             raise HTTPException(400, f"没有找到作者：{value}")
+        if len(matches) > 1:
+            top = float(matches[0].get("score") or 0)
+            runner_up = float(matches[1].get("score") or 0)
+            if top >= 0.8 and top - runner_up >= 0.08:
+                return str(matches[0]["key"])
         names = "、".join(
             f"{item.get('name') or item['key']}（{item['key']}）" for item in matches
         )

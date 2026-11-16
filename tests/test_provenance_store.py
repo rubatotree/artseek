@@ -136,6 +136,20 @@ class ProvenanceStoreTests(unittest.TestCase):
         self.assertEqual(summary["image_count"], 1)
         self.assertEqual(len(summary["members"]), 2)
 
+    def test_author_search_is_fuzzy_and_ranked(self) -> None:
+        key = self.store.ensure_author(
+            "twitter",
+            "yoneyamai",
+            name="米山舞",
+            handle="yoneyamai",
+        )
+        by_handle = self.store.list_authors("yoneyama")
+        self.assertEqual(by_handle[0]["key"], key)
+        self.assertGreater(by_handle[0]["score"], 0.4)
+        by_name = self.store.list_authors("米山")
+        self.assertEqual(by_name[0]["key"], key)
+        self.assertGreaterEqual(by_name[0]["score"], 0.85)
+
     def test_manual_author_key_without_handle(self) -> None:
         key = manual_author_key("某画师")
         self.assertTrue(key.startswith("manual:"))
