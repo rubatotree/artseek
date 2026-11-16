@@ -2689,7 +2689,7 @@
         scan: { url: '/api/provenance/scan', body: { deep: false, only_new: false, auto_enrich: true } },
         'deep-scan': { url: '/api/provenance/scan', body: { deep: true, only_new: false, auto_enrich: true } },
         enrich: { url: '/api/provenance/enrich', body: { platforms: ['pixiv', 'twitter'] } },
-        'auto-tag': { url: '/api/provenance/auto-tag', body: { limit: 500 } },
+        'auto-tag': { url: '/api/provenance/auto-tag', body: { limit: null } },
         pause: { url: '/api/provenance/job/pause', body: {} },
         resume: { url: '/api/provenance/job/resume', body: {} },
         stop: { url: '/api/provenance/job/stop', body: {} },
