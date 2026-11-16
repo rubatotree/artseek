@@ -1019,6 +1019,7 @@
       font-size: 22px; line-height: 1;
     }
     .viewer-close:hover { transform: none; background: rgba(48, 43, 52, .94); }
+    .viewer-mobile-actions, .viewer-mobile-details-menu { display: none; }
     .modal-bar {
       flex: 0 0 auto; padding: 8px 12px; display: flex; flex-wrap: wrap;
       gap: 8px; align-items: center; color: #ddd6e0;
@@ -1333,10 +1334,37 @@
         top: calc(8px + env(safe-area-inset-top, 0px)); right: calc(8px + env(safe-area-inset-right, 0px));
         width: 44px; height: 44px;
       }
-      .modal-bar {
-        padding: 6px 8px calc(8px + env(safe-area-inset-bottom, 0px));
-        gap: 6px;
+      .modal-bar { display: none; }
+      .viewer-mobile-actions {
+        position: absolute; left: 0; right: 0; z-index: 8;
+        bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 0 14px; pointer-events: none;
       }
+      .viewer-mobile-actions[hidden] { display: none; }
+      .viewer-mobile-action {
+        width: 48px; height: 48px; min-width: 48px; padding: 0;
+        display: grid; place-items: center; border-radius: 999px;
+        border: 1px solid rgba(255,255,255,.2); background: rgba(30,26,34,.78);
+        color: #f1e8ee; box-shadow: 0 6px 20px rgba(0,0,0,.28);
+        pointer-events: auto;
+      }
+      .viewer-mobile-action svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      .viewer-mobile-action:hover { transform: none; background: rgba(30,26,34,.92); }
+      .viewer-mobile-details-menu {
+        position: absolute; left: 14px; z-index: 9;
+        bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+        display: grid; gap: 4px; width: min(220px, calc(100vw - 28px)); padding: 6px;
+        border: 1px solid rgba(255,255,255,.18); border-radius: 14px;
+        background: rgba(30,26,34,.96); color: #eee8f0;
+        box-shadow: 0 12px 30px rgba(0,0,0,.3);
+      }
+      .viewer-mobile-details-menu[hidden] { display: none; }
+      .viewer-mobile-details-menu button {
+        min-height: 44px; padding: 8px 12px; border-radius: 10px;
+        background: transparent; color: #eee8f0; text-align: left; font-size: 14px;
+      }
+      .viewer-mobile-details-menu button:hover { transform: none; background: rgba(255,255,255,.1); }
       #viewer-title { display: none; }
       .modal-bar button { min-height: 40px; padding: 8px 10px; font-size: 13px; }
       .viewer-weight { width: 100%; }
@@ -1633,6 +1661,18 @@
       <button id="viewer-notes" type="button" aria-pressed="false" aria-controls="notes-pane" hidden>笔记</button>
       <button id="viewer-collection-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="viewer-collection-menu">收藏到…</button>
       <button id="viewer-remove-collection" type="button" hidden>移出收藏夹</button>
+    </div>
+    <div id="viewer-mobile-actions" class="viewer-mobile-actions" hidden>
+      <button id="viewer-mobile-details" class="viewer-mobile-action" type="button" aria-label="详细信息" aria-haspopup="dialog" aria-expanded="false" aria-controls="viewer-mobile-details-menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 10.8v5.4M12 7.8h.01"/></svg>
+      </button>
+      <button id="viewer-mobile-favorite" class="viewer-mobile-action" type="button" aria-label="收藏到收藏夹" aria-haspopup="dialog" aria-expanded="false" aria-controls="viewer-collection-menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20.8 8.6c0 5.2-8.8 10.1-8.8 10.1S3.2 13.8 3.2 8.6A4.6 4.6 0 0 1 12 6.1a4.6 4.6 0 0 1 8.8 2.5Z"/></svg>
+      </button>
+    </div>
+    <div id="viewer-mobile-details-menu" class="viewer-mobile-details-menu" role="dialog" aria-label="详细信息" hidden>
+      <button type="button" data-viewer-mobile-detail="provenance">来源</button>
+      <button type="button" data-viewer-mobile-detail="notes">笔记<span id="viewer-mobile-notes-count" class="notes-count"></span></button>
     </div>
     <div id="viewer-collection-menu" class="viewer-collection-menu" role="dialog" aria-labelledby="viewer-collection-menu-title" hidden></div>
   </dialog>
@@ -2613,6 +2653,7 @@
       pane.classList.add('is-open');
       await loadProvenance();
       if (typeof fitViewerFrame === 'function') fitViewerFrame();
+      updateMobileViewerActions();
     }
     async function closeProvenancePane() {
       state.provenance.open = false;
@@ -2623,6 +2664,7 @@
       await new Promise((resolve) => setTimeout(resolve, 300));
       if (!state.provenance.open) pane.hidden = true;
       if (typeof fitViewerFrame === 'function') fitViewerFrame();
+      updateMobileViewerActions();
     }
     async function toggleProvenancePane() {
       if (state.provenance.open) await closeProvenancePane();
@@ -2817,6 +2859,33 @@
       }
       await refreshProvenanceDialog();
     }
+    function closeMobileViewerDetails() {
+      const menu = $('viewer-mobile-details-menu');
+      if (!menu || menu.hidden) return;
+      menu.hidden = true;
+      $('viewer-mobile-details').setAttribute('aria-expanded', 'false');
+    }
+    function updateMobileViewerActions() {
+      const actions = $('viewer-mobile-actions');
+      if (!actions) return;
+      const usable = $('viewer').open
+        && Boolean(state.current?.id)
+        && state.viewerSource !== 'reference'
+        && !state.provenance.open
+        && !notes.open;
+      actions.hidden = !usable;
+      $('viewer-mobile-favorite').hidden = !usable;
+      if (!usable) closeMobileViewerDetails();
+      const count = usable && notes.imageId === currentImageId() ? notes.list.length : '';
+      $('viewer-mobile-notes-count').textContent = count === '' ? '' : String(count);
+    }
+    async function openMobileViewerDetail(kind) {
+      closeMobileViewerDetails();
+      closeViewerCollectionMenu({ restoreFocus: false });
+      if (kind === 'notes') await openNotesPane();
+      else await openProvenancePane();
+      updateMobileViewerActions();
+    }
     function updateNotesButton() {
       const button = $('viewer-notes');
       const imageId = currentImageId();
@@ -2824,6 +2893,7 @@
       const count = notes.imageId === imageId ? notes.list.length : '';
       button.innerHTML = count === '' ? '笔记' : `笔记<span class="notes-count">${count}</span>`;
       button.setAttribute('aria-pressed', String(notes.open));
+      updateMobileViewerActions();
     }
     function renderNoteTabs() {
       const tabs = $('notes-tabs');
@@ -3624,6 +3694,7 @@
       pane.hidden = false;
       pane.getBoundingClientRect();
       $('viewer-notes').setAttribute('aria-pressed', 'true');
+      updateMobileViewerActions();
       const motion = waitForNotesPaneTransition(pane);
       pane.classList.add('is-open');
       await Promise.all([loadImageNotes(), motion]);
@@ -3637,6 +3708,7 @@
       notes.open = false;
       const pane = $('notes-pane');
       $('viewer-notes').setAttribute('aria-pressed', 'false');
+      updateMobileViewerActions();
       if (pane.hidden) {
         pane.classList.remove('is-open');
         return;
@@ -3779,6 +3851,39 @@
         $('upload').click();
       }
     });
+    $('viewer-mobile-details').addEventListener('click', () => {
+      const menu = $('viewer-mobile-details-menu');
+      if (menu.hidden) {
+        closeViewerCollectionMenu({ restoreFocus: false });
+        menu.hidden = false;
+        $('viewer-mobile-details').setAttribute('aria-expanded', 'true');
+        requestAnimationFrame(() => menu.querySelector('button')?.focus());
+      } else {
+        closeMobileViewerDetails();
+      }
+    });
+    $('viewer-mobile-details-menu').addEventListener('click', (event) => {
+      const button = event.target.closest('[data-viewer-mobile-detail]');
+      if (!button) return;
+      openMobileViewerDetail(button.dataset.viewerMobileDetail).catch((error) => {
+        $('query-info').textContent = `详细信息未能打开：${error.message}`;
+      });
+    });
+    $('viewer-mobile-favorite').addEventListener('click', (event) => {
+      closeMobileViewerDetails();
+      if ($('viewer-collection-menu').hidden) openViewerCollectionMenu(event.currentTarget);
+      else closeViewerCollectionMenu();
+    });
+    document.addEventListener('pointerdown', (event) => {
+      if ($('viewer-mobile-details-menu').hidden) return;
+      if (event.target.closest('#viewer-mobile-details-menu, #viewer-mobile-actions')) return;
+      closeMobileViewerDetails();
+    }, true);
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || $('viewer-mobile-details-menu').hidden) return;
+      event.preventDefault();
+      closeMobileViewerDetails();
+    }, true);
     $('viewer-close').addEventListener('click', () => dismissViewer());
     $('viewer').addEventListener('cancel', (event) => {
       event.preventDefault();
@@ -3786,6 +3891,7 @@
       else dismissViewer();
     });
     $('viewer').addEventListener('close', () => {
+      closeMobileViewerDetails();
       closeViewerCollectionMenu({ restoreFocus: false });
       closeNotesPane({ skipRoute: true });
       resetView();
@@ -5330,6 +5436,7 @@
       state.viewerMenuSession += 1;
       menu.hidden = true;
       $('viewer-collection-toggle').setAttribute('aria-expanded', 'false');
+      $('viewer-mobile-favorite').setAttribute('aria-expanded', 'false');
       state.viewerMenuTrigger = null;
       if (restoreFocus && trigger?.isConnected && $('viewer').open) trigger.focus();
     }
@@ -7534,6 +7641,7 @@
           $('viewer-reference').disabled = false;
         }
       }
+      updateMobileViewerActions();
     }
     function updateViewerNav() {
       syncViewerChrome();
@@ -7848,6 +7956,7 @@
       viewerSlots.next.alt = '';
     }
     function applyGalleryViewerState(item) {
+      closeMobileViewerDetails();
       closeViewerCollectionMenu({ restoreFocus: false });
       state.viewerSource = 'gallery';
       state.current = item;
