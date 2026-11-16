@@ -35,7 +35,13 @@
     }
     .shell { width: min(1680px, 100%); margin: 0 auto; padding-inline: var(--page-gutter); }
     header { padding: 42px 0 23px; display: flex; align-items: end; gap: 22px; }
-    .brand { font: 700 clamp(27px, 4vw, 42px)/1.05 Georgia, serif; letter-spacing: -.03em; }
+    .brand {
+      font: 700 clamp(27px, 4vw, 42px)/1.05 Georgia, serif; letter-spacing: -.03em;
+      padding: 0; border: 0; border-radius: 0; background: transparent; color: inherit;
+      cursor: pointer; text-align: left; box-shadow: none;
+    }
+    .brand:hover { transform: none; }
+    .brand:focus-visible { outline: 2px solid #ddb2c2; outline-offset: 4px; }
     .subtitle { color: var(--muted); padding-bottom: 4px; }
     .search-layout {
       display: grid;
@@ -1339,7 +1345,7 @@
 <body>
   <div class="shell">
     <header>
-      <div class="brand">ArtSeek</div>
+      <button class="brand" id="home-logo" type="button" title="回到主页，显示勾选目录" aria-label="回到主页，显示勾选目录">ArtSeek</button>
       <div class="subtitle">本地插画收藏 · 语义与相似图检索</div>
     </header>
     <div class="search-layout">
@@ -3733,6 +3739,7 @@
         $('model-hint').textContent = `未能保存自动卸载时间：${modelApiErrorMessage(error)}`;
       }
     });
+    $('home-logo').addEventListener('click', () => goHome());
     $('search-form').addEventListener('submit', (event) => { event.preventDefault(); runSearch(); });
     $('filter-toggle').addEventListener('click', () => {
       setFilterPanelOpen($('search-filters').hidden);
@@ -6280,6 +6287,46 @@
       fetchFolderImages({ reset: true });
     }
 
+    function clearHomeSearch() {
+      clearTimeout(state.filterApplyTimer);
+      state.filterApplyTimer = 0;
+      $('query').value = '';
+      state.searchSnapshotId = '';
+      state.searchRequest = null;
+      state.searchSeed = null;
+      state.authorKey = '';
+      state.authorName = '';
+      state.authorTotal = 0;
+      state.tagName = '';
+      state.tagTotal = 0;
+      updateAuthorFilter();
+      updateTagFilter();
+      treeState.mtimeAfter = '';
+      treeState.mtimeBefore = '';
+      syncTimeInputs();
+      setAdvancedFilters({});
+      setFilterPanelOpen(false);
+      updateFilterBadge();
+      state.references.forEach((ref) => {
+        if (ref.objectUrl) URL.revokeObjectURL(ref.objectUrl);
+      });
+      state.references = [];
+      state.currentRefKey = null;
+      renderReferences();
+      state.browseKey = '';
+      state.browseName = '';
+      state.browseTotal = 0;
+      closeCollectionSortMenu();
+    }
+    function enterHomeGallery() {
+      if (treeState.selected.size) startScopeBrowse({ skipRoute: true });
+      else resetGalleryToIdle();
+    }
+    function goHome() {
+      const route = { kind: 'home' };
+      commitRoute(route, { replace: false, overlay: 0 });
+      applyAppRoute(route);
+    }
     function startScopeBrowse({ skipRoute = false } = {}) {
       if (!treeState.selected.size) {
         refreshDefaultGallery();
@@ -6519,7 +6566,13 @@
         : Boolean(query) && !hasFilters && !libraryRefs.length && !fileRefs.length;
       const filterOnly = !query && !advanced.text_label && !libraryRefs.length && !fileRefs.length;
       if (filterOnly && !hasFilters) {
-        if (reset) $('query-info').textContent = '请先输入描述、添加参考图片或展开筛选。也可点击左侧目录名预览其中的图片。';
+        if (reset) {
+          if ((treeState.mtimeAfter || treeState.mtimeBefore) && treeState.selected.size) {
+            startScopeBrowse();
+          } else {
+            goHome();
+          }
+        }
         return;
       }
       if (!frozen && !treeState.selected.size) {
@@ -9027,7 +9080,8 @@
         }
         routeCtl.dismissAll = false;
         if (route.kind === 'home') {
-          resetGalleryToIdle();
+          clearHomeSearch();
+          enterHomeGallery();
         }
         if (route.kind !== 'image' && route.kind !== 'notes' && route.author !== undefined) {
           const nextAuthor = route.author || '';
@@ -9146,8 +9200,12 @@
         }
       }
       history.replaceState({ artseek: 1, overlay: 0, ...route }, '', currentHref());
-      if (route.kind === 'home') resetGalleryToIdle();
-      else await applyAppRoute(route);
+      if (route.kind === 'home') {
+        clearHomeSearch();
+        enterHomeGallery();
+      } else {
+        await applyAppRoute(route);
+      }
     }
 
     if (window.matchMedia('(pointer: fine)').matches) $('query').focus();
