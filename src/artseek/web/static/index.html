@@ -804,8 +804,8 @@
     dialog[open] { display: flex; flex-direction: column; }
     dialog::backdrop { background: rgba(16, 13, 18, .22); }
     #viewer {
-      background: rgba(16, 13, 18, .72); overflow: hidden;
-      backdrop-filter: none; -webkit-backdrop-filter: none;
+      background: rgba(16, 13, 18, .68); overflow: hidden;
+      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
     }
     #viewer::backdrop { background: rgba(16, 13, 18, .36); }
     html.viewer-open, html.viewer-open body { overflow: hidden; }
@@ -8967,8 +8967,8 @@
       }
       if (!$('viewer').open) return;
       if (isNotesEditorEvent(event.target)) return;
-      if (event.key === 'ArrowLeft') { event.preventDefault(); stepViewer(-1, { animate: true }); }
-      else if (event.key === 'ArrowRight') { event.preventDefault(); stepViewer(1, { animate: true }); }
+      if (event.key === 'ArrowLeft') { event.preventDefault(); stepViewer(-1, { animate: false }); }
+      else if (event.key === 'ArrowRight') { event.preventDefault(); stepViewer(1, { animate: false }); }
       else if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomBy(1.25); }
       else if (event.key === '-' || event.key === '_') { event.preventDefault(); zoomBy(1 / 1.25); }
       else if (event.key === '0') { event.preventDefault(); resetView(false); }
