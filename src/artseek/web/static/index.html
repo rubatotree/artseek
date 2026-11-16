@@ -33,7 +33,7 @@
         var(--paper);
       font-family: Inter, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
     }
-    .shell { width: min(1500px, 100%); margin: 0 auto; padding-inline: var(--page-gutter); }
+    .shell { width: min(1680px, 100%); margin: 0 auto; padding-inline: var(--page-gutter); }
     header { padding: 42px 0 23px; display: flex; align-items: end; gap: 22px; }
     .brand { font: 700 clamp(27px, 4vw, 42px)/1.05 Georgia, serif; letter-spacing: -.03em; }
     .subtitle { color: var(--muted); padding-bottom: 4px; }
@@ -5553,8 +5553,9 @@
       const phone = window.matchMedia('(max-width: 720px)').matches;
       const width = $('gallery').clientWidth || window.innerWidth;
       if (phone || width < 520) return view === 'compact' ? 3 : 2;
-      if (width < 1100) return view === 'compact' ? 6 : 4;
-      return view === 'compact' ? 8 : 5;
+      // Desktop/wide screens use wider cards: 4 natural/square columns and
+      // 6 compact columns instead of 5/8.
+      return view === 'compact' ? 6 : 4;
     }
     function cardDisplayAspect(item) {
       const natural = item.width > 0 && item.height > 0 ? item.width / item.height : 0.8;
