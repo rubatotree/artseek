@@ -275,7 +275,10 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertTrue(data["has_more"])
         self.assertEqual(
             set(data["results"][0]),
-            {"id", "score", "path", "name", "width", "height", "tags", "tag_hits", "caption"},
+            {
+                "id", "score", "path", "name", "width", "height",
+                "mtime_ns", "tags", "tag_hits", "caption",
+            },
         )
         second_page = self.client.get(
             f"/api/collections/{collection['id']}/images", params={"limit": 2, "offset": 2}

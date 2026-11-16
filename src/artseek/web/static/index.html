@@ -1689,7 +1689,7 @@
     const routeCtl = { applying: false, seq: 0, dismissAll: false };
     const state = {
       references: [], refSeq: 0, current: null, currentRefKey: null, viewerSource: 'gallery',
-      results: [], offset: 0, hasMore: false, loadingMore: false, searchSeq: 0,
+      results: [], baseResults: [], offset: 0, hasMore: false, loadingMore: false, searchSeq: 0,
       searchSnapshotId: '', searchRequest: null, filterApplyTimer: 0,
       searchSort: 'mtime_desc',
       colHeights: [],
@@ -2554,8 +2554,13 @@
       }
       if ($('viewer').open) finishDismissViewer();
       commitGalleryRoute({ forcePush: true });
-      if (state.mode === 'author') fetchAuthorImages({ reset: true });
-      else reloadCurrentGallery();
+      if (state.mode === 'search') {
+        applyLocalFilters();
+      } else if (state.mode === 'author') {
+        fetchAuthorImages({ reset: true });
+      } else {
+        reloadCurrentGallery();
+      }
     }
     function addTagFilterChip(tag, kind = 'text_tags') {
       const text = String(tag || '').trim();
@@ -2564,7 +2569,7 @@
       addFilterChip(kind, text);
       updateFilterBadge();
       setFilterPanelOpen(true);
-      scheduleFilterApply();
+      applyFilterChanges();
     }
     function clearAuthorFilter() {
       if ($('viewer').open) finishDismissViewer();
@@ -2586,7 +2591,11 @@
         $('query-info').textContent = '作者筛选已清除。';
       }
       commitGalleryRoute({ forcePush: true });
-      if (!wasAuthor) reloadCurrentGallery();
+      if (state.mode === 'search') {
+        applyLocalFilters();
+      } else if (!wasAuthor) {
+        reloadCurrentGallery();
+      }
     }
     function formatBudgetTime(seconds) {
       if (!seconds) return '';
@@ -3621,7 +3630,6 @@
     ['filter-author', 'filter-title', 'filter-text-tags', 'filter-tag-text'].forEach((id) => {
       $(id).addEventListener('input', updateFilterBadge);
     });
-    $('filter-title').addEventListener('change', scheduleFilterApply);
     $('upload').addEventListener('change', (event) => {
       addReferenceFiles(event.target.files);
       event.target.value = '';
@@ -3895,22 +3903,65 @@
         applyFilterChanges();
       }, 180);
     }
-    async function applyFilterChanges() {
-      const filters = readAdvancedFilters();
-      const hasQuery = Boolean(
-        $('query').value.trim()
-        || librarySearchRefs().length
-        || state.references.some((ref) => ref.file)
-        || hasAdvancedFilters(filters)
+    function localFilterItems(items, filters) {
+      const wantedAuthor = String(filters.author || '').toLocaleLowerCase();
+      const titleTerms = String(filters.title_query || '')
+        .trim().split(/\s+/).filter(Boolean).map((term) => term.toLocaleLowerCase());
+      const exactTags = (filters.text_tags || []).map((tag) => String(tag).toLocaleLowerCase());
+      const textTerms = (filters.tag_text || []).map((tag) => String(tag).toLocaleLowerCase());
+      return items.filter((item) => {
+        const source = item.source || {};
+        if (wantedAuthor) {
+          const keys = [
+            String(source.author_key || ''),
+            ...(Array.isArray(source.author_members) ? source.author_members : []).map((member) => String(member.key || '')),
+          ].map((key) => key.toLocaleLowerCase());
+          const names = [String(source.author_name || ''), ...keys].map((name) => name.toLocaleLowerCase());
+          if (!names.some((name) => name === wantedAuthor || name.includes(wantedAuthor))) return false;
+        }
+        const title = String(source.title || '').toLocaleLowerCase();
+        if (titleTerms.some((term) => !title.includes(term))) return false;
+        const sourceTags = (source.tags || []).map((tag) => String(tag).toLocaleLowerCase());
+        if (exactTags.some((tag) => !sourceTags.includes(tag))) return false;
+        if (textTerms.some((term) => !sourceTags.some((tag) => tag.includes(term)))) return false;
+        return true;
+      });
+    }
+    function sortLocalResults(items, sort) {
+      if (sort !== 'mtime_desc' && sort !== 'mtime_asc') return items;
+      const factor = sort === 'mtime_desc' ? -1 : 1;
+      return items.slice().sort((left, right) => {
+        const delta = Number(left.mtime_ns || 0) - Number(right.mtime_ns || 0);
+        return delta === 0 ? 0 : delta * factor;
+      });
+    }
+    function searchUsesTimeOrder() {
+      return Boolean(
+        !$('query').value.trim()
+        && !librarySearchRefs().length
+        && !state.references.some((ref) => ref.file)
       );
-      if (hasQuery) {
-        await fetchResults({ reset: true });
-      } else if (treeState.selected.size) {
-        startScopeBrowse();
-      } else {
-        resetGalleryToIdle();
-        $('query-info').textContent = '勾选左侧目录后，这里会显示所有已勾选目录中的图片。';
+    }
+    function applyLocalFilters() {
+      if (state.mode !== 'search' || !state.baseResults.length) return;
+      const filters = readAdvancedFilters();
+      const filtered = localFilterItems(state.baseResults, filters);
+      const visible = searchUsesTimeOrder()
+        ? sortLocalResults(filtered, state.searchSort)
+        : filtered;
+      state.results = visible;
+      state.hasMore = false;
+      renderGallery(visible, { append: false });
+      $('load-more').hidden = true;
+      const count = visible.length;
+      $('query-info').textContent = `当前结果筛选 · ${count} / ${state.baseResults.length} 张图`;
+    }
+    async function applyFilterChanges() {
+      if (state.mode === 'search' && state.baseResults.length) {
+        applyLocalFilters();
+        return;
       }
+      // Before the first explicit search there is no result range to filter.
     }
     function chipValues(containerId) {
       return [...$(containerId).querySelectorAll('.filter-chip')]
@@ -3980,7 +4031,7 @@
       input.value = '';
       updateSuggestToggle(config.input);
       updateFilterBadge();
-      scheduleFilterApply();
+      applyFilterChanges();
     }
     function commitAllFilterInputs() {
       Object.keys(FILTER_CHIP_CONFIG).forEach(commitFilterInput);
@@ -4504,7 +4555,7 @@
         state.searchSort = sort;
         closeCollectionSortMenu({ restoreFocus: true });
         renderCollectionSort();
-        await fetchResults({ reset: true, skipRoute: true });
+        applyLocalFilters();
         return;
       }
       if (browseSortActive()) {
@@ -5578,7 +5629,11 @@
         updateAuthorFilter();
         if (reset) state.searchSnapshotId = '';
         if (reset) {
-          state.results = incoming;
+          const filtered = localFilterItems(state.baseResults, readAdvancedFilters());
+          const visible = searchUsesTimeOrder()
+            ? sortLocalResults(filtered, state.searchSort)
+            : filtered;
+          state.results = visible;
           renderGallery(state.results, { append: false });
         } else {
           state.results = state.results.concat(incoming);
@@ -6256,6 +6311,7 @@
         const data = await parseResponse(response);
         if (seq !== state.searchSeq) return;
         const incoming = data.results || [];
+        state.baseResults = reset ? incoming.slice() : state.baseResults.concat(incoming);
         if (reset) {
           state.searchRequest = {
             query: common.query,

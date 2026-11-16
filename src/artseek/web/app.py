@@ -579,6 +579,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "name": str(payload.get("name") or fallback_name),
             "width": int(payload.get("width") or 0),
             "height": int(payload.get("height") or 0),
+            "mtime_ns": int(payload.get("mtime_ns") or 0),
             "tags": list(payload.get("tags") or []),
             "tag_hits": [],
             "caption": payload.get("caption"),
