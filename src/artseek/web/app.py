@@ -554,6 +554,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             for record in records.values()
             if record.get("author_key")
         ]
+        groups = store.author_groups(author_keys)
         names = store.author_names(author_keys)
         for item in results:
             record = records.get(str(item.get("id") or ""))
@@ -569,6 +570,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 "status": record.get("status"),
                 "author_key": author_key,
                 "author_name": names.get(str(author_key), "") if author_key else "",
+                "author_members": groups.get(str(author_key), []) if author_key else [],
             }
         return results
 

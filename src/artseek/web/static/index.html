@@ -915,6 +915,10 @@
       min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       color: #eee8f0; text-decoration: none;
     }
+    #viewer-title .platform-icons { margin-left: 2px; }
+    #viewer-title .platform-icon { width: 18px; height: 18px; }
+    #viewer-title .platform-icon svg { width: 11px; height: 11px; }
+    #viewer-title .platform-icon.pixiv svg { width: 12px; height: 12px; }
     .viewer-index { flex: 0 0 auto; color: #9a909e; font-size: 12px; font-variant-numeric: tabular-nums; }
     .modal-bar button { background: #302b34; color: #eee8f0; padding: 8px 11px; }
     .modal-bar button:hover { transform: none; }
@@ -1859,6 +1863,24 @@
     function provenancePlainText(value) {
       return String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     }
+    function platformIconSvg(platform) {
+      if (platform === 'pixiv') {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M6.723 5.465h.904a.37.37 0 0 1 .31.17l.752 1.17a6.172 6.172 0 0 1 10.01 4.834 6.172 6.172 0 0 1-9.394 5.265v2.016a.37.37 0 0 1-.37.367H6.724a.37.37 0 0 1-.37-.367V5.834a.37.37 0 0 1 .37-.37m5.804 2.951a3.222 3.222 0 1 0-.002 6.443 3.222 3.222 0 0 0 .002-6.443"/></svg>';
+      }
+      if (platform === 'twitter') {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z"/></svg>';
+      }
+      return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.07 0l1.42-1.42a5 5 0 0 0-7.07-7.07L10 5.93"/><path d="M14 11a5 5 0 0 0-7.07 0L5.5 12.42a5 5 0 0 0 7.07 7.07L13.99 18"/></svg>';
+    }
+    function platformIconLinks(members) {
+      return (Array.isArray(members) ? members : []).map((member) => {
+        const profile = member.profile_url
+          || (member.platform === 'twitter' && member.handle ? `https://x.com/${member.handle}` : '');
+        if (!profile) return '';
+        const title = `${member.platform}${member.handle ? ` · ${member.handle}` : ''}`;
+        return `<a class="platform-icon ${escapeHtml(member.platform)}" href="${escapeHtml(profile)}" target="_blank" rel="noopener" title="${escapeHtml(title)}">${platformIconSvg(member.platform)}</a>`;
+      }).join('');
+    }
     function viewerTitleModelFromItem(item) {
       const source = item && item.source;
       if (!source) return null;
@@ -1874,7 +1896,11 @@
             status: source.status,
           },
           author: source.author_key
-            ? { key: source.author_key, name: source.author_name }
+            ? {
+                key: source.author_key,
+                name: source.author_name,
+                members: source.author_members || [],
+              }
             : null,
         },
         (item.path || item.name || ''),
@@ -1900,6 +1926,7 @@
         fallback,
         authorKey: author && author.key ? author.key : '',
         authorName: author ? (author.name || author.handle || author.key) : '',
+        authorMembers: author && Array.isArray(author.members) ? author.members : [],
         title: primary,
         url: record.url || '',
         tags,
@@ -1927,6 +1954,13 @@
         author.title = '查看该作者';
         author.addEventListener('click', () => setAuthorFilter(model.authorKey, model.authorName));
         host.append(author);
+        const icons = platformIconLinks(model.authorMembers || []);
+        if (icons) {
+          const group = document.createElement('span');
+          group.className = 'platform-icons';
+          group.innerHTML = icons;
+          host.append(group);
+        }
         host.append(document.createTextNode(' · '));
       }
       if (model.url) {
@@ -2089,22 +2123,7 @@
         ? `<div class="provenance-hint">其他候选：${candidates.map((item) => `${escapeHtml(item.platform)}:${escapeHtml(item.source_id)}${item.page != null ? `#${escapeHtml(String(item.page))}` : ''}`).join('；')}</div>`
         : '';
       const members = author && Array.isArray(author.members) ? author.members : [];
-      const platformIconSvg = (platform) => {
-        if (platform === 'pixiv') {
-          return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M6.723 5.465h.904a.37.37 0 0 1 .31.17l.752 1.17a6.172 6.172 0 0 1 10.01 4.834 6.172 6.172 0 0 1-9.394 5.265v2.016a.37.37 0 0 1-.37.367H6.724a.37.37 0 0 1-.37-.367V5.834a.37.37 0 0 1 .37-.37m5.804 2.951a3.222 3.222 0 1 0-.002 6.443 3.222 3.222 0 0 0 .002-6.443"/></svg>';
-        }
-        if (platform === 'twitter') {
-          return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z"/></svg>';
-        }
-        return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.07 0l1.42-1.42a5 5 0 0 0-7.07-7.07L10 5.93"/><path d="M14 11a5 5 0 0 0-7.07 0L5.5 12.42a5 5 0 0 0 7.07 7.07L13.99 18"/></svg>';
-      };
-      const platformIcons = members.map((member) => {
-        const profile = member.profile_url
-          || (member.platform === 'twitter' && member.handle ? `https://x.com/${member.handle}` : '');
-        if (!profile) return '';
-        const title = `${member.platform}${member.handle ? ` · ${member.handle}` : ''}`;
-        return `<a class="platform-icon ${escapeHtml(member.platform)}" href="${escapeHtml(profile)}" target="_blank" rel="noopener" title="${escapeHtml(title)}">${platformIconSvg(member.platform)}</a>`;
-      }).join('');
+      const platformIcons = platformIconLinks(members);
       const postButton = url
         ? '<button type="button" data-prov-action="open-post">打开原帖</button>'
         : '';

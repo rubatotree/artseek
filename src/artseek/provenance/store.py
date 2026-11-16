@@ -810,6 +810,57 @@ class ProvenanceStore:
                     )
         return result
 
+    def author_groups(self, keys: Sequence[str]) -> dict[str, list[dict[str, Any]]]:
+        """Return canonical/alias keys mapped to their merged author members."""
+        wanted = list(dict.fromkeys(str(key) for key in keys if key))
+        if not wanted:
+            return {}
+        with self._read() as connection:
+            alias_rows = connection.execute(
+                "SELECT alias_key, canonical_key FROM author_alias"
+            ).fetchall()
+        aliases = {
+            str(row["alias_key"]): str(row["canonical_key"]) for row in alias_rows
+        }
+
+        def canonical(key: str) -> str:
+            current = key
+            seen: set[str] = set()
+            while current in aliases and current not in seen:
+                seen.add(current)
+                current = aliases[current]
+            return current
+
+        canonical_to_keys: dict[str, set[str]] = {}
+        for key in wanted:
+            root = canonical(key)
+            canonical_to_keys.setdefault(root, {root}).add(key)
+        for alias_key in aliases:
+            root = canonical(alias_key)
+            if root in canonical_to_keys:
+                canonical_to_keys[root].add(alias_key)
+        all_keys = sorted({key for group in canonical_to_keys.values() for key in group})
+        authors: dict[str, dict[str, Any]] = {}
+        if all_keys:
+            with self._read() as connection:
+                for start in range(0, len(all_keys), 256):
+                    batch = all_keys[start : start + 256]
+                    placeholders = ",".join("?" for _ in batch)
+                    rows = connection.execute(
+                        "SELECT key, platform, platform_id, name, handle, profile_url "
+                        f"FROM author WHERE key IN ({placeholders})",
+                        batch,
+                    ).fetchall()
+                    for row in rows:
+                        authors[str(row["key"])] = dict(row)
+        result: dict[str, list[dict[str, Any]]] = {}
+        for root, members in canonical_to_keys.items():
+            group = [authors[key] for key in sorted(members) if key in authors]
+            result[root] = group
+            for key in members:
+                result[key] = group
+        return result
+
     def author_summary(self, key: str) -> dict[str, Any] | None:
         canonical = self.canonical_author_key(key)
         author = self.get_author(canonical)

@@ -112,6 +112,9 @@ class ProvenanceStoreTests(unittest.TestCase):
         self.assertEqual(canonical, pixiv)
         self.assertEqual(self.store.canonical_author_key(twitter), pixiv)
         self.assertEqual(self.store.author_members(pixiv), sorted([pixiv, twitter]))
+        groups = self.store.author_groups([pixiv])
+        self.assertEqual(len(groups[pixiv]), 2)
+        self.assertEqual(groups[pixiv], groups[twitter])
 
         self.store.upsert_scan("p1", self.payload, _parsed("12345678_p0.png"))
         self.store.set_fetch_result(
