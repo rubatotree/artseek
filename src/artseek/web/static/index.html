@@ -5553,9 +5553,8 @@
       const phone = window.matchMedia('(max-width: 720px)').matches;
       const width = $('gallery').clientWidth || window.innerWidth;
       if (phone || width < 520) return view === 'compact' ? 3 : 2;
-      // Desktop/wide screens use wider cards: 4 natural/square columns and
-      // 6 compact columns instead of 5/8.
-      return view === 'compact' ? 6 : 4;
+      if (width < 1100) return view === 'compact' ? 6 : 4;
+      return view === 'compact' ? 8 : 5;
     }
     function cardDisplayAspect(item) {
       const natural = item.width > 0 && item.height > 0 ? item.width / item.height : 0.8;

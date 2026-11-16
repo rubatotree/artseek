@@ -604,7 +604,8 @@ class CollectionsApiTests(unittest.TestCase):
             html,
         )
         self.assertIn("if (view === 'list') return 1;", html)
-        self.assertIn("return view === 'compact' ? 6 : 4;", html)
+        self.assertIn("if (width < 1100) return view === 'compact' ? 6 : 4;", html)
+        self.assertIn("return view === 'compact' ? 8 : 5;", html)
         self.assertIn("width: min(1680px, 100%)", html)
         self.assertIn("if (phone || width < 520) return view === 'compact' ? 3 : 2;", html)
         self.assertIn('class="card-hits"', card_source)
