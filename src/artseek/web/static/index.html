@@ -437,6 +437,8 @@
     .provenance-section { display: grid; gap: 8px; margin-bottom: 16px; }
     .provenance-section > strong { color: #665866; font-size: 12px; letter-spacing: .04em; }
     .provenance-title { color: var(--ink); font-size: 15px; font-weight: 700; line-height: 1.4; }
+    .provenance-title a { color: inherit; text-decoration: none; }
+    .provenance-title a:hover { text-decoration: underline; }
     .platform-icons { display: inline-flex; align-items: center; gap: 4px; margin-left: 2px; }
     .platform-icon {
       display: inline-grid; place-items: center; width: 20px; height: 20px;
@@ -900,7 +902,19 @@
       -webkit-backdrop-filter: blur(16px);
     }
     .modal-bar span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-    #viewer-title { flex: 1 1 180px; }
+    #viewer-title { flex: 1 1 180px; display: flex; align-items: center; gap: 4px; }
+    #viewer-title .viewer-title-author {
+      min-height: 0; padding: 0; max-width: 45%;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      background: transparent; color: #f0b8cb; font: 650 13px/1.2 inherit;
+    }
+    #viewer-title .viewer-title-author:hover, #viewer-title .viewer-title-link:hover {
+      transform: none; text-decoration: underline;
+    }
+    #viewer-title .viewer-title-link {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: #eee8f0; text-decoration: none;
+    }
     .viewer-index { flex: 0 0 auto; color: #9a909e; font-size: 12px; font-variant-numeric: tabular-nums; }
     .modal-bar button { background: #302b34; color: #eee8f0; padding: 8px 11px; }
     .modal-bar button:hover { transform: none; }
@@ -1822,32 +1836,73 @@
     function provenancePlainText(value) {
       return String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     }
-    function viewerTitleText(data, fallback) {
+    function viewerTitleModel(data, fallback) {
       const record = data && data.record;
-      if (!record) return fallback;
-      const primary = record.title
-        || provenancePlainText(record.description).slice(0, 120);
-      if (!primary) return fallback;
+      const author = data && data.author;
+      const primary = record
+        ? (record.title || provenancePlainText(record.description).slice(0, 120))
+        : '';
+      if (!primary) return { fallback };
       const tags = (record.tags || [])
         .filter((tag) => tag && !primary.includes(tag))
         .slice(0, 4);
-      return primary + (tags.length ? ` · ${tags.join(' ')}` : '');
+      return {
+        fallback,
+        authorKey: author && author.key ? author.key : '',
+        authorName: author ? (author.name || author.handle || author.key) : '',
+        title: primary,
+        url: record.url || '',
+        tags,
+      };
     }
-    function cacheViewerTitle(pointId, text) {
-      if (!pointId || !text) return;
-      state.viewerTitleCache.set(pointId, text);
+    function cacheViewerTitle(pointId, model) {
+      if (!pointId || !model) return;
+      state.viewerTitleCache.set(pointId, model);
       while (state.viewerTitleCache.size > 240) {
         state.viewerTitleCache.delete(state.viewerTitleCache.keys().next().value);
+      }
+    }
+    function renderViewerTitle(item, model) {
+      const host = $('viewer-title');
+      host.replaceChildren();
+      if (!model || !model.title) {
+        host.textContent = (model && model.fallback) || (item && (item.path || item.name)) || '';
+        return;
+      }
+      if (model.authorName && model.authorKey) {
+        const author = document.createElement('button');
+        author.type = 'button';
+        author.className = 'viewer-title-author';
+        author.textContent = model.authorName;
+        author.title = '查看该作者';
+        author.addEventListener('click', () => setAuthorFilter(model.authorKey, model.authorName));
+        host.append(author);
+        host.append(document.createTextNode(' · '));
+      }
+      if (model.url) {
+        const link = document.createElement('a');
+        link.className = 'viewer-title-link';
+        link.href = model.url;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = model.title;
+        link.title = '打开原帖';
+        host.append(link);
+      } else {
+        host.append(document.createTextNode(model.title));
+      }
+      if (model.tags.length) {
+        host.append(document.createTextNode(` · ${model.tags.join(' ')}`));
       }
     }
     function refreshViewerTitle(item) {
       if (!item) return;
       const fallback = item.path || item.name || '';
-      $('viewer-title').textContent = fallback;
+      renderViewerTitle(item, { fallback });
       if (!item.id) return;
       const cached = state.viewerTitleCache.get(item.id);
       if (cached) {
-        $('viewer-title').textContent = cached;
+        renderViewerTitle(item, cached);
         return;
       }
       clearTimeout(state.viewerTitleTimer);
@@ -1857,7 +1912,7 @@
       if (!item || !item.id) return;
       const cachedNow = state.viewerTitleCache.get(item.id);
       if (cachedNow) {
-        if (state.current && state.current.id === item.id) $('viewer-title').textContent = cachedNow;
+        if (state.current && state.current.id === item.id) renderViewerTitle(item, cachedNow);
         return;
       }
       if (state.viewerTitlePending.has(item.id)) return;
@@ -1865,9 +1920,9 @@
       state.viewerTitlePending.add(item.id);
       try {
         const data = await parseResponse(await fetch(`/api/images/${encodeURIComponent(item.id)}/provenance`));
-        const text = viewerTitleText(data, fallback);
-        cacheViewerTitle(item.id, text);
-        if (state.current && state.current.id === item.id) $('viewer-title').textContent = text;
+        const model = viewerTitleModel(data, fallback);
+        cacheViewerTitle(item.id, model);
+        if (state.current && state.current.id === item.id) renderViewerTitle(item, model);
       } catch (_) {
         /* keep the path fallback */
       } finally {
@@ -1922,9 +1977,12 @@
       const postButton = url
         ? '<button type="button" data-prov-action="open-post">打开原帖</button>'
         : '';
+      const titleMarkup = url
+        ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>`
+        : escapeHtml(title);
       body.innerHTML = `
         <div class="provenance-section">
-          <div class="provenance-title">${escapeHtml(title)}</div>
+          <div class="provenance-title">${titleMarkup}</div>
           ${description ? `<div class="provenance-description">${escapeHtml(description)}</div>` : ''}
           <div class="provenance-row"><b>${platform}</b><span>${escapeHtml(record.source_id || '')}</span><span>${escapeHtml(data.page_label || '')}</span></div>
           <div class="provenance-row"><span>作者</span>${authorButton}${platformIcons ? `<span class="platform-icons">${platformIcons}</span>` : ''}</div>
@@ -2008,9 +2066,11 @@
         const data = await parseResponse(await fetch(`/api/images/${encodeURIComponent(pointId)}/provenance`));
         if (seq !== state.provenance.seq || state.provenance.imageId !== pointId) return;
         state.provenance.data = data;
-        const title = viewerTitleText(data, (state.current && state.current.path) || '');
+        const title = viewerTitleModel(data, (state.current && state.current.path) || '');
         cacheViewerTitle(pointId, title);
-        if (state.current && state.current.id === pointId) $('viewer-title').textContent = title;
+        if (state.current && state.current.id === pointId) {
+          renderViewerTitle(state.current, title);
+        }
         renderProvenance(data);
       } catch (error) {
         if (seq !== state.provenance.seq) return;
@@ -2034,9 +2094,11 @@
           body: JSON.stringify({ url }),
         }));
         state.provenance.data = data;
-        const title = viewerTitleText(data, (state.current && state.current.path) || '');
+        const title = viewerTitleModel(data, (state.current && state.current.path) || '');
         cacheViewerTitle(pointId, title);
-        if (state.current && state.current.id === pointId) $('viewer-title').textContent = title;
+        if (state.current && state.current.id === pointId) {
+          renderViewerTitle(state.current, title);
+        }
         renderProvenance(data);
       } catch (error) {
         if (!silent) $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">解析失败：${escapeHtml(error.message)}</p>`);
@@ -2060,9 +2122,11 @@
           body: JSON.stringify(body),
         }));
         state.provenance.data = data;
-        const title = viewerTitleText(data, (state.current && state.current.path) || '');
+        const title = viewerTitleModel(data, (state.current && state.current.path) || '');
         cacheViewerTitle(pointId, title);
-        if (state.current && state.current.id === pointId) $('viewer-title').textContent = title;
+        if (state.current && state.current.id === pointId) {
+          renderViewerTitle(state.current, title);
+        }
         renderProvenance(data);
       } catch (error) {
         $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">保存失败：${escapeHtml(error.message)}</p>`);
