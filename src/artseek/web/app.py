@@ -1669,20 +1669,47 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         summary = store.author_summary(token)
         if summary is not None:
             return str(summary["key"])
-        matches = store.list_authors(token, limit=6)
+        matches = store.list_authors(token, limit=12)
         if len(matches) == 1:
             return str(matches[0]["key"])
         if not matches:
             raise HTTPException(400, f"没有找到作者：{value}")
-        if len(matches) > 1:
-            top = float(matches[0].get("score") or 0)
-            runner_up = float(matches[1].get("score") or 0)
-            if top >= 0.8 and top - runner_up >= 0.08:
-                return str(matches[0]["key"])
-        names = "、".join(
-            f"{item.get('name') or item['key']}（{item['key']}）" for item in matches
+        key_to_root = {
+            str(item["key"]): store.canonical_author_key(str(item["key"]))
+            for item in matches
+        }
+        grouped: dict[str, list[dict]] = {}
+        for item in matches:
+            root = key_to_root.get(str(item["key"]), str(item["key"]))
+            grouped.setdefault(root, []).append(item)
+        ranked = sorted(
+            grouped.items(),
+            key=lambda pair: (
+                -max(float(item.get("score") or 0) for item in pair[1]),
+                -len(pair[1]),
+                pair[0],
+            ),
         )
-        raise HTTPException(400, f"作者不唯一，请使用完整 key：{names}")
+        if len(ranked) == 1:
+            return ranked[0][0]
+        top_score = max(float(item.get("score") or 0) for item in ranked[0][1])
+        runner_up = max(float(item.get("score") or 0) for item in ranked[1][1])
+        if top_score >= 0.8 and top_score - runner_up >= 0.08:
+            return ranked[0][0]
+        candidates = [
+            {
+                "key": root,
+                "name": members[0].get("name") or members[0].get("handle") or root,
+            }
+            for root, members in ranked
+        ]
+        raise HTTPException(
+            400,
+            detail={
+                "message": "作者不唯一，请选择完整作者。",
+                "author_candidates": candidates,
+            },
+        )
 
     def restricted_ids(
         *,

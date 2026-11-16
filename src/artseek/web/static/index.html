@@ -1098,7 +1098,8 @@
       .index-add input, .tree-sort, .time-preset, .time-custom input,
       .advanced-options input[type="number"] { font-size: 16px; }
       .results-head { margin: 6px var(--page-gutter) 4px; }
-      .query-info {
+      .query-info a { color: #8a5268; text-decoration: underline; }
+    .query-info {
         margin: 0;
         min-height: 0;
         font-size: 12px;
@@ -1452,6 +1453,7 @@
       }
       if (!response.ok) {
         const detail = data && data.detail;
+        const structured = detail && typeof detail === 'object' && !Array.isArray(detail);
         const message = Array.isArray(detail)
           ? detail.map((item) => {
               const loc = Array.isArray(item.loc)
@@ -1460,8 +1462,12 @@
               const msg = item.msg || JSON.stringify(item);
               return loc ? `${loc}: ${msg}` : msg;
             }).join('；')
-          : (detail || text.trim().slice(0, 180) || `HTTP ${response.status}`);
-        throw new Error(message);
+          : (structured ? (detail.message || JSON.stringify(detail)) : (detail || text.trim().slice(0, 180) || `HTTP ${response.status}`));
+        const error = new Error(message);
+        if (structured && Array.isArray(detail.author_candidates)) {
+          error.authorCandidates = detail.author_candidates;
+        }
+        throw error;
       }
       return data;
     }
@@ -5621,6 +5627,20 @@
       $('query-info').textContent = `浏览「${data.folder_name || state.browseName}」· ${shown} / ${total} 张图 · ${sortLabel}${more}`;
     }
 
+    function renderSearchFailure(error, prefix) {
+      const candidates = Array.isArray(error.authorCandidates) ? error.authorCandidates : [];
+      if (!candidates.length) {
+        $('query-info').textContent = `${prefix}：${error.message}`;
+        return;
+      }
+      const links = candidates.map((candidate) => {
+        const key = String(candidate.key || '');
+        const name = String(candidate.name || key);
+        return `${escapeHtml(name)}（<a href="/author/${encodeURIComponent(key)}">${escapeHtml(key)}</a>）`;
+      }).join(' · ');
+      $('query-info').innerHTML = `${escapeHtml(prefix)}：${escapeHtml(error.message)}${links}`;
+    }
+
     async function fetchResults({ reset, skipRoute = false }) {
       const frozen = !reset && state.searchRequest ? state.searchRequest : null;
       const query = frozen ? frozen.query : $('query').value.trim();
@@ -5775,7 +5795,7 @@
         fetchModelStatus().catch(() => {});
       } catch (error) {
         if (seq !== state.searchSeq) return;
-        if (reset) $('query-info').textContent = `查询失败：${error.message}`;
+        if (reset) renderSearchFailure(error, '查询失败');
         else $('load-more').textContent = `继续载入失败：${error.message}`;
         if (!reset) state.hasMore = false;
       } finally {

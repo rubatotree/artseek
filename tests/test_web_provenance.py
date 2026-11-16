@@ -244,6 +244,36 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(data["record"]["author_key"], "pixiv:1554775")
         self.assertEqual(data["author"]["image_count"], 1)
 
+    def test_search_author_token_aligns_linked_social_accounts(self) -> None:
+        pixiv = self.store.ensure_author(
+            "pixiv", "3952", name="おにねこ", handle="onineko"
+        )
+        twitter = self.store.ensure_author(
+            "twitter", "onineko26", name="おにねこ💭", handle="onineko26"
+        )
+        self.store.link_authors(twitter, pixiv, evidence="pixiv_social")
+        self.store.upsert_scan(
+            "p1", self.payload, ParsedSource(parse_filename(self.image.name))
+        )
+        self.store.set_fetch_result(
+            "p1",
+            {
+                "platform": "pixiv",
+                "source_id": "12345678",
+                "page": 0,
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "status": "ok",
+            },
+            author_key=pixiv,
+        )
+        response = self.client.post(
+            "/api/search",
+            json={"query": "author:onineko", "folder_keys": []},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["applied_filters"]["author_key"], pixiv)
+        self.assertEqual([item["id"] for item in response.json()["results"]], ["p1"])
+
     def test_search_filters_parse_author_and_tag_tokens(self) -> None:
         parsed = parse_filename("12345678_p0.png")
         assert parsed is not None
