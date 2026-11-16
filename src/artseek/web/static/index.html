@@ -339,7 +339,12 @@
       color: var(--ink); font: 500 12px/1.2 inherit; text-align: left;
     }
     .filter-suggestion:hover { transform: none; background: var(--rose-soft); }
-    .filter-suggestion small { color: var(--muted); font-size: 10px; }
+    .filter-suggestion-name { flex: 0 0 auto; color: var(--ink); }
+    .filter-suggestion-alias {
+      flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; color: var(--muted); font-size: 11px; font-weight: 400;
+    }
+    .filter-suggestion small { flex: 0 0 auto; margin-left: auto; color: var(--muted); font-size: 10px; }
     .composer { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; margin-top: 10px; }
     .text-weight-card, .ref-add {
       width: 72px; height: 72px; padding: 0; border-radius: 12px;
@@ -3806,11 +3811,30 @@
           button.className = 'filter-suggestion';
           const label = config.kind === 'author'
             ? (item.name || item.handle || item.key)
-            : `#${item.tag}`;
-          const hint = config.kind === 'author'
+            : (item.display_zh || `#${item.tag}`);
+          const aliases = config.kind === 'author'
             ? (item.handle ? `@${item.handle}` : item.key)
-            : `${item.count || 0} 张`;
-          button.innerHTML = `<span>${escapeHtml(label)}</span><small>${escapeHtml(hint)}</small>`;
+            : [`#${item.tag}`, ...(Array.isArray(item.aliases) ? item.aliases : [])]
+              .filter((value, index, all) => value && value !== item.display_zh && all.indexOf(value) === index)
+              .slice(0, 5)
+              .join(' · ');
+          const countText = config.kind === 'author'
+            ? `${Number(item.image_count || 0)} 张`
+            : `${Number(item.count || 0)} 张`;
+          button.title = [label, aliases, countText].filter(Boolean).join('\n');
+          const name = document.createElement('span');
+          name.className = 'filter-suggestion-name';
+          name.textContent = label;
+          button.append(name);
+          if (aliases) {
+            const alias = document.createElement('span');
+            alias.className = 'filter-suggestion-alias';
+            alias.textContent = aliases;
+            button.append(alias);
+          }
+          const count = document.createElement('small');
+          count.textContent = countText;
+          button.append(count);
           button.addEventListener('click', () => {
             const value = config.kind === 'author' ? item.key : item.tag;
             addFilterChip(
