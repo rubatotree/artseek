@@ -12,7 +12,7 @@ from typing import Any
 
 from .parser import ParsedSource, SourceRef, canonical_pixiv_url, twitter_photo_url
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 ORIGIN_PRIORITY = {"filename": 1, "embedded": 2, "manual": 3, "saucy": 4, "ascii2d": 4}
 AUTHOR_TTL_SECONDS = 30 * 24 * 60 * 60
 _STATUSES = frozenset(
@@ -99,6 +99,7 @@ class ProvenanceStore:
                     posted_at TEXT,
                     width INTEGER,
                     height INTEGER,
+                    mtime_ns INTEGER,
                     page_count INTEGER,
                     tags_json TEXT,
                     raw_json TEXT,
@@ -153,6 +154,12 @@ class ProvenanceStore:
                 connection.execute(
                     "ALTER TABLE author ADD COLUMN profile_fetched INTEGER NOT NULL DEFAULT 0"
                 )
+            source_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(image_source)").fetchall()
+            }
+            if "mtime_ns" not in source_columns:
+                connection.execute("ALTER TABLE image_source ADD COLUMN mtime_ns INTEGER")
             version_row = connection.execute(
                 "SELECT value FROM meta WHERE key = 'schema_version'"
             ).fetchone()
@@ -222,13 +229,17 @@ class ProvenanceStore:
                     result[str(row["point_id"])] = self._row_to_record(row)
         return result
 
-    def known_points(self) -> dict[str, tuple[str | None, int]]:
+    def known_points(self) -> dict[str, tuple[str | None, int, int | None]]:
         with self._read() as connection:
             rows = connection.execute(
-                "SELECT point_id, content_hash, updated_at FROM image_source"
+                "SELECT point_id, content_hash, updated_at, mtime_ns FROM image_source"
             ).fetchall()
         return {
-            str(row["point_id"]): (row["content_hash"], int(row["updated_at"]))
+            str(row["point_id"]): (
+                row["content_hash"],
+                int(row["updated_at"]),
+                _int_or_none(row["mtime_ns"]),
+            )
             for row in rows
         }
 
@@ -248,6 +259,7 @@ class ProvenanceStore:
         now = _now()
         width = _int_or_none(payload.get("width"))
         height = _int_or_none(payload.get("height"))
+        mtime_ns = _int_or_none(payload.get("mtime_ns"))
         digest = str(payload.get("content_hash") or "") or None
         with self._read() as connection:
             existing = connection.execute(
@@ -274,6 +286,7 @@ class ProvenanceStore:
                             path_key = COALESCE(?, path_key),
                             width = COALESCE(?, width),
                             height = COALESCE(?, height),
+                            mtime_ns = COALESCE(?, mtime_ns),
                             candidates_json = ?,
                             updated_at = ?
                         WHERE point_id = ?
@@ -283,6 +296,7 @@ class ProvenanceStore:
                             path_key,
                             width,
                             height,
+                            mtime_ns,
                             _json([_ref_dict(item) for item in parsed.candidates], []),
                             now,
                             point_id,
@@ -308,6 +322,7 @@ class ProvenanceStore:
                             posted_at = NULL,
                             width = COALESCE(?, width),
                             height = COALESCE(?, height),
+                            mtime_ns = COALESCE(?, mtime_ns),
                             page_count = NULL,
                             tags_json = NULL,
                             raw_json = NULL,
@@ -328,6 +343,7 @@ class ProvenanceStore:
                             origin,
                             width,
                             height,
+                            mtime_ns,
                             now,
                             point_id,
                         ),
@@ -338,8 +354,8 @@ class ProvenanceStore:
                     INSERT INTO image_source (
                         point_id, content_hash, path_key, platform, source_id, page,
                         url, candidates_json, status, confidence, width, height,
-                        source_origin, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+                        mtime_ns, source_origin, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         point_id,
@@ -353,6 +369,7 @@ class ProvenanceStore:
                         primary.confidence,
                         width,
                         height,
+                        mtime_ns,
                         origin,
                         now,
                     ),
@@ -372,6 +389,7 @@ class ProvenanceStore:
         digest = str(payload.get("content_hash") or "") or None
         width = _int_or_none(payload.get("width"))
         height = _int_or_none(payload.get("height"))
+        mtime_ns = _int_or_none(payload.get("mtime_ns"))
         with self._read() as connection:
             existing = connection.execute(
                 "SELECT platform FROM image_source WHERE point_id = ?", (point_id,)
@@ -384,10 +402,11 @@ class ProvenanceStore:
                         path_key = COALESCE(?, path_key),
                         width = COALESCE(?, width),
                         height = COALESCE(?, height),
+                        mtime_ns = COALESCE(?, mtime_ns),
                         updated_at = ?
                     WHERE point_id = ?
                     """,
-                    (digest, path_key, width, height, now, point_id),
+                    (digest, path_key, width, height, mtime_ns, now, point_id),
                 )
             else:
                 connection.execute(
@@ -395,10 +414,13 @@ class ProvenanceStore:
                     INSERT INTO image_source (
                         point_id, content_hash, path_key, platform, source_id,
                         page, url, status, confidence, width, height,
-                        source_origin, updated_at
-                    ) VALUES (?, ?, ?, 'other', ?, NULL, '', 'unresolved', 0, ?, ?, 'filename', ?)
+                        mtime_ns, source_origin, updated_at
+                    ) VALUES (
+                        ?, ?, ?, 'other', ?, NULL, '', 'unresolved', 0,
+                        ?, ?, ?, 'filename', ?
+                    )
                     """,
-                    (point_id, digest, path_key, point_id, width, height, now),
+                    (point_id, digest, path_key, point_id, width, height, mtime_ns, now),
                 )
             connection.commit()
         return self.get(point_id)
@@ -569,7 +591,7 @@ class ProvenanceStore:
             f"WHERE platform IN ({placeholders}) AND ("
             f"status IN ({status_placeholders}) "
             "OR (status = 'not_found' AND updated_at < ?)"
-            ") ORDER BY updated_at ASC"
+            ") ORDER BY COALESCE(mtime_ns, 0) DESC, updated_at DESC"
         )
         params: list[Any] = [
             *platforms,

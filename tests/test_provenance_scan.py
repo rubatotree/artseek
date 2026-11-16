@@ -42,6 +42,7 @@ class ProvenanceScanTests(unittest.TestCase):
             "path_key": str(path).casefold(),
             "width": 12,
             "height": 16,
+            "mtime_ns": 1,
             "content_hash": digest,
         }
 

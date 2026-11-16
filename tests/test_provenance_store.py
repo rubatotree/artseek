@@ -25,6 +25,7 @@ class ProvenanceStoreTests(unittest.TestCase):
             "path_key": "d:/pics/12345678_p0.png",
             "width": 1200,
             "height": 1600,
+            "mtime_ns": 1_000,
             "content_hash": "a" * 64,
         }
 
@@ -152,6 +153,22 @@ class ProvenanceStoreTests(unittest.TestCase):
         self.store.set_status("p1", "error", "boom")
         pending = self.store.pending_records(platforms=("pixiv",))
         self.assertEqual(pending[0]["error"], "boom")
+
+    def test_pending_records_are_ordered_by_file_mtime_desc(self) -> None:
+        self.store.upsert_scan(
+            "old",
+            {**self.payload, "mtime_ns": 100, "content_hash": "b" * 64},
+            _parsed("12345678_p0.png"),
+        )
+        self.store.upsert_scan(
+            "new",
+            {**self.payload, "mtime_ns": 300, "content_hash": "c" * 64},
+            _parsed("23456789_p1.jpg"),
+        )
+        self.assertEqual(
+            [item["point_id"] for item in self.store.pending_records()],
+            ["new", "old"],
+        )
 
     def test_fetch_state_tracks_daily_counts_and_blocks(self) -> None:
         self.store.note_request("pixiv.net")
