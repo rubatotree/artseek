@@ -3548,14 +3548,6 @@
     ['filter-author', 'filter-title', 'filter-text-tags', 'filter-tag-text', 'filter-image-tags'].forEach((id) => {
       $(id).addEventListener('input', updateFilterBadge);
     });
-    Object.entries(FILTER_CHIP_CONFIG).forEach(([kind, config]) => {
-      $(config.input).addEventListener('keydown', (event) => {
-        if (event.key !== 'Enter' && event.key !== ',' && event.key !== '，') return;
-        event.preventDefault();
-        commitFilterInput(kind);
-      });
-      $(config.input).addEventListener('blur', () => commitFilterInput(kind));
-    });
     $('upload').addEventListener('change', (event) => {
       addReferenceFiles(event.target.files);
       event.target.value = '';
@@ -3769,6 +3761,14 @@
       for (const tag of filters.image_tags || []) addFilterChip('image_tags', tag);
       updateFilterBadge();
     }
+    Object.entries(FILTER_CHIP_CONFIG).forEach(([kind, config]) => {
+      $(config.input).addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ',' && event.key !== '，') return;
+        event.preventDefault();
+        commitFilterInput(kind);
+      });
+      $(config.input).addEventListener('blur', () => commitFilterInput(kind));
+    });
     function setFilterPanelOpen(open) {
       $('search-filters').hidden = !open;
       $('filter-toggle').setAttribute('aria-expanded', String(open));
