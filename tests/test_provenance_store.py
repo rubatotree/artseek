@@ -95,6 +95,19 @@ class ProvenanceStoreTests(unittest.TestCase):
         self.assertEqual(record["status"], "ok")
         self.assertEqual(record["page_count"], 2)
 
+    def test_manual_and_auto_tags_are_searchable(self) -> None:
+        self.store.upsert_scan("p1", self.payload, _parsed("12345678_p0.png"))
+        self.store.set_manual("p1", {"manual_tags": ["手动标签"]})
+        self.store.set_auto_tags("p1", ["自动标签"], {"自动标签": 0.88})
+        record = self.store.get("p1")
+        self.assertIsNotNone(record)
+        assert record is not None
+        self.assertEqual(record["manual_tags"], ["手动标签"])
+        self.assertEqual(record["auto_tags"], ["自动标签"])
+        self.assertEqual(record["auto_tag_scores"]["自动标签"], 0.88)
+        self.assertEqual(self.store.point_ids_for_tags(["手动标签"]), ["p1"])
+        self.assertEqual(self.store.point_ids_for_tags(["自动标签"]), ["p1"])
+
     def test_clear_manual_restores_automatic_fields(self) -> None:
         self.store.upsert_scan("p1", self.payload, _parsed("12345678_p0.png"))
         self.store.set_manual("p1", {"title": "手动", "tags": ["x"]})

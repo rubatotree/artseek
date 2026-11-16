@@ -202,6 +202,23 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(len(tags.json()["tags"]), 1)
         self.assertTrue(tags.json()["has_more"] is False)
 
+    def test_tag_dictionary_expands_chinese_aliases(self) -> None:
+        self.store.upsert_scan(
+            "p1", self.payload, ParsedSource(parse_filename(self.image.name))
+        )
+        self.store.set_manual("p1", {"manual_tags": ["long_hair"]})
+        dictionary = self.client.get(
+            "/api/tag-dictionary", params={"q": "长发"}
+        )
+        self.assertEqual(dictionary.status_code, 200)
+        self.assertEqual(dictionary.json()["tags"][0]["tag"], "long_hair")
+        suggestions = self.client.get(
+            "/api/tags", params={"kind": "source", "q": "长发"}
+        )
+        self.assertEqual(suggestions.status_code, 200)
+        self.assertEqual(suggestions.json()["tags"][0]["tag"], "long_hair")
+        self.assertEqual(suggestions.json()["tags"][0]["display_zh"], "长发")
+
     def test_tag_suggestions_cover_source_and_image_tags(self) -> None:
         self.store.upsert_scan(
             "p1", self.payload, ParsedSource(parse_filename(self.image.name))
@@ -311,6 +328,30 @@ class ProvenanceApiTests(unittest.TestCase):
         )
         self.assertEqual(search.status_code, 200)
         self.assertEqual(self.engine.search_calls[-1]["restrict_ids"], ["p1"])
+
+    def test_manual_tags_are_editable_and_source_tags_are_preserved(self) -> None:
+        self.store.upsert_scan(
+            "p1", self.payload, ParsedSource(parse_filename(self.image.name))
+        )
+        self.store.set_fetch_result(
+            "p1",
+            {
+                "platform": "pixiv",
+                "source_id": "12345678",
+                "page": 0,
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "status": "ok",
+                "tags": ["来源标签"],
+            },
+        )
+        response = self.client.put(
+            "/api/images/p1/provenance",
+            json={"manual_tags": ["手动标签"]},
+        )
+        self.assertEqual(response.status_code, 200)
+        record = response.json()["record"]
+        self.assertEqual(record["tags"], ["来源标签"])
+        self.assertEqual(record["manual_tags"], ["手动标签"])
 
     @patch("artseek.web.app.PixivClient.fetch_author")
     @patch("artseek.web.app.PixivClient.fetch")

@@ -82,6 +82,7 @@ from ..query import QueryPlan
 from ..search import SearchEngine
 from ..search_cache import SearchSnapshotStore, is_snapshot_id
 from ..store import VectorStore
+from ..tag_dictionary import search_tags, tag_info
 
 
 def _parse_id_list(raw: str) -> list[str]:
@@ -408,6 +409,10 @@ class ProvenanceScanRequest(BaseModel):
     auto_enrich: bool | None = None
 
 
+class AutoTagRequest(BaseModel):
+    limit: int | None = Field(default=500, ge=1, le=100_000)
+
+
 class ProvenanceEnrichRequest(BaseModel):
     platforms: list[Literal["pixiv", "twitter"]] = Field(
         default_factory=lambda: ["pixiv", "twitter"]
@@ -427,6 +432,7 @@ class ProvenanceManualRequest(BaseModel):
     author_name: str | None = Field(default=None, max_length=200)
     author_handle: str | None = Field(default=None, max_length=100)
     tags: list[str] | None = None
+    manual_tags: list[str] | None = None
     clear_manual: bool = False
 
 
@@ -621,6 +627,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 "description": record.get("description"),
                 "url": record.get("url"),
                 "tags": list(record.get("tags") or []),
+                "manual_tags": list(record.get("manual_tags") or []),
+                "auto_tags": list(record.get("auto_tags") or []),
                 "platform": record.get("platform"),
                 "status": record.get("status"),
                 "author_key": author_key,
@@ -2138,6 +2146,90 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         threading.Thread(target=run, daemon=True, name="artseek-provenance").start()
         return True
 
+    def start_auto_tag_job(*, limit: int | None = 500) -> bool:
+        store: ProvenanceStore = app.state.provenance
+        job: ProvenanceJob = app.state.provenance_job
+        point_ids = store.point_ids_without_source_tags(limit)
+        with app.state.provenance_lock:
+            if job.running:
+                return False
+            job.running = True
+            job.paused = False
+            job.kind = "auto_tag"
+            job.done = 0
+            job.total = len(point_ids)
+            job.message = (
+                f"待补 Tag {len(point_ids)} 张"
+                if point_ids
+                else "没有缺少来源 tag 的图片"
+            )
+            job.error = None
+            job.summary = None
+            job.stop_event.clear()
+            job.pause_event.clear()
+        if not point_ids:
+            job.running = False
+            return True
+
+        def progress(done: int) -> None:
+            job.done = done
+            job.message = f"正在用视觉近邻补 Tag {done}/{job.total}"
+
+        def run() -> None:
+            summary = {"ok": 0, "skipped": 0, "failed": 0}
+            try:
+                for index, point_id in enumerate(point_ids, start=1):
+                    if job.stop_event.is_set():
+                        break
+                    while job.pause_event.is_set() and not job.stop_event.is_set():
+                        time.sleep(0.25)
+                    if job.stop_event.is_set():
+                        break
+                    try:
+                        vector = app.state.engine.store.visual_vector(point_id)
+                        if vector is None:
+                            summary["skipped"] += 1
+                            continue
+                        neighbors = app.state.engine.store.query(
+                            vector, "visual", 24
+                        )
+                        votes: dict[str, float] = {}
+                        for neighbor in neighbors:
+                            if neighbor.id == point_id:
+                                continue
+                            for tag in neighbor.payload.get("tags") or []:
+                                text = str(tag).strip()
+                                if text:
+                                    votes[text] = votes.get(text, 0.0) + float(neighbor.score)
+                        ranked = sorted(votes.items(), key=lambda item: item[1], reverse=True)
+                        tags = [tag for tag, _ in ranked[:5]]
+                        scores = {
+                            tag: round(score / max(ranked[0][1], 1e-6), 4)
+                            for tag, score in ranked[:5]
+                        }
+                        if tags:
+                            store.set_auto_tags(point_id, tags, scores)
+                            summary["ok"] += 1
+                        else:
+                            summary["skipped"] += 1
+                    except Exception:
+                        summary["failed"] += 1
+                    progress(index)
+                job.summary = summary
+                job.message = (
+                    f"自动 Tag 完成：成功 {summary['ok']}，"
+                    f"跳过 {summary['skipped']}，失败 {summary['failed']}"
+                )
+            except Exception as exc:
+                job.error = str(exc)
+                job.message = "自动 Tag 失败"
+            finally:
+                job.running = False
+                job.paused = False
+
+        threading.Thread(target=run, daemon=True, name="artseek-auto-tag").start()
+        return True
+
     def start_scan_job(
         *,
         deep: bool = False,
@@ -2250,6 +2342,13 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             raise HTTPException(409, "已有来源任务在运行")
         return provenance_job_payload()
 
+    @app.post("/api/provenance/auto-tag")
+    def provenance_auto_tag(request: AutoTagRequest) -> dict[str, Any]:
+        started = start_auto_tag_job(limit=request.limit)
+        if not started:
+            raise HTTPException(409, "已有来源任务在运行")
+        return provenance_job_payload()
+
     @app.post("/api/provenance/job/pause")
     def provenance_pause() -> dict[str, Any]:
         job: ProvenanceJob = app.state.provenance_job
@@ -2315,6 +2414,10 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             fields["description"] = request.description
         if request.tags is not None:
             fields["tags"] = [tag.strip() for tag in request.tags if tag.strip()]
+        if request.manual_tags is not None:
+            fields["manual_tags"] = [
+                tag.strip() for tag in request.manual_tags if tag.strip()
+            ]
         if request.author_name is not None or request.author_handle is not None:
             name = (request.author_name or "").strip()
             handle = (request.author_handle or "").strip().lstrip("@")
@@ -2513,6 +2616,38 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             app.state.image_tag_suggestions = {"generation": generation, "items": items}
             return list(items)
 
+    def decorate_tag_items(
+        items: list[dict[str, Any]], query: str = "", scope_ids: list[str] | None = None
+    ) -> list[dict[str, Any]]:
+        decorated: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in items:
+            tag = str(item.get("tag") or "")
+            if not tag:
+                continue
+            info = tag_info(tag)
+            enriched = dict(item)
+            if info is not None:
+                enriched["display_zh"] = info.zh
+                enriched["aliases"] = list(info.aliases)
+            decorated.append(enriched)
+            seen.add(tag.casefold())
+        if str(query or "").strip():
+            scope = set(scope_ids) if scope_ids is not None else None
+            for entry in search_tags(query, limit=20):
+                if entry.tag.casefold() in seen:
+                    continue
+                points = set(app.state.provenance.point_ids_for_tags([entry.tag]))
+                if scope is not None:
+                    points &= scope
+                decorated.append({
+                    "tag": entry.tag,
+                    "count": len(points),
+                    "display_zh": entry.zh,
+                    "aliases": list(entry.aliases),
+                })
+        return decorated
+
     def tags_payload(
         q: str,
         kind: str,
@@ -2537,10 +2672,12 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             page = app.state.provenance.source_tag_counts_for_points(
                 ids, q, limit=page_size + 1, offset=start
             )
+            page = decorate_tag_items(page, q, ids)
         else:
             page = app.state.provenance.list_source_tags(
                 q, limit=page_size + 1, offset=start
             )
+            page = decorate_tag_items(page, q)
         return {
             "kind": kind,
             "tags": page[:page_size],
@@ -2568,6 +2705,19 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             request.mtime_after,
             request.mtime_before,
         )
+
+    @app.get("/api/tag-dictionary")
+    def tag_dictionary(q: str = "", limit: int = 40) -> dict[str, Any]:
+        return {
+            "tags": [
+                {
+                    "tag": entry.tag,
+                    "display_zh": entry.zh,
+                    "aliases": list(entry.aliases),
+                }
+                for entry in search_tags(q, limit=limit)
+            ]
+        }
 
     @app.get("/api/tags/{tag}/images")
     def tag_images(

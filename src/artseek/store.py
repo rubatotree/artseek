@@ -333,6 +333,18 @@ class VectorStore:
         found.sort(key=lambda item: (-item[0], item[1]))
         return [point_id for _, point_id in found]
 
+    def visual_vector(self, point_id: str) -> list[float] | None:
+        records = self.client.retrieve(
+            collection_name=COLLECTION,
+            ids=[point_id],
+            with_payload=False,
+            with_vectors=["visual"],
+        )
+        if not records:
+            return None
+        vector = _named_vector(records[0].vector, "visual")
+        return vector.tolist() if vector is not None else None
+
     def get(self, point_id: str) -> dict[str, Any] | None:
         records = self.client.retrieve(
             collection_name=COLLECTION,

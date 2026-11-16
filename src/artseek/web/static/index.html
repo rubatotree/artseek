@@ -550,6 +550,8 @@
       background: #f6f1f5; color: #665866; font-size: 11px; text-decoration: none;
     }
     .provenance-tag:hover { background: #efd6e0; color: #8a5268; }
+    .provenance-tag.manual { background: #eef6ec; color: #557a52; }
+    .provenance-tag.auto { background: #eef3fa; color: #557089; }
     .provenance-actions { display: flex; flex-wrap: wrap; gap: 6px; }
     .provenance-actions button, .provenance-form button {
       min-height: 0; padding: 7px 10px; border-radius: 10px;
@@ -2268,7 +2270,12 @@
           ? (data.path || '未识别来源')
           : (record.platform === 'other' ? '其他来源' : '无题'));
       const title = record.title || provenancePlainText(record.description).slice(0, 80) || emptyTitle;
-      const tags = (record.tags || []).map((tag) => `<a class="provenance-tag" href="/tag/${encodeURIComponent(tag)}" data-tag="${escapeHtml(tag)}" title="筛选该标签（Ctrl+点击在新标签页打开）">${escapeHtml(tag)}</a>`).join('');
+      const tagLinks = (values, extraClass = '') => (values || [])
+        .map((tag) => `<a class="provenance-tag ${extraClass}" href="/tag/${encodeURIComponent(tag)}" data-tag="${escapeHtml(tag)}" title="筛选该标签（Ctrl+点击在新标签页打开）">${escapeHtml(tag)}</a>`)
+        .join('');
+      const sourceTags = tagLinks(record.tags || []);
+      const manualTags = tagLinks(record.manual_tags || [], 'manual');
+      const autoTags = tagLinks(record.auto_tags || [], 'auto');
       const authorName = author ? (author.name || author.handle || author.key) : '';
       const authorButton = author
         ? `<a class="provenance-author" href="/author/${encodeURIComponent(author.key)}" data-author-key="${escapeHtml(author.key)}" data-author-name="${escapeHtml(authorName)}" title="查看该作者（Ctrl+点击在新标签页打开）">${escapeHtml(authorName)}</a>`
@@ -2298,7 +2305,9 @@
           <div class="provenance-row"><span>状态</span><b>${escapeHtml(status)}</b></div>
           <div class="provenance-row"><span>文件</span><span class="provenance-file" title="${escapeHtml(data.path || '')}">${escapeHtml(data.path || '')}</span></div>
           ${conflict}
-          <div class="provenance-tags">${tags}</div>
+          ${sourceTags ? `<div class="provenance-row"><span>来源标签</span><div class="provenance-tags">${sourceTags}</div></div>` : ''}
+          ${manualTags ? `<div class="provenance-row"><span>手动标签</span><div class="provenance-tags">${manualTags}</div></div>` : ''}
+          ${autoTags ? `<div class="provenance-row"><span>自动标签</span><div class="provenance-tags">${autoTags}</div></div>` : ''}
           <div class="provenance-actions">
             <button type="button" data-prov-action="refresh">重新抓取</button>
             ${postButton}
@@ -2316,7 +2325,7 @@
             <input id="prov-author-name" placeholder="作者名" value="${escapeHtml(author ? (author.name || '') : '')}" style="flex:1">
             <input id="prov-author-handle" placeholder="@handle" value="${escapeHtml(author ? (author.handle || '') : '')}" style="flex:1">
           </div>
-          <input id="prov-tags" placeholder="标签，用逗号分隔" value="${escapeHtml((record.tags || []).join(', '))}">
+          <input id="prov-tags" placeholder="手动标签，用逗号分隔" value="${escapeHtml((record.manual_tags || []).join(', '))}">
           <div class="provenance-actions">
             <button type="submit" id="prov-save">保存来源</button>
             <button type="button" id="prov-resolve">解析 URL 并补全</button>
@@ -2428,7 +2437,7 @@
         title: $('prov-title').value,
         author_name: $('prov-author-name').value,
         author_handle: $('prov-author-handle').value,
-        tags: $('prov-tags').value.split(',').map((item) => item.trim()).filter(Boolean),
+        manual_tags: $('prov-tags').value.split(',').map((item) => item.trim()).filter(Boolean),
       };
       const url = $('prov-url').value.trim();
       if (url) body.url = url;
@@ -2621,6 +2630,7 @@
       controls.push('<button type="button" data-prov-job="scan">本地扫描</button>');
       controls.push('<button type="button" data-prov-job="deep-scan">深度扫描</button>');
       controls.push('<button type="button" data-prov-job="enrich">补全 Pixiv/X</button>');
+      if (!job.running) controls.push('<button type="button" data-prov-job="auto-tag">视觉补 Tag</button>');
       if (job.running) {
         controls.push(`<button type="button" data-prov-job="${job.paused ? 'resume' : 'pause'}">${job.paused ? '继续' : '暂停'}</button>`);
         controls.push('<button type="button" data-prov-job="stop">停止</button>');
@@ -2679,6 +2689,7 @@
         scan: { url: '/api/provenance/scan', body: { deep: false, only_new: false, auto_enrich: true } },
         'deep-scan': { url: '/api/provenance/scan', body: { deep: true, only_new: false, auto_enrich: true } },
         enrich: { url: '/api/provenance/enrich', body: { platforms: ['pixiv', 'twitter'] } },
+        'auto-tag': { url: '/api/provenance/auto-tag', body: { limit: 500 } },
         pause: { url: '/api/provenance/job/pause', body: {} },
         resume: { url: '/api/provenance/job/resume', body: {} },
         stop: { url: '/api/provenance/job/stop', body: {} },
@@ -3804,6 +3815,7 @@
               config.chipKind,
               value,
               config.kind === 'author' ? item.image_count : item.count,
+              config.kind === 'author' ? '' : (item.display_zh || ''),
             );
             $(config.input).value = '';
             updateSuggestToggle(config.input);
@@ -3954,7 +3966,7 @@
         // Keep the key as a readable fallback.
       }
     }
-    function addFilterChip(kind, value, countValue = null) {
+    function addFilterChip(kind, value, countValue = null, displayText = '') {
       const config = FILTER_CHIP_CONFIG[kind];
       const text = String(value || '').trim();
       if (!config || !text) return;
@@ -3973,7 +3985,9 @@
         : null;
       if (count) {
         count.className = 'filter-chip-count';
-        if (countValue != null) count.textContent = `${Number(countValue || 0)} 张`;
+        if (countValue != null) {
+          count.textContent = `${displayText ? `${displayText} · ` : ''}${Number(countValue || 0)} 张`;
+        }
       }
       const remove = document.createElement('button');
       remove.type = 'button';

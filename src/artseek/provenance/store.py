@@ -105,6 +105,10 @@ class ProvenanceStore:
                     mtime_ns INTEGER,
                     page_count INTEGER,
                     tags_json TEXT,
+                    manual_tags_json TEXT,
+                    auto_tags_json TEXT,
+                    auto_tag_scores_json TEXT,
+                    auto_tagged_at INTEGER,
                     raw_json TEXT,
                     source_origin TEXT NOT NULL DEFAULT 'filename',
                     manual_fields TEXT,
@@ -163,6 +167,14 @@ class ProvenanceStore:
             }
             if "mtime_ns" not in source_columns:
                 connection.execute("ALTER TABLE image_source ADD COLUMN mtime_ns INTEGER")
+            if "manual_tags_json" not in source_columns:
+                connection.execute("ALTER TABLE image_source ADD COLUMN manual_tags_json TEXT")
+            if "auto_tags_json" not in source_columns:
+                connection.execute("ALTER TABLE image_source ADD COLUMN auto_tags_json TEXT")
+            if "auto_tag_scores_json" not in source_columns:
+                connection.execute("ALTER TABLE image_source ADD COLUMN auto_tag_scores_json TEXT")
+            if "auto_tagged_at" not in source_columns:
+                connection.execute("ALTER TABLE image_source ADD COLUMN auto_tagged_at INTEGER")
             version_row = connection.execute(
                 "SELECT value FROM meta WHERE key = 'schema_version'"
             ).fetchone()
@@ -340,6 +352,10 @@ class ProvenanceStore:
                             mtime_ns = COALESCE(?, mtime_ns),
                             page_count = NULL,
                             tags_json = NULL,
+                            manual_tags_json = NULL,
+                            auto_tags_json = NULL,
+                            auto_tag_scores_json = NULL,
+                            auto_tagged_at = NULL,
                             raw_json = NULL,
                             fetched_at = NULL,
                             error = NULL,
@@ -448,7 +464,9 @@ class ProvenanceStore:
                 UPDATE image_source
                 SET content_hash = NULL, title = NULL, description = NULL,
                     author_key = NULL, posted_at = NULL, page_count = NULL,
-                    tags_json = NULL, raw_json = NULL, fetched_at = NULL,
+                    tags_json = NULL, manual_tags_json = NULL,
+                    auto_tags_json = NULL, auto_tag_scores_json = NULL,
+                    auto_tagged_at = NULL, raw_json = NULL, fetched_at = NULL,
                     manual_fields = NULL, source_origin = 'filename',
                     status = 'pending', error = NULL, updated_at = ?
                 WHERE point_id = ?
@@ -560,6 +578,10 @@ class ProvenanceStore:
             updates.append("tags_json")
             values.append(_json(fields["tags"] or [], []))
             manual.add("tags")
+        if "manual_tags" in fields:
+            updates.append("manual_tags_json")
+            values.append(_json(fields["manual_tags"] or [], []))
+            manual.add("manual_tags")
         if not updates:
             return record
         updates.extend(["source_origin", "manual_fields", "updated_at"])
@@ -582,7 +604,7 @@ class ProvenanceStore:
             connection.execute(
                 "UPDATE image_source SET manual_fields = NULL, source_origin = 'filename', "
                 "title = NULL, description = NULL, author_key = NULL, tags_json = NULL, "
-                "status = 'pending', updated_at = ? WHERE point_id = ?",
+                "manual_tags_json = NULL, status = 'pending', updated_at = ? WHERE point_id = ?",
                 (_now(), point_id),
             )
             connection.commit()
@@ -784,20 +806,58 @@ class ProvenanceStore:
     ) -> list[dict[str, Any]]:
         needle = f"%{str(query or '').strip().casefold()}%"
         params: list[Any] = []
-        where = "image_source.tags_json IS NOT NULL AND TRIM(value) <> ''"
+        where = "TRIM(value) <> ''"
         if str(query or "").strip():
             where += " AND LOWER(value) LIKE ?"
             params.append(needle)
         params.extend([max(1, min(int(limit), 500)), max(0, int(offset))])
         with self._read() as connection:
             rows = connection.execute(
-                "SELECT value AS tag, COUNT(*) AS count "
-                "FROM image_source, json_each(image_source.tags_json) "
+                "WITH all_tags AS ("
+                "SELECT point_id, value FROM image_source, json_each(tags_json) "
+                "UNION ALL SELECT point_id, value FROM image_source, json_each(manual_tags_json) "
+                "UNION ALL SELECT point_id, value FROM image_source, json_each(auto_tags_json)"
+                ") SELECT value AS tag, COUNT(DISTINCT point_id) AS count FROM all_tags "
                 f"WHERE {where} GROUP BY value "
                 "ORDER BY count DESC, value COLLATE NOCASE LIMIT ? OFFSET ?",
                 params,
             ).fetchall()
         return [{"tag": str(row["tag"]), "count": int(row["count"])} for row in rows]
+
+    def set_auto_tags(
+        self,
+        point_id: str,
+        tags: Sequence[str],
+        scores: dict[str, float] | None = None,
+    ) -> None:
+        with self._read() as connection:
+            connection.execute(
+                "UPDATE image_source SET auto_tags_json = ?, auto_tag_scores_json = ?, "
+                "auto_tagged_at = ?, updated_at = ? WHERE point_id = ?",
+                (
+                    _json(list(tags), []),
+                    _json(scores or {}, {}),
+                    _now(),
+                    _now(),
+                    point_id,
+                ),
+            )
+            connection.commit()
+
+    def point_ids_without_source_tags(self, limit: int | None = None) -> list[str]:
+        sql = (
+            "SELECT point_id FROM image_source "
+            "WHERE (tags_json IS NULL OR tags_json = '[]') "
+            "AND auto_tagged_at IS NULL "
+            "ORDER BY mtime_ns IS NULL, mtime_ns DESC, point_id"
+        )
+        params: list[Any] = []
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(max(1, int(limit)))
+        with self._read() as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [str(row["point_id"]) for row in rows]
 
     def _scope_temp_table(self, connection: sqlite3.Connection, point_ids: Sequence[str]) -> None:
         connection.execute(
@@ -832,7 +892,7 @@ class ProvenanceStore:
     ) -> list[dict[str, Any]]:
         needle = f"%{str(query or '').strip().casefold()}%"
         params: list[Any] = []
-        where = "image_source.tags_json IS NOT NULL AND TRIM(value) <> ''"
+        where = "TRIM(value) <> ''"
         if str(query or "").strip():
             where += " AND LOWER(value) LIKE ?"
             params.append(needle)
@@ -840,9 +900,12 @@ class ProvenanceStore:
         with self._read() as connection:
             self._scope_temp_table(connection, point_ids)
             rows = connection.execute(
-                "SELECT value AS tag, COUNT(*) AS count "
-                "FROM image_source JOIN _scope_points USING(point_id), "
-                "json_each(image_source.tags_json) "
+                "WITH all_tags AS ("
+                "SELECT point_id, value FROM image_source, json_each(tags_json) "
+                "UNION ALL SELECT point_id, value FROM image_source, json_each(manual_tags_json) "
+                "UNION ALL SELECT point_id, value FROM image_source, json_each(auto_tags_json)"
+                ") SELECT value AS tag, COUNT(DISTINCT point_id) AS count FROM all_tags "
+                "JOIN _scope_points USING(point_id) "
                 f"WHERE {where} GROUP BY value "
                 "ORDER BY count DESC, value COLLATE NOCASE LIMIT ? OFFSET ?",
                 params,
@@ -885,14 +948,18 @@ class ProvenanceStore:
         if not clean:
             return []
         clauses = " AND ".join(
-            "EXISTS (SELECT 1 FROM json_each(image_source.tags_json) "
-            "WHERE value LIKE ? COLLATE NOCASE)"
+            "EXISTS (SELECT 1 FROM all_tags WHERE all_tags.point_id = image_source.point_id "
+            "AND value LIKE ? COLLATE NOCASE)"
             for _ in clean
         )
         with self._read() as connection:
             rows = connection.execute(
-                f"SELECT point_id FROM image_source WHERE {clauses} "
-                "ORDER BY mtime_ns IS NULL, mtime_ns DESC, updated_at DESC, point_id",
+                "WITH all_tags AS ("
+                "SELECT point_id, value FROM image_source, json_each(tags_json) "
+                "UNION ALL SELECT point_id, value FROM image_source, json_each(manual_tags_json) "
+                "UNION ALL SELECT point_id, value FROM image_source, json_each(auto_tags_json)"
+                ") SELECT point_id FROM image_source WHERE "
+                f"{clauses} ORDER BY mtime_ns IS NULL, mtime_ns DESC, updated_at DESC, point_id",
                 [f"%{term}%" for term in clean],
             ).fetchall()
         return [str(row["point_id"]) for row in rows]
@@ -902,14 +969,18 @@ class ProvenanceStore:
         if not clean:
             return []
         clauses = " AND ".join(
-            "EXISTS (SELECT 1 FROM json_each(image_source.tags_json) "
-            "WHERE value = ? COLLATE NOCASE)"
+            "EXISTS (SELECT 1 FROM all_tags WHERE all_tags.point_id = image_source.point_id "
+            "AND value = ? COLLATE NOCASE)"
             for _ in clean
         )
         with self._read() as connection:
             rows = connection.execute(
-                f"SELECT point_id FROM image_source WHERE {clauses} "
-                "ORDER BY mtime_ns IS NULL, mtime_ns DESC, updated_at DESC, point_id",
+                "WITH all_tags AS ("
+                "SELECT point_id, value FROM image_source, json_each(tags_json) "
+                "UNION ALL SELECT point_id, value FROM image_source, json_each(manual_tags_json) "
+                "UNION ALL SELECT point_id, value FROM image_source, json_each(auto_tags_json)"
+                ") SELECT point_id FROM image_source WHERE "
+                f"{clauses} ORDER BY mtime_ns IS NULL, mtime_ns DESC, updated_at DESC, point_id",
                 clean,
             ).fetchall()
         return [str(row["point_id"]) for row in rows]
@@ -1208,6 +1279,9 @@ class ProvenanceStore:
     def _row_to_record(self, row: sqlite3.Row) -> dict[str, Any]:
         record = dict(row)
         record["tags"] = _loads(record.pop("tags_json", None), [])
+        record["manual_tags"] = _loads(record.pop("manual_tags_json", None), [])
+        record["auto_tags"] = _loads(record.pop("auto_tags_json", None), [])
+        record["auto_tag_scores"] = _loads(record.pop("auto_tag_scores_json", None), {})
         record["candidates"] = _loads(record.pop("candidates_json", None), [])
         record["manual_fields"] = _loads(record.pop("manual_fields", None), [])
         return record
