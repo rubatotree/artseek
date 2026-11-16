@@ -779,20 +779,22 @@ class ProvenanceStore:
             ).fetchall()
         return [str(row["point_id"]) for row in rows]
 
-    def list_source_tags(self, query: str = "", *, limit: int = 60) -> list[dict[str, Any]]:
+    def list_source_tags(
+        self, query: str = "", *, limit: int = 60, offset: int = 0
+    ) -> list[dict[str, Any]]:
         needle = f"%{str(query or '').strip().casefold()}%"
         params: list[Any] = []
         where = "image_source.tags_json IS NOT NULL AND TRIM(value) <> ''"
         if str(query or "").strip():
             where += " AND LOWER(value) LIKE ?"
             params.append(needle)
-        params.append(max(1, min(int(limit), 200)))
+        params.extend([max(1, min(int(limit), 500)), max(0, int(offset))])
         with self._read() as connection:
             rows = connection.execute(
                 "SELECT value AS tag, COUNT(*) AS count "
                 "FROM image_source, json_each(image_source.tags_json) "
                 f"WHERE {where} GROUP BY value "
-                "ORDER BY count DESC, value COLLATE NOCASE LIMIT ?",
+                "ORDER BY count DESC, value COLLATE NOCASE LIMIT ? OFFSET ?",
                 params,
             ).fetchall()
         return [{"tag": str(row["tag"]), "count": int(row["count"])} for row in rows]
@@ -980,7 +982,30 @@ class ProvenanceStore:
                 best = max(best, ratio * 0.8)
         return best
 
-    def list_authors(self, query: str = "", *, limit: int = 40) -> list[dict[str, Any]]:
+    def list_authors(
+        self, query: str = "", *, limit: int = 40, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        needle = query.strip()
+        page_size = max(1, min(int(limit), 500))
+        start = max(0, int(offset))
+        if not needle:
+            with self._read() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT author.*, COUNT(image_source.point_id) AS image_count
+                    FROM author
+                    LEFT JOIN image_source ON image_source.author_key = author.key
+                    GROUP BY author.key
+                    ORDER BY image_count DESC,
+                             LOWER(COALESCE(author.name, author.handle, author.key))
+                    LIMIT ? OFFSET ?
+                    """,
+                    (page_size, start),
+                ).fetchall()
+            return [
+                self._row_to_author(row) | {"image_count": int(row["image_count"])}
+                for row in rows
+            ]
         with self._read() as connection:
             rows = connection.execute(
                 """
@@ -994,15 +1019,6 @@ class ProvenanceStore:
             self._row_to_author(row) | {"image_count": int(row["image_count"])}
             for row in rows
         ]
-        needle = query.strip()
-        if not needle:
-            authors.sort(
-                key=lambda item: (
-                    -int(item.get("image_count") or 0),
-                    str(item.get("name") or item.get("handle") or item["key"]).casefold(),
-                )
-            )
-            return authors[: max(1, min(int(limit), 200))]
         scored: list[dict[str, Any]] = []
         for author in authors:
             score = self._author_score(
@@ -1023,7 +1039,7 @@ class ProvenanceStore:
                 str(item.get("name") or item.get("handle") or item["key"]).casefold(),
             )
         )
-        return scored[: max(1, min(int(limit), 200))]
+        return scored[start : start + page_size]
 
     # -------------------------------------------------------------- fetch state
 

@@ -3770,60 +3770,111 @@
       const button = input.closest('.filter-field-wrap')?.querySelector('.filter-suggest-toggle');
       if (button) button.hidden = Boolean(input.value.trim());
     }
-    async function loadFilterSuggestions(fieldId, query = '') {
+    const filterSuggestState = {};
+    const filterSuggestCache = new Map();
+    function renderFilterSuggestions(fieldId) {
+      const config = FILTER_SUGGEST_CONFIG[fieldId];
+      if (!config) return;
+      const state = filterSuggestState[fieldId] || { query: '', items: [], hasMore: false };
+      const menu = $(config.menu);
+      menu.replaceChildren();
+      if (!state.items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'filter-suggestion';
+        empty.textContent = state.loading ? '正在读取…' : '没有匹配项';
+        menu.append(empty);
+      } else {
+        for (const item of state.items) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'filter-suggestion';
+          const label = config.kind === 'author'
+            ? (item.name || item.handle || item.key)
+            : `#${item.tag}`;
+          const hint = config.kind === 'author'
+            ? (item.handle ? `@${item.handle}` : item.key)
+            : `${item.count || 0} 张`;
+          button.innerHTML = `<span>${escapeHtml(label)}</span><small>${escapeHtml(hint)}</small>`;
+          button.addEventListener('click', () => {
+            const value = config.kind === 'author' ? item.key : item.tag;
+            addFilterChip(config.chipKind, value);
+            $(config.input).value = '';
+            updateSuggestToggle(config.input);
+            updateFilterBadge();
+            closeFilterSuggestions(config.input);
+            scheduleFilterApply();
+          });
+          menu.append(button);
+        }
+        if (state.hasMore) {
+          const more = document.createElement('button');
+          more.type = 'button';
+          more.className = 'filter-suggestion filter-suggestion-more';
+          more.textContent = '加载更多…';
+          more.addEventListener('click', () => {
+            loadFilterSuggestions(fieldId, state.query, { offset: state.items.length, append: true });
+          });
+          menu.append(more);
+        }
+      }
+      menu.hidden = false;
+    }
+    async function loadFilterSuggestions(
+      fieldId,
+      query = '',
+      { offset = 0, append = false } = {},
+    ) {
       const config = FILTER_SUGGEST_CONFIG[fieldId];
       if (!config) return;
       const menu = $(config.menu);
+      const state = filterSuggestState[fieldId] || {
+        query: '', offset: 0, items: [], hasMore: false, loading: false,
+      };
+      if (!append || state.query !== query) {
+        state.query = query;
+        state.offset = 0;
+        state.items = [];
+        state.hasMore = false;
+      }
+      state.loading = true;
+      filterSuggestState[fieldId] = state;
+      renderFilterSuggestions(fieldId);
       const seq = (filterSuggestSeq[fieldId] || 0) + 1;
       filterSuggestSeq[fieldId] = seq;
-      let url;
-      if (config.kind === 'author') {
-        const params = new URLSearchParams({ q: query, limit: '40' });
-        url = `/api/authors?${params}`;
-      } else {
-        const params = new URLSearchParams({ q: query, kind: config.kind, limit: '80' });
-        url = `/api/tags?${params}`;
-      }
-      try {
-        const data = await parseResponse(await fetch(url));
-        if (filterSuggestSeq[fieldId] !== seq) return;
-        const items = config.kind === 'author' ? (data.authors || []) : (data.tags || []);
-        menu.replaceChildren();
-        if (!items.length) {
-          const empty = document.createElement('div');
-          empty.className = 'filter-suggestion';
-          empty.textContent = '没有匹配项';
-          menu.append(empty);
+      const pageSize = 200;
+      const cacheKey = `${fieldId}|${query}|${offset}`;
+      let data = filterSuggestCache.get(cacheKey);
+      if (!data) {
+        let url;
+        if (config.kind === 'author') {
+          const params = new URLSearchParams({
+            q: query, limit: String(pageSize), offset: String(offset),
+          });
+          url = `/api/authors?${params}`;
         } else {
-          for (const item of items) {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'filter-suggestion';
-            const label = config.kind === 'author'
-              ? (item.name || item.handle || item.key)
-              : `#${item.tag}`;
-            const hint = config.kind === 'author'
-              ? (item.handle ? `@${item.handle}` : item.key)
-              : `${item.count || 0} 张`;
-            button.innerHTML = `<span>${escapeHtml(label)}</span><small>${escapeHtml(hint)}</small>`;
-            button.addEventListener('click', () => {
-              const value = config.kind === 'author' ? item.key : item.tag;
-              addFilterChip(config.chipKind, value);
-              $(fieldId).value = '';
-              updateSuggestToggle(fieldId);
-              updateFilterBadge();
-              closeFilterSuggestions(fieldId);
-              scheduleFilterApply();
-            });
-            menu.append(button);
-          }
+          const params = new URLSearchParams({
+            q: query, kind: config.kind, limit: String(pageSize), offset: String(offset),
+          });
+          url = `/api/tags?${params}`;
         }
-        menu.hidden = false;
-      } catch (error) {
-        if (filterSuggestSeq[fieldId] !== seq) return;
-        menu.innerHTML = `<div class="filter-suggestion">列表读取失败：${escapeHtml(error.message)}</div>`;
-        menu.hidden = false;
+        try {
+          data = await parseResponse(await fetch(url));
+          filterSuggestCache.set(cacheKey, data);
+        } catch (error) {
+          if (filterSuggestSeq[fieldId] !== seq) return;
+          state.loading = false;
+          menu.innerHTML = `<div class="filter-suggestion">列表读取失败：${escapeHtml(error.message)}</div>`;
+          menu.hidden = false;
+          return;
+        }
       }
+      if (filterSuggestSeq[fieldId] !== seq) return;
+      const items = config.kind === 'author' ? (data.authors || []) : (data.tags || []);
+      state.loading = false;
+      state.items = append ? state.items.concat(items) : items;
+      state.offset = offset + items.length;
+      state.hasMore = Boolean(data.has_more);
+      renderFilterSuggestions(fieldId);
     }
     function scheduleFilterSuggestions(fieldId, query) {
       clearTimeout(filterSuggestTimers[fieldId]);

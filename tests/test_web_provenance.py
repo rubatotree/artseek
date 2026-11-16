@@ -129,6 +129,36 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(data["page_label"], "p0")
         self.assertEqual(data["reverse_search"]["saucenao"], "https://saucenao.com/")
 
+    def test_suggestion_endpoints_paginate(self) -> None:
+        first = self.store.ensure_author("pixiv", "1", name="Alice", handle="alice")
+        second = self.store.ensure_author("pixiv", "2", name="Bob", handle="bob")
+        page1 = self.client.get("/api/authors", params={"limit": 1, "offset": 0})
+        page2 = self.client.get("/api/authors", params={"limit": 1, "offset": 1})
+        self.assertEqual(page1.status_code, 200)
+        self.assertTrue(page1.json()["has_more"])
+        self.assertEqual(page1.json()["authors"][0]["key"], first)
+        self.assertEqual(page2.json()["authors"][0]["key"], second)
+        self.store.upsert_scan(
+            "p1", self.payload, ParsedSource(parse_filename(self.image.name))
+        )
+        self.store.set_fetch_result(
+            "p1",
+            {
+                "platform": "pixiv",
+                "source_id": "12345678",
+                "page": 0,
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "status": "ok",
+                "tags": ["aaa", "bbb"],
+            },
+        )
+        tags = self.client.get(
+            "/api/tags", params={"kind": "source", "limit": 1, "offset": 1}
+        )
+        self.assertEqual(tags.status_code, 200)
+        self.assertEqual(len(tags.json()["tags"]), 1)
+        self.assertTrue(tags.json()["has_more"] is False)
+
     def test_tag_suggestions_cover_source_and_image_tags(self) -> None:
         self.store.upsert_scan(
             "p1", self.payload, ParsedSource(parse_filename(self.image.name))

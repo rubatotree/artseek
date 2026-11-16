@@ -2320,9 +2320,16 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         return provenance_payload(point_id, payload, path)
 
     @app.get("/api/authors")
-    def list_authors(q: str = "", limit: int = 40) -> dict[str, Any]:
-        limit = max(1, min(int(limit), 200))
-        return {"authors": app.state.provenance.list_authors(q, limit=limit)}
+    def list_authors(q: str = "", limit: int = 40, offset: int = 0) -> dict[str, Any]:
+        page_size = max(1, min(int(limit), 500))
+        authors = app.state.provenance.list_authors(
+            q, limit=page_size + 1, offset=max(0, int(offset))
+        )
+        return {
+            "authors": authors[:page_size],
+            "has_more": len(authors) > page_size,
+            "offset": max(0, int(offset)),
+        }
 
     @app.get("/api/authors/{author_key}")
     def get_author(author_key: str) -> dict[str, Any]:
@@ -2389,18 +2396,28 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         q: str = "",
         kind: str = "source",
         limit: int = 60,
+        offset: int = 0,
     ) -> dict[str, Any]:
-        page_size = max(1, min(int(limit), 200))
+        page_size = max(1, min(int(limit), 500))
+        start = max(0, int(offset))
         if kind == "image":
             needle = str(q or "").strip().casefold()
             items = [
                 item
                 for item in image_tag_suggestions()
                 if not needle or needle in item["tag"].casefold()
-            ][:page_size]
+            ]
+            page = items[start : start + page_size + 1]
         else:
-            items = app.state.provenance.list_source_tags(q, limit=page_size)
-        return {"kind": kind, "tags": items}
+            page = app.state.provenance.list_source_tags(
+                q, limit=page_size + 1, offset=start
+            )
+        return {
+            "kind": kind,
+            "tags": page[:page_size],
+            "has_more": len(page) > page_size,
+            "offset": start,
+        }
 
     @app.get("/api/tags/{tag}/images")
     def tag_images(
