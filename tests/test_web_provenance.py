@@ -417,6 +417,30 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(record["platform"], "twitter")
         self.assertEqual(record["source_id"], "1905879515315732000")
 
+    def test_provenance_tag_aliases_are_returned_for_tooltips(self) -> None:
+        self.store.upsert_scan(
+            "p1", self.payload, ParsedSource(parse_filename(self.image.name))
+        )
+        self.store.set_fetch_result(
+            "p1",
+            {
+                "platform": "pixiv",
+                "source_id": "12345678",
+                "page": 0,
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "status": "ok",
+                "tags": ["long_hair"],
+            },
+        )
+        self.store.set_manual("p1", {"manual_tags": ["长发"]})
+        self.store.set_auto_tags("p1", ["自动词"], {"自动词": 0.9})
+        response = self.client.get("/api/images/p1/provenance")
+        self.assertEqual(response.status_code, 200)
+        aliases = response.json()["record"]["tag_aliases"]
+        self.assertIn("长发", aliases["long_hair"])
+        self.assertIn("long_hair", aliases["long_hair"])
+        self.assertIn("long_hair", aliases["长发"])
+
     def test_search_image_endpoint_returns_bounded_jpeg(self) -> None:
         response = self.client.get("/search-image/p1")
         self.assertEqual(response.status_code, 200)

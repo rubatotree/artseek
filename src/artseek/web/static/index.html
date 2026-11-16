@@ -2282,8 +2282,15 @@
           ? (data.path || '未识别来源')
           : (record.platform === 'other' ? '其他来源' : '无题'));
       const title = record.title || provenancePlainText(record.description).slice(0, 80) || emptyTitle;
+      const tagAliasMap = record.tag_aliases || {};
       const tagLinks = (values, extraClass = '') => (values || [])
-        .map((tag) => `<a class="provenance-tag ${extraClass}" href="/tag/${encodeURIComponent(tag)}" data-tag="${escapeHtml(tag)}" title="筛选该标签（Ctrl+点击在新标签页打开）">${escapeHtml(tag)}</a>`)
+        .map((tag) => {
+          const aliases = Array.isArray(tagAliasMap[tag]) ? tagAliasMap[tag] : [];
+          const title = aliases.length
+            ? `${aliases.join(' · ')} · 筛选该标签（Ctrl+点击在新标签页打开）`
+            : '筛选该标签（Ctrl+点击在新标签页打开）';
+          return `<a class="provenance-tag ${extraClass}" href="/tag/${encodeURIComponent(tag)}" data-tag="${escapeHtml(tag)}" title="${escapeHtml(title)}">${escapeHtml(tag)}</a>`;
+        })
         .join('');
       const sourceTags = tagLinks(record.tags || []);
       const manualTags = tagLinks(record.manual_tags || [], 'manual');

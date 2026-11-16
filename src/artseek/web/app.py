@@ -2098,6 +2098,20 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             page_label = ""
         clean = dict(record)
         clean.pop("raw_json", None)
+        tag_aliases: dict[str, list[str]] = {}
+        for tag in {
+            *record.get("tags", []),
+            *record.get("manual_tags", []),
+            *record.get("auto_tags", []),
+        }:
+            info = tag_info(str(tag))
+            if info is None:
+                continue
+            values = [info.zh, *info.aliases, info.tag, str(tag)]
+            tag_aliases[str(tag)] = list(dict.fromkeys(
+                value for value in values if str(value).strip()
+            ))
+        clean["tag_aliases"] = tag_aliases
         return {
             "point_id": point_id,
             "record": clean,
