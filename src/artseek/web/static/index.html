@@ -5347,6 +5347,25 @@
       renderCollectionSort();
     }
 
+    function resetGalleryToIdle() {
+      state.mode = 'idle';
+      state.results = [];
+      state.hasMore = false;
+      state.loadingMore = false;
+      state.browseKey = '';
+      state.browseName = '';
+      state.browseTotal = 0;
+      state.scopeTotal = 0;
+      state.collectionId = '';
+      state.collectionName = '';
+      state.collectionTotal = null;
+      renderGallery(state.results, { append: false });
+      renderCollectionSort();
+      renderGalleryView();
+      $('query-info').textContent = '勾选左侧目录后，这里会显示所有已勾选目录中的图片。';
+      $('load-more').hidden = true;
+    }
+
     function refreshDefaultGallery() {
       if (['search', 'collection', 'author', 'random'].includes(state.mode)) return;
       if (treeState.selected.size) {
@@ -5357,14 +5376,7 @@
         previewFolder(state.browseKey, state.browseName, { skipRoute: true });
         return;
       }
-      state.mode = 'idle';
-      state.results = [];
-      state.hasMore = false;
-      state.scopeTotal = 0;
-      renderGallery(state.results, { append: false });
-      renderCollectionSort();
-      renderGalleryView();
-      $('query-info').textContent = '勾选左侧目录后，这里会显示所有已勾选目录中的图片。';
+      resetGalleryToIdle();
     }
 
     async function fetchFolderImages({ reset }) {
@@ -7733,6 +7745,9 @@
           return;
         }
         routeCtl.dismissAll = false;
+        if (route.kind === 'home') {
+          resetGalleryToIdle();
+        }
         if (route.kind !== 'image' && route.kind !== 'notes' && route.author !== undefined) {
           const nextAuthor = route.author || '';
           if (nextAuthor !== state.authorKey) state.authorName = '';
@@ -7821,7 +7836,8 @@
         updateTreeSummary();
       }
       history.replaceState({ artseek: 1, overlay: 0, ...route }, '', currentHref());
-      if (route.kind !== 'home') await applyAppRoute(route);
+      if (route.kind === 'home') resetGalleryToIdle();
+      else await applyAppRoute(route);
     }
 
     if (window.matchMedia('(pointer: fine)').matches) $('query').focus();
