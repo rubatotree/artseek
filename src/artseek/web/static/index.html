@@ -3768,6 +3768,7 @@
     };
     const filterSuggestSeq = {};
     const filterSuggestTimers = {};
+    const filterSuggestBlurGuard = new Set();
     function closeFilterSuggestions(fieldId) {
       const config = FILTER_SUGGEST_CONFIG[fieldId];
       if (!config) return;
@@ -3818,6 +3819,7 @@
               config.kind === 'author' ? '' : (item.display_zh || ''),
             );
             $(config.input).value = '';
+            filterSuggestBlurGuard.delete(config.input);
             updateSuggestToggle(config.input);
             updateFilterBadge();
             closeFilterSuggestions(config.input);
@@ -4085,12 +4087,23 @@
         event.preventDefault();
         commitFilterInput(kind);
       });
-      $(config.input).addEventListener('blur', () => commitFilterInput(kind));
+      $(config.input).addEventListener('blur', (event) => {
+        if (filterSuggestBlurGuard.has(config.input)) {
+          filterSuggestBlurGuard.delete(config.input);
+          return;
+        }
+        const next = event.relatedTarget;
+        if (next instanceof Element && next.closest('.filter-suggestions')) return;
+        commitFilterInput(kind);
+      });
     });
     Object.entries(FILTER_SUGGEST_CONFIG).forEach(([fieldId, config]) => {
       const input = $(fieldId);
       const wrapper = input.closest('.filter-field-wrap');
       const toggle = wrapper?.querySelector('.filter-suggest-toggle');
+      $(config.menu).addEventListener('pointerdown', () => {
+        filterSuggestBlurGuard.add(fieldId);
+      });
       toggle?.addEventListener('click', () => {
         if (!$(config.menu).hidden) {
           closeFilterSuggestions(fieldId);
