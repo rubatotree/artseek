@@ -1024,7 +1024,8 @@
       display: block; padding: 0; border: 0; border-radius: 0; background: transparent;
       cursor: default; touch-action: none; -webkit-tap-highlight-color: transparent;
     }
-    .viewer-ui-toggle:focus-visible { outline: 2px solid #ddb2c2; outline-offset: -8px; }
+    .viewer-ui-toggle:focus,
+    .viewer-ui-toggle:focus-visible { outline: none; box-shadow: none; }
     #viewer.is-ui-hidden .modal-bar { display: none; }
     #viewer.is-ui-hidden .viewer-close,
     #viewer.is-ui-hidden .viewer-nav,
@@ -3971,6 +3972,10 @@
     }, true);
     $('viewer-ui-toggle').addEventListener('click', () => {
       setViewerUiHidden(!state.viewerUiHidden);
+    });
+    $('viewer-ui-toggle').addEventListener('dblclick', (event) => {
+      event.preventDefault();
+      toggleViewerZoom();
     });
     $('viewer').querySelector('.modal-bar').addEventListener('click', (event) => {
       if (event.target.closest('button, a, input, label, select')) return;
@@ -8236,7 +8241,10 @@
       }
     }
     function toggleViewerZoom() {
+      const keepFocusMode = state.viewerUiHidden;
       resetView(false);
+      // Resetting zoom must never pull the viewer out of focus mode.
+      if (keepFocusMode) setViewerUiHidden(true);
     }
     function bindViewerGestures() {
       const stage = $('viewer-stage');
