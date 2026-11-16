@@ -442,12 +442,13 @@
     .platform-icons { display: inline-flex; align-items: center; gap: 4px; margin-left: 2px; }
     .platform-icon {
       display: inline-grid; place-items: center; width: 20px; height: 20px;
-      border-radius: 50%; color: #fff; font: 700 11px/1 inherit;
-      text-decoration: none; background: #8a8290;
+      border-radius: 50%; color: #fff; text-decoration: none; background: #8a8290;
     }
     .platform-icon.pixiv { background: #0096fa; }
     .platform-icon.twitter { background: #17151a; }
     .platform-icon.manual, .platform-icon.other { background: #a79daa; }
+    .platform-icon svg { display: block; width: 12px; height: 12px; }
+    .platform-icon.pixiv svg { width: 13px; height: 13px; }
     .provenance-file {
       min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       color: var(--muted); font-size: 11px;
@@ -1966,13 +1967,21 @@
         ? `<div class="provenance-hint">其他候选：${candidates.map((item) => `${escapeHtml(item.platform)}:${escapeHtml(item.source_id)}${item.page != null ? `#${escapeHtml(String(item.page))}` : ''}`).join('；')}</div>`
         : '';
       const members = author && Array.isArray(author.members) ? author.members : [];
+      const platformIconSvg = (platform) => {
+        if (platform === 'pixiv') {
+          return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M6.723 5.465h.904a.37.37 0 0 1 .31.17l.752 1.17a6.172 6.172 0 0 1 10.01 4.834 6.172 6.172 0 0 1-9.394 5.265v2.016a.37.37 0 0 1-.37.367H6.724a.37.37 0 0 1-.37-.367V5.834a.37.37 0 0 1 .37-.37m5.804 2.951a3.222 3.222 0 1 0-.002 6.443 3.222 3.222 0 0 0 .002-6.443"/></svg>';
+        }
+        if (platform === 'twitter') {
+          return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z"/></svg>';
+        }
+        return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.07 0l1.42-1.42a5 5 0 0 0-7.07-7.07L10 5.93"/><path d="M14 11a5 5 0 0 0-7.07 0L5.5 12.42a5 5 0 0 0 7.07 7.07L13.99 18"/></svg>';
+      };
       const platformIcons = members.map((member) => {
         const profile = member.profile_url
           || (member.platform === 'twitter' && member.handle ? `https://x.com/${member.handle}` : '');
         if (!profile) return '';
-        const label = member.platform === 'pixiv' ? 'P' : member.platform === 'twitter' ? 'X' : '↗';
         const title = `${member.platform}${member.handle ? ` · ${member.handle}` : ''}`;
-        return `<a class="platform-icon ${escapeHtml(member.platform)}" href="${escapeHtml(profile)}" target="_blank" rel="noopener" title="${escapeHtml(title)}">${label}</a>`;
+        return `<a class="platform-icon ${escapeHtml(member.platform)}" href="${escapeHtml(profile)}" target="_blank" rel="noopener" title="${escapeHtml(title)}">${platformIconSvg(member.platform)}</a>`;
       }).join('');
       const postButton = url
         ? '<button type="button" data-prov-action="open-post">打开原帖</button>'
