@@ -1996,6 +1996,58 @@
         state.viewerTitlePending.delete(item.id);
       }
     }
+    const REVERSE_SEARCH_ACTIONS = {
+      saucenao: { url: 'https://saucenao.com/search.php', label: 'SauceNAO' },
+      ascii2d: { url: 'https://ascii2d.net/search/file', label: 'ascii2d' },
+    };
+    async function openReverseSearch(service) {
+      const pointId = currentImageId();
+      const action = REVERSE_SEARCH_ACTIONS[service];
+      if (!pointId || !action) return;
+      const targetName = `artseek-reverse-${Date.now()}`;
+      let win = null;
+      try { win = window.open('', targetName); } catch (_) { win = null; }
+      if (win) {
+        try {
+          win.document.open();
+          win.document.write(
+            `<!doctype html><meta charset="utf-8"><title>正在上传到 ${action.label}…</title>`
+            + `<body style="font-family:system-ui,sans-serif;padding:24px;color:#555">`
+            + `正在上传图片到 ${action.label}…</body>`
+          );
+          win.document.close();
+        } catch (_) { /* the form still targets the named window */ }
+      }
+      try {
+        const response = await fetch(`/search-image/${encodeURIComponent(pointId)}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const blob = await response.blob();
+        const file = new File([blob], 'image.jpg', { type: 'image/jpeg' });
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = action.url;
+        form.enctype = 'multipart/form-data';
+        form.target = win ? targetName : '_blank';
+        form.style.display = 'none';
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.name = 'file';
+        input.files = transfer.files;
+        form.appendChild(input);
+        document.body.appendChild(form);
+        form.submit();
+        window.setTimeout(() => form.remove(), 1000);
+        if (win) win.focus();
+      } catch (error) {
+        if (win) win.close();
+        $('provenance-body').insertAdjacentHTML(
+          'afterbegin',
+          `<p class="provenance-hint">上传到 ${action.label} 失败：${escapeHtml(error.message)}</p>`,
+        );
+      }
+    }
     function provenanceStatusLabel(status) {
       return {
         pending: '待补全',
@@ -2077,7 +2129,7 @@
             <button type="button" data-prov-action="ascii2d">ascii2d</button>
             <button type="button" data-prov-action="copy-path">复制原图路径</button>
           </div>
-          <div class="provenance-hint">SauceNAO / ascii2d 只打开浏览器，不会自动上传。查找后把作品或推文 URL 粘贴到下面即可解析。</div>
+          <div class="provenance-hint">点击 SauceNAO / ascii2d 会上传当前图片并打开结果页；找到作品或推文 URL 后粘贴到下面即可解析。</div>
         </div>
         <form class="provenance-form" id="provenance-form">
           <strong>编辑来源</strong>
@@ -2098,8 +2150,8 @@
       body.querySelector('[data-prov-action="open-post"]')?.addEventListener('click', () => {
         if (url) window.open(url, '_blank', 'noopener');
       });
-      body.querySelector('[data-prov-action="saucenao"]')?.addEventListener('click', () => window.open((data.reverse_search && data.reverse_search.saucenao) || 'https://saucenao.com/', '_blank', 'noopener'));
-      body.querySelector('[data-prov-action="ascii2d"]')?.addEventListener('click', () => window.open((data.reverse_search && data.reverse_search.ascii2d) || 'https://ascii2d.net/', '_blank', 'noopener'));
+      body.querySelector('[data-prov-action="saucenao"]')?.addEventListener('click', () => openReverseSearch('saucenao'));
+      body.querySelector('[data-prov-action="ascii2d"]')?.addEventListener('click', () => openReverseSearch('ascii2d'));
       body.querySelector('[data-prov-action="copy-path"]')?.addEventListener('click', async () => {
         try { await navigator.clipboard.writeText(data.path || ''); }
         catch (_) { /* clipboard may be unavailable */ }

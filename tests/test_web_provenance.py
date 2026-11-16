@@ -121,6 +121,14 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(data["page_label"], "p0")
         self.assertEqual(data["reverse_search"]["saucenao"], "https://saucenao.com/")
 
+    def test_search_image_endpoint_returns_bounded_jpeg(self) -> None:
+        response = self.client.get("/search-image/p1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "image/jpeg")
+        with Image.open(__import__("io").BytesIO(response.content)) as image:
+            self.assertEqual(image.format, "JPEG")
+            self.assertLessEqual(max(image.size), 1200)
+
     def test_manual_fields_and_author_filter_are_persisted(self) -> None:
         put = self.client.put(
             "/api/images/p1/provenance",

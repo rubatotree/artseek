@@ -12,6 +12,7 @@ from artseek.image_io import (
     file_digest,
     hamming_distance,
     load_rgb,
+    make_search_image,
     perceptual_hash,
     point_id,
     scan_images,
@@ -35,6 +36,18 @@ class ImageIOTests(unittest.TestCase):
             self.assertEqual(load_rgb(image_path).mode, "RGB")
             self.assertEqual(file_digest(image_path), file_digest(image_path))
             self.assertEqual(len(file_digest(image_path)), 64)
+
+    def test_search_image_is_bounded_jpeg(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.png"
+            destination = root / "search.jpg"
+            Image.new("RGB", (2400, 1200), (20, 80, 160)).save(source)
+            make_search_image(source, destination, size=1200)
+            with Image.open(destination) as image:
+                self.assertEqual(image.format, "JPEG")
+                self.assertLessEqual(max(image.size), 1200)
+                self.assertEqual(image.mode, "RGB")
 
     def test_perceptual_hash_survives_resize_not_a_different_picture(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

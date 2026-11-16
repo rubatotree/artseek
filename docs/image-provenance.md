@@ -7,7 +7,7 @@
 - pixiv / X 的元信息抓取本身不难，真正的瓶颈是 **SauceNAO 的免费额度** 和 **pixiv 的反自动化策略**。
 - 因此「一键补全所有图」必须做成 **有预算、可暂停、可续跑的任务队列**，而不是一个同步按钮。
 
-> **实施状态（2026-11-16）**：解析器、`provenance.sqlite3`、Pixiv/FxTwitter 抓取、按域名限速与预算、查看器来源面板、作者筛选、索引后自动补全、CLI 与 API 均已实现。SauceNAO/ascii2d 按用户要求只做手动打开与 URL 粘贴，不配置 API key，也不使用 Pixiv 登录 Cookie。
+> **实施状态（2026-11-16）**：解析器、`provenance.sqlite3`、Pixiv/FxTwitter 抓取、按域名限速与预算、查看器来源面板、作者筛选、索引后自动补全、CLI 与 API 均已实现。SauceNAO/ascii2d 不配置 API key、不做服务端代理；查看器用浏览器表单直接上传 ≤1200px JPEG 并打开结果页，之后手动粘贴 URL。不使用 Pixiv 登录 Cookie。
 
 ---
 
@@ -240,7 +240,7 @@ per-domain 请求起始间隔（pixiv 0.75s, fxtwitter 0.2s, saucenao 7.5s, asci
 
 1. **本地扫描（秒级）**：只读文件名/嵌入元信息，写 `image_source`，不联网。对所有图都可执行。
 2. **补全已识别来源（小时级）**：只请求已有 `pixiv:{id}` / `twitter:{id}` 的记录。默认动作。
-3. **反向搜图（天/周级）**：SauceNAO / ascii2d，只处理未识别的图；必须手动确认预算。
+3. **反向搜图（单张手动）**：SauceNAO / ascii2d 由浏览器表单直接上传当前图片；不做批量自动调用。
 
 估算（Pixiv 1 并发 + FxTwitter 4 并发）：
 
@@ -380,7 +380,7 @@ tag:オリジナル tag:女の子
 
 ### Phase 4：反向搜图 — 已完成（手动模式）
 
-- 按用户要求不配置 SauceNAO API key；查看器提供 SauceNAO / ascii2d 打开按钮和 URL 粘贴框。
+- 不配置 SauceNAO API key；查看器生成 ≤1200px JPEG，通过浏览器 multipart 表单直接上传到 SauceNAO / ascii2d 并打开结果页；URL 粘贴框用于回填。
 - 不自动上传图片；用户自行在浏览器中查找。
 - 粘贴作品/推文 URL 后立即解析并补全元信息。
 
@@ -394,7 +394,7 @@ tag:オリジナル tag:女の子
 
 ## 9. 已确定的策略
 
-1. **SauceNAO**：不配置 API key，只手动打开并粘贴 URL。
+1. **SauceNAO**：不配置 API key；浏览器表单上传当前图片，结果页手动确认后粘贴 URL。
 2. **Pixiv Cookie**：不使用登录 Cookie；公开作品直接读取元信息。
 3. **作者筛选**：有图库范围时在当前范围内过滤；直接打开图片时进入 `/author/{key}` 作者页。
 4. **自动补全**：`[provenance] auto_enrich = true` 默认开启，只自动补 Pixiv/X；不自动反向搜图。

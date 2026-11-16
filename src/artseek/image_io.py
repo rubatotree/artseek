@@ -150,3 +150,12 @@ def make_thumbnail(source: Path, destination: Path, size: int = 512) -> Path:
     image.thumbnail((size, size), Image.Resampling.LANCZOS)
     image.save(destination, "WEBP", quality=88, method=6)
     return destination
+
+
+def make_search_image(source: Path, destination: Path, size: int = 1200) -> Path:
+    """JPEG copy small enough for SauceNAO/ascii2d upload forms."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    image = load_rgb(source)
+    image.thumbnail((size, size), Image.Resampling.LANCZOS)
+    image.save(destination, "JPEG", quality=90, optimize=True)
+    return destination

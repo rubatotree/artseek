@@ -42,7 +42,13 @@ from ..config import (
     save_storage_paths,
     save_web_search_settings,
 )
-from ..image_io import PHASH_LENGTH, canonical_path, make_thumbnail, perceptual_hash
+from ..image_io import (
+    PHASH_LENGTH,
+    canonical_path,
+    make_search_image,
+    make_thumbnail,
+    perceptual_hash,
+)
 from ..incremental_state import IncrementalIndexState
 from ..indexer import ImageIndexer
 from ..library import (
@@ -1617,6 +1623,14 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     def full_image(point_id: str) -> FileResponse:
         _, path = resolve_item(point_id)
         return FileResponse(path)
+
+    @app.get("/search-image/{point_id}")
+    def search_image(point_id: str) -> FileResponse:
+        _, source = resolve_item(point_id)
+        destination = config.thumbnail_dir / f"{point_id}-search.jpg"
+        if not destination.exists() or destination.stat().st_mtime_ns < source.stat().st_mtime_ns:
+            make_search_image(source, destination)
+        return FileResponse(destination, media_type="image/jpeg")
 
     @app.get("/api/item/{point_id}")
     def item(point_id: str) -> dict:
