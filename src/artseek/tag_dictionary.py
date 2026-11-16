@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -46,13 +48,42 @@ _TAG_ENTRIES: tuple[TagEntry, ...] = (
     TagEntry("city", "城市", ("城市", "city")),
     TagEntry("sky", "天空", ("天空", "sky")),
     TagEntry("flower", "花", ("花", "花朵", "flower")),
-    TagEntry("1girl", "单人女性", ("单人女性", "一个女孩", "1girl")),
+    TagEntry("1girl", "单人女性", ("单人女性", "一个女孩", "女孩", "少女", "女の子", "1girl")),
     TagEntry("1boy", "单人男性", ("单人男性", "一个男孩", "1boy")),
     TagEntry("solo", "单人", ("单人", "solo")),
-    TagEntry("original", "原创", ("原创", "original")),
+    TagEntry("original", "原创", ("原创", "创作", "創作", "オリジナル", "original")),
+    TagEntry(
+        "blue_archive",
+        "蔚蓝档案",
+        ("蔚蓝档案", "ブルアカ", "ブルーアーカイブ", "BlueArchive", "blue archive"),
+    ),
+    TagEntry("skeb", "Skeb 约稿", ("skeb", "Skeb", "约稿")),
+    TagEntry("barefoot", "赤足", ("赤足", "裸足", "barefoot")),
+    TagEntry("thighhighs", "过膝袜", ("过膝袜", "大腿袜", "thighhighs")),
 )
 
 _ENTRIES = {entry.tag: entry for entry in _TAG_ENTRIES}
+
+
+def _load_generated_translations() -> list[TagEntry]:
+    path = Path(__file__).with_name("tag_translations.json")
+    if not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    entries: list[TagEntry] = []
+    for tag, zh in raw.items():
+        text = str(tag or "").strip()
+        display = str(zh or "").strip()
+        if text and display and text not in _ENTRIES:
+            entries.append(TagEntry(text, display, (text,)))
+    return entries
+
+
+_GENERATED_ENTRIES = _load_generated_translations()
+_GENERATED_BY_TAG = {entry.tag.casefold(): entry for entry in _GENERATED_ENTRIES}
 
 
 def expand_tag_aliases(value: str) -> set[str]:
@@ -64,19 +95,29 @@ def expand_tag_aliases(value: str) -> set[str]:
         fields.update(alias.casefold() for alias in entry.aliases)
         if needle in fields:
             return {entry.tag, entry.zh, *entry.aliases}
+    generated = _GENERATED_BY_TAG.get(needle)
+    if generated is not None:
+        return {generated.tag, generated.zh}
+    for entry in _GENERATED_ENTRIES:
+        if entry.zh.casefold() == needle:
+            return {entry.tag, entry.zh}
     return {str(value).strip().lower().replace(" ", "_")}
 
 
 def tag_info(tag: str) -> TagEntry | None:
-    return _ENTRIES.get(str(tag or "").strip().lower().replace(" ", "_"))
+    text = str(tag or "").strip()
+    return _ENTRIES.get(text.lower().replace(" ", "_")) or _GENERATED_BY_TAG.get(
+        text.casefold()
+    )
 
 
 def search_tags(query: str, *, limit: int = 40) -> list[TagEntry]:
     needle = str(query or "").strip().casefold()
+    entries = [*_TAG_ENTRIES, *_GENERATED_ENTRIES]
     if not needle:
-        return list(_TAG_ENTRIES)[: max(1, int(limit))]
+        return entries[: max(1, int(limit))]
     result: list[TagEntry] = []
-    for entry in _TAG_ENTRIES:
+    for entry in entries:
         fields = (entry.tag, entry.zh, *entry.aliases)
         if any(needle in value.casefold() for value in fields):
             result.append(entry)

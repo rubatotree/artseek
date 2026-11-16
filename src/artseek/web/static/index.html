@@ -3986,7 +3986,10 @@
       chip.className = 'filter-chip';
       chip.dataset.value = text;
       const label = document.createElement('span');
-      label.textContent = kind === 'author' ? text : `#${text}`;
+      label.textContent = kind === 'author'
+        ? text
+        : (displayText || `#${text}`);
+      label.title = text;
       const links = kind === 'author' ? document.createElement('span') : null;
       if (links) links.className = 'filter-chip-links';
       const count = kind === 'author' || countValue != null
@@ -3995,7 +3998,7 @@
       if (count) {
         count.className = 'filter-chip-count';
         if (countValue != null) {
-          count.textContent = `${displayText ? `${displayText} · ` : ''}${Number(countValue || 0)} 张`;
+          count.textContent = `${Number(countValue || 0)} 张`;
         }
       }
       const remove = document.createElement('button');
