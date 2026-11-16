@@ -1639,6 +1639,8 @@
       imageCount: 0,
       selectedImageCount: 0,
       saveTimer: null,
+      saveInFlight: false,
+      saveQueued: false,
       mtimeAfter: '',
       mtimeBefore: '',
       mtimeMin: '',
@@ -6760,10 +6762,12 @@
       clearTimeout(treeState.saveTimer);
       treeState.saveTimer = setTimeout(() => saveLibraryTree(), 180);
     }
-    function applyLibraryPayload(data, { keepExpanded = false } = {}) {
+    function applyLibraryPayload(data, { keepExpanded = false, keepSelection = false } = {}) {
       treeState.roots = data.roots || [];
       treeState.sort = data.sort || 'name';
-      treeState.selected = new Set(data.selected || []);
+      if (!keepSelection) {
+        treeState.selected = new Set(data.selected || []);
+      }
       treeState.newKeys = new Set(data.new_keys || []);
       treeState.imageCount = data.image_count || 0;
       treeState.selectedImageCount = data.selected_image_count || 0;
@@ -7020,21 +7024,34 @@
       }
     }
     async function saveLibraryTree() {
+      if (treeState.saveInFlight) {
+        treeState.saveQueued = true;
+        return;
+      }
+      treeState.saveInFlight = true;
+      const snapshot = {
+        sort: treeState.sort || 'name',
+        selected: [...treeState.selected].filter((key) => typeof key === 'string' && key),
+        mtime_after: treeState.mtimeAfter || null,
+        mtime_before: treeState.mtimeBefore || null,
+      };
       try {
         const response = await fetch('/api/library-tree', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sort: treeState.sort || 'name',
-            selected: [...treeState.selected].filter((key) => typeof key === 'string' && key),
-            mtime_after: treeState.mtimeAfter || null,
-            mtime_before: treeState.mtimeBefore || null,
-          }),
+          body: JSON.stringify(snapshot),
         });
-        const data = await parseResponse(response);
-        applyLibraryPayload(data, { keepExpanded: true });
+        await parseResponse(response);
+        // Saving is persistence only. The local checkbox state is authoritative;
+        // applying an older response here can erase a newer multi-select.
       } catch (error) {
         $('tree-summary').textContent = `目录选择未能保存：${error.message}`;
+      } finally {
+        treeState.saveInFlight = false;
+        if (treeState.saveQueued) {
+          treeState.saveQueued = false;
+          scheduleTreeSave();
+        }
       }
     }
 
