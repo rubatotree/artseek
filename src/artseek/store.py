@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import warnings
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -287,6 +288,50 @@ class VectorStore:
             Neighbor(item_id, score, payloads.get(item_id, {}))
             for score, item_id in top
         ]
+
+    def point_ids_for_image_tags(self, tags: Sequence[str]) -> list[str]:
+        clean = {
+            re.sub(r"\s+", "_", str(tag).strip().lower()).strip("_,")
+            for tag in tags
+            if str(tag).strip()
+        }
+        if not clean:
+            return []
+        existing = {item.name for item in self.client.get_collections().collections}
+        if COLLECTION not in existing:
+            return []
+        tag_filter = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="tags",
+                    match=models.MatchAny(any=sorted(clean)),
+                )
+            ]
+        )
+        found: list[tuple[int, str]] = []
+        offset: Any = None
+        while True:
+            records, offset = self.client.scroll(
+                collection_name=COLLECTION,
+                scroll_filter=tag_filter,
+                limit=1024,
+                offset=offset,
+                with_payload=["tags", "mtime_ns"],
+                with_vectors=False,
+            )
+            for record in records:
+                payload = dict(record.payload or {})
+                row_tags = {
+                    re.sub(r"\s+", "_", str(tag).strip().lower()).strip("_,")
+                    for tag in (payload.get("tags") or [])
+                }
+                if not clean.issubset(row_tags):
+                    continue
+                found.append((int(payload.get("mtime_ns") or 0), str(record.id)))
+            if offset is None:
+                break
+        found.sort(key=lambda item: (-item[0], item[1]))
+        return [point_id for _, point_id in found]
 
     def get(self, point_id: str) -> dict[str, Any] | None:
         records = self.client.retrieve(

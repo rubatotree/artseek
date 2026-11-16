@@ -132,6 +132,9 @@ class TextSearchRequest(BaseModel):
     dedupe: bool = False
     snapshot_id: str | None = None
     author_key: str | None = None
+    title_query: str = ""
+    text_tags: list[str] = Field(default_factory=list)
+    image_tags: list[str] = Field(default_factory=list)
 
 
 class RandomBrowseRequest(BaseModel):
@@ -1424,12 +1427,17 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             specs.append(ReferenceSpec(id=request.reference_id, weight=1.0))
         paths, weights = resolve_library_references(specs)
         cleaned_query, author_token, tag_tokens = parse_query_filters(request.query)
-        author_key = request.author_key or (
-            resolve_author_token(author_token) if author_token else None
+        author_key = (
+            resolve_author_token(request.author_key)
+            if request.author_key
+            else (resolve_author_token(author_token) if author_token else None)
         )
+        text_tags = [*tag_tokens, *request.text_tags]
         restrict_ids = restricted_ids(
             author_key=author_key,
-            tag_tokens=tag_tokens,
+            tag_tokens=text_tags,
+            title_query=request.title_query,
+            image_tags=request.image_tags,
         )
         search_text = cleaned_query
         if tag_tokens:
@@ -1439,8 +1447,10 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             payload = filter_only_search(
                 query=request.query,
                 author_key=author_key,
-                tag_tokens=tag_tokens,
+                tag_tokens=text_tags,
                 point_ids=restrict_ids,
+                title_query=request.title_query,
+                image_tags=request.image_tags,
                 offset=max(0, request.offset),
                 limit=max(1, min(request.limit, 200)),
                 folder_keys=folder_keys,
@@ -1470,7 +1480,9 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             payload = dataclasses.asdict(response)
             payload["applied_filters"] = {
                 "author_key": author_key,
-                "tags": tag_tokens,
+                "tags": text_tags,
+                "title_query": request.title_query,
+                "image_tags": request.image_tags,
             }
         attach_provenance(payload.get("results") or [])
         payload = persist_search_snapshot(
@@ -1512,6 +1524,9 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         dedupe: bool = Form(default=False),
         snapshot_id: str = Form(default=""),
         author_key: str = Form(default=""),
+        title_query: str = Form(default=""),
+        text_tags: str = Form(default="[]"),
+        image_tags: str = Form(default="[]"),
     ) -> dict:
         if app.state.index_job.running:
             raise HTTPException(409, "正在索引图片，请稍后再检索")
@@ -1527,12 +1542,25 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                     handle.write(await file.read())
             folder_keys_list = resolve_folder_keys(parse_folder_keys(folder_keys))
             cleaned_query, author_token, tag_tokens = parse_query_filters(query)
-            resolved_author = author_key.strip() or (
-                resolve_author_token(author_token) if author_token else None
+            resolved_author = (
+                resolve_author_token(author_key)
+                if author_key.strip()
+                else (resolve_author_token(author_token) if author_token else None)
             )
+            try:
+                extra_text_tags = json.loads(text_tags or "[]")
+                extra_image_tags = json.loads(image_tags or "[]")
+            except json.JSONDecodeError as exc:
+                raise HTTPException(400, "标签筛选参数不合法") from exc
+            if not isinstance(extra_text_tags, list) or not isinstance(extra_image_tags, list):
+                raise HTTPException(400, "标签筛选参数不合法")
+            text_tags = [*tag_tokens, *[str(tag) for tag in extra_text_tags if str(tag).strip()]]
+            image_tags = [str(tag) for tag in extra_image_tags if str(tag).strip()]
             restrict_ids = restricted_ids(
                 author_key=resolved_author,
-                tag_tokens=tag_tokens,
+                tag_tokens=text_tags,
+                title_query=title_query,
+                image_tags=image_tags,
             )
             search_text = " ".join(
                 [cleaned_query, *tag_tokens]
@@ -1546,13 +1574,15 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 payload = filter_only_search(
                     query=query,
                     author_key=resolved_author,
-                    tag_tokens=tag_tokens,
+                    tag_tokens=text_tags,
                     point_ids=restrict_ids,
                     offset=max(0, min(offset, 4000)),
                     limit=max(1, min(limit, 200)),
                     folder_keys=folder_keys_list,
                     mtime_after=mtime_after or None,
                     mtime_before=mtime_before or None,
+                    title_query=title_query,
+                    image_tags=image_tags,
                 )
             else:
                 response = app.state.engine.search(
@@ -1574,7 +1604,9 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 payload = dataclasses.asdict(response)
                 payload["applied_filters"] = {
                     "author_key": resolved_author,
-                    "tags": tag_tokens,
+                    "tags": text_tags,
+                    "title_query": title_query,
+                    "image_tags": image_tags,
                 }
             attach_provenance(payload.get("results") or [])
             payload = persist_search_snapshot(
@@ -1715,6 +1747,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         *,
         author_key: str | None,
         tag_tokens: list[str],
+        title_query: str = "",
+        image_tags: list[str] | None = None,
     ) -> list[str] | None:
         store: ProvenanceStore = app.state.provenance
         result: set[str] | None = None
@@ -1722,6 +1756,12 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             result = set(store.point_ids_for_author(author_key))
         if tag_tokens:
             tagged = set(store.point_ids_for_tags(tag_tokens))
+            result = tagged if result is None else result & tagged
+        if title_query.strip():
+            titled = set(store.point_ids_for_title(title_query))
+            result = titled if result is None else result & titled
+        if image_tags:
+            tagged = set(app.state.engine.store.point_ids_for_image_tags(image_tags))
             result = tagged if result is None else result & tagged
         return list(result) if result is not None else None
 
@@ -1736,6 +1776,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         folder_keys: list[str] | None,
         mtime_after: str | None,
         mtime_before: str | None,
+        title_query: str = "",
+        image_tags: list[str] | None = None,
     ) -> dict[str, Any]:
         scoped = point_ids
         if folder_keys is not None:
@@ -1766,6 +1808,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "applied_filters": {
                 "author_key": author_key,
                 "tags": tag_tokens,
+                "title_query": title_query,
+                "image_tags": image_tags or [],
             },
         }
 

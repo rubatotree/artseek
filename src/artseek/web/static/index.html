@@ -1127,6 +1127,7 @@
       .card, .image-wrap, .image-wrap img { width: 100%; max-width: 100%; min-width: 0; }
     }
     @media (max-width: 720px) {
+      .search-filters { grid-template-columns: 1fr; }
       header { padding-top: 8px; }
       .brand { font-size: 20px; line-height: 1.1; }
       .subtitle { margin: 0; padding: 0; font-size: 11px; }
@@ -1352,6 +1353,24 @@
             </label>
           </div>
           <input id="upload" type="file" accept="image/*" multiple autocomplete="off">
+        </div>
+        <div class="search-filter-head">
+          <button class="filter-toggle" id="filter-toggle" type="button" aria-expanded="false" aria-controls="search-filters">筛选 <span id="filter-count" class="filter-count" hidden></span></button>
+        </div>
+        <div id="search-filters" class="search-filters" hidden>
+          <label class="filter-field">作者
+            <input id="filter-author" type="text" placeholder="作者名或完整 key" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="filter-field">标题模糊词
+            <input id="filter-title" type="text" placeholder="标题中的词" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="filter-field">文字标签
+            <input id="filter-text-tags" type="text" placeholder="来源标签，逗号分隔" title="来源元信息中的标签，例如 Pixiv/X tag" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="filter-field">图片标签
+            <input id="filter-image-tags" type="text" placeholder="画面标签，逗号分隔" title="本地画面标签，例如 long_hair" autocomplete="off" spellcheck="false">
+          </label>
+          <p class="search-filter-hint">筛选留空不限制；无模糊文字时直接做简单过滤，不载入向量模型。</p>
         </div>
         </form>
       </section>
@@ -2351,10 +2370,16 @@
       const bar = $('author-filter');
       if (!state.authorKey) {
         bar.hidden = true;
+        const input = $('filter-author');
+        if (input && document.activeElement !== input) input.value = '';
+        updateFilterBadge();
         return;
       }
       bar.hidden = false;
       $('author-filter-label').textContent = `作者：${state.authorName || state.authorKey}`;
+      const input = $('filter-author');
+      if (input && document.activeElement !== input) input.value = state.authorKey || '';
+      updateFilterBadge();
     }
     function updateTagFilter() {
       const bar = $('tag-filter');
@@ -3500,6 +3525,12 @@
       }
     });
     $('search-form').addEventListener('submit', (event) => { event.preventDefault(); runSearch(); });
+    $('filter-toggle').addEventListener('click', () => {
+      setFilterPanelOpen($('search-filters').hidden);
+    });
+    ['filter-author', 'filter-title', 'filter-text-tags', 'filter-image-tags'].forEach((id) => {
+      $(id).addEventListener('input', updateFilterBadge);
+    });
     $('upload').addEventListener('change', (event) => {
       addReferenceFiles(event.target.files);
       event.target.value = '';
@@ -3608,6 +3639,51 @@
     }
     function textWeight() {
       return clampWeight($('text-weight').value);
+    }
+    function splitFilterTags(raw) {
+      return String(raw || '')
+        .split(/[,，\n]/)
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+    }
+    function readAdvancedFilters() {
+      return {
+        author: $('filter-author').value.trim(),
+        title_query: $('filter-title').value.trim(),
+        text_tags: splitFilterTags($('filter-text-tags').value),
+        image_tags: splitFilterTags($('filter-image-tags').value),
+      };
+    }
+    function hasAdvancedFilters(filters = readAdvancedFilters()) {
+      return Boolean(
+        filters.author
+        || filters.title_query
+        || filters.text_tags.length
+        || filters.image_tags.length
+      );
+    }
+    function updateFilterBadge() {
+      const filters = readAdvancedFilters();
+      const count = [
+        filters.author,
+        filters.title_query,
+        ...filters.text_tags,
+        ...filters.image_tags,
+      ].filter(Boolean).length;
+      const badge = $('filter-count');
+      badge.textContent = String(count);
+      badge.hidden = count === 0;
+    }
+    function setAdvancedFilters(filters = {}) {
+      $('filter-author').value = filters.author || '';
+      $('filter-title').value = filters.title_query || '';
+      $('filter-text-tags').value = (filters.text_tags || []).join(', ');
+      $('filter-image-tags').value = (filters.image_tags || []).join(', ');
+      updateFilterBadge();
+    }
+    function setFilterPanelOpen(open) {
+      $('search-filters').hidden = !open;
+      $('filter-toggle').setAttribute('aria-expanded', String(open));
     }
     function formatWeight(value) {
       return Number(value).toFixed(Number.isInteger(Number(value)) ? 0 : 1);
@@ -5095,6 +5171,7 @@
         state.authorName = author.name || state.authorName;
         state.authorTotal = Number(data.total || 0);
         updateAuthorFilter();
+        if (reset && !keepSnapshot) state.searchSnapshotId = '';
         if (reset) {
           state.results = incoming;
           renderGallery(state.results, { append: false });
@@ -5646,14 +5723,20 @@
       const query = frozen ? frozen.query : $('query').value.trim();
       const libraryRefs = frozen ? frozen.references : librarySearchRefs();
       const fileRefs = state.references.filter((ref) => ref.file);
-      if (!query && !libraryRefs.length && !fileRefs.length) {
-        if (reset) $('query-info').textContent = '请先输入描述或添加参考图片。也可点击左侧目录名预览其中的图片。';
+      const advanced = frozen
+        ? (frozen.advanced || { author: '', title_query: '', text_tags: [], image_tags: [] })
+        : readAdvancedFilters();
+      const hasFilters = hasAdvancedFilters(advanced);
+      const filterOnly = !query && !libraryRefs.length && !fileRefs.length;
+      if (filterOnly && !hasFilters) {
+        if (reset) $('query-info').textContent = '请先输入描述、添加参考图片或展开筛选。也可点击左侧目录名预览其中的图片。';
         return;
       }
       if (!frozen && !treeState.selected.size) {
         if (reset) $('query-info').textContent = '请先勾选要检索的文件夹。新添加的目录默认不在查询范围内。';
         return;
       }
+      const keepSnapshot = !hasFilters;
       if (reset) {
         state.mode = 'search';
         state.browseKey = '';
@@ -5674,8 +5757,12 @@
         state.offset = 0;
         state.hasMore = false;
         $('panel').classList.add('loading');
-        try { await fetchModelStatus(); } catch { /* keep last known load state */ }
-        $('query-info').textContent = modelUi.loaded ? '正在本地检索……' : '正在载入图文向量模型并检索……';
+        if (!filterOnly) {
+          try { await fetchModelStatus(); } catch { /* keep last known load state */ }
+        }
+        $('query-info').textContent = filterOnly
+          ? '正在按筛选条件查找……'
+          : (modelUi.loaded ? '正在本地检索……' : '正在载入图文向量模型并检索……');
         $('load-more').hidden = true;
       } else {
         state.loadingMore = true;
@@ -5697,8 +5784,11 @@
           mtime_after: frozen.mtime_after,
           mtime_before: frozen.mtime_before,
           author_key: frozen.author_key || null,
+          title_query: frozen.title_query || '',
+          text_tags: frozen.text_tags || [],
+          image_tags: frozen.image_tags || [],
           exclude_ids: state.results.map((item) => item.id),
-          snapshot_id: state.searchSnapshotId || '',
+          snapshot_id: keepSnapshot ? (state.searchSnapshotId || '') : '',
         } : {
           query,
           text_weight: textWeight(),
@@ -5710,9 +5800,12 @@
           folder_keys: [...treeState.selected],
           mtime_after: timeRange.after || null,
           mtime_before: timeRange.before || null,
-          author_key: state.authorKey || null,
+          author_key: advanced.author || state.authorKey || null,
+          title_query: advanced.title_query || '',
+          text_tags: advanced.text_tags || [],
+          image_tags: advanced.image_tags || [],
           exclude_ids: reset ? [] : state.results.map((item) => item.id),
-          snapshot_id: reset ? '' : (state.searchSnapshotId || ''),
+          snapshot_id: keepSnapshot && !reset ? (state.searchSnapshotId || '') : '',
         };
         if (fileRefs.length) {
           const form = new FormData();
@@ -5728,6 +5821,9 @@
           form.append('mtime_before', common.mtime_before || '');
           form.append('exclude_ids', JSON.stringify(common.exclude_ids));
           form.append('author_key', common.author_key || '');
+          form.append('title_query', common.title_query || '');
+          form.append('text_tags', JSON.stringify(common.text_tags || []));
+          form.append('image_tags', JSON.stringify(common.image_tags || []));
           form.append('references', JSON.stringify(libraryRefs));
           if (common.snapshot_id) form.append('snapshot_id', common.snapshot_id);
           fileRefs.forEach((ref) => form.append('files', ref.file, ref.file.name));
@@ -5755,16 +5851,28 @@
             mtime_after: common.mtime_after,
             mtime_before: common.mtime_before,
             author_key: common.author_key,
+            title_query: common.title_query,
+            text_tags: common.text_tags,
+            image_tags: common.image_tags,
+            advanced: {
+              author: advanced.author || '',
+              title_query: advanced.title_query || '',
+              text_tags: advanced.text_tags || [],
+              image_tags: advanced.image_tags || [],
+            },
           };
         }
-        if (data.snapshot_id) {
+        if (data.snapshot_id && keepSnapshot) {
           state.searchSnapshotId = data.snapshot_id;
           const next = {
             kind: 'search',
             query: common.query,
             refs: libraryRefs,
             snapshot: data.snapshot_id,
-            author: state.authorKey || '',
+            author: common.author_key || state.authorKey || '',
+            title: common.title_query,
+            text_tags: common.text_tags,
+            image_tags: common.image_tags,
           };
           if (appRouteHref(next) !== currentHref()) {
             commitRoute(next, { replace: true, overlay: (history.state && history.state.overlay) || 0 });
@@ -5792,7 +5900,7 @@
           syncNeighborImages();
           prefetchViewerAhead();
         }
-        fetchModelStatus().catch(() => {});
+        if (!filterOnly) fetchModelStatus().catch(() => {});
       } catch (error) {
         if (seq !== state.searchSeq) return;
         if (reset) renderSearchFailure(error, '查询失败');
@@ -5808,13 +5916,20 @@
     }
 
     function renderInfo(data, total) {
-      const plan = data.query_plan;
-      const positive = plan.positive_tags.map(tag => `<span class="chip">${escapeHtml(tag.replaceAll('_', ' '))}</span>`).join('');
-      const negative = plan.negative_tags.map(tag => `<span class="chip negative">${escapeHtml(tag.replaceAll('_', ' '))}</span>`).join('');
-      const llm = plan.used_llm ? '本地大模型已解析' : '内置插画词典已解析';
+      const plan = data.query_plan || {};
+      const positive = (plan.positive_tags || []).map(tag => `<span class="chip">${escapeHtml(tag.replaceAll('_', ' '))}</span>`).join('');
+      const negative = (plan.negative_tags || []).map(tag => `<span class="chip negative">${escapeHtml(tag.replaceAll('_', ' '))}</span>`).join('');
+      const filters = data.applied_filters || {};
+      const filterChips = [];
+      if (filters.author_key) filterChips.push(`<span class="chip">作者：${escapeHtml(filters.author_key)}</span>`);
+      if (filters.title_query) filterChips.push(`<span class="chip">标题：${escapeHtml(filters.title_query)}</span>`);
+      for (const tag of filters.tags || []) filterChips.push(`<span class="chip">文字：${escapeHtml(tag)}</span>`);
+      for (const tag of filters.image_tags || []) filterChips.push(`<span class="chip">画面：${escapeHtml(tag)}</span>`);
+      const onlyFilters = !(data.query_plan && data.query_plan.original);
+      const label = onlyFilters ? '筛选' : (plan.used_llm ? '本地大模型已解析' : '内置插画词典已解析');
       const warning = data.llm_warning ? ` · Ollama 未就绪，已自动回退` : '';
       const more = state.hasMore ? ' · 下滑加载更多' : '';
-      $('query-info').innerHTML = `${llm}${warning} · ${total} 个结果${more}　${positive}${negative}`;
+      $('query-info').innerHTML = `${label}${warning} · ${total} 个结果${more}　${positive}${negative}${filterChips.join('')}`;
     }
 
     function galleryColumnCount() {
@@ -7614,6 +7729,9 @@
           refs: parseSearchRefs(params.get('ref') || ''),
           snapshot: params.get('s') || '',
           author: params.get('author') || '',
+          title: params.get('title') || '',
+          text_tags: parseRouteTagList(params.get('text_tags') || '[]'),
+          image_tags: parseRouteTagList(params.get('image_tags') || '[]'),
         };
       }
       if (parts[0] === 'folder') {
@@ -7642,6 +7760,9 @@
         if (ref) params.set('ref', ref);
         if (route.snapshot) params.set('s', route.snapshot);
         if (route.author) params.set('author', route.author);
+        if (route.title) params.set('title', route.title);
+        if (route.text_tags && route.text_tags.length) params.set('text_tags', JSON.stringify(route.text_tags));
+        if (route.image_tags && route.image_tags.length) params.set('image_tags', JSON.stringify(route.image_tags));
         const query = params.toString();
         return query ? `/search?${query}` : '/search';
       }
@@ -7675,12 +7796,16 @@
     }
     function currentGalleryRoute() {
       if (state.mode === 'search') {
+        const filters = readAdvancedFilters();
         return {
           kind: 'search',
           query: $('query').value.trim(),
           refs: librarySearchRefs(),
           snapshot: state.searchSnapshotId || '',
-          author: state.authorKey || '',
+          author: filters.author || state.authorKey || '',
+          title: filters.title_query,
+          text_tags: filters.text_tags,
+          image_tags: filters.image_tags,
         };
       }
       if (state.mode === 'browse' && state.browseKey) {
@@ -7712,8 +7837,15 @@
         document.title = `${imageName} · ArtSeek`;
         return;
       }
-      if (route.kind === 'search' && (route.query || (route.refs && route.refs.length))) {
-        document.title = `${route.query || '以图搜图'} · ArtSeek`;
+      if (route.kind === 'search' && (
+        route.query
+        || (route.refs && route.refs.length)
+        || route.author
+        || route.title
+        || (route.text_tags && route.text_tags.length)
+        || (route.image_tags && route.image_tags.length)
+      )) {
+        document.title = `${route.query || '筛选'} · ArtSeek`;
         return;
       }
       if (route.kind === 'collection') {
@@ -7909,7 +8041,15 @@
       return true;
     }
     async function applySearchRoute(route) {
+      const routeFilters = {
+        author: route.author || '',
+        title_query: route.title || '',
+        text_tags: route.text_tags || [],
+        image_tags: route.image_tags || [],
+      };
       $('query').value = route.query || '';
+      setAdvancedFilters(routeFilters);
+      if (hasAdvancedFilters(routeFilters)) setFilterPanelOpen(true);
       if (route.author !== undefined) {
         const nextAuthor = route.author || '';
         if (nextAuthor !== state.authorKey) state.authorName = '';
@@ -7923,12 +8063,17 @@
         && state.searchSnapshotId === snapshotId
         && state.results.length,
       );
+      const currentFilters = readAdvancedFilters();
       const sameQuery = Boolean(
         !snapshotId
         && state.mode === 'search'
         && state.results.length
         && $('query').value.trim() === (route.query || '')
-        && searchRefsEqual(librarySearchRefs(), route.refs || []),
+        && searchRefsEqual(librarySearchRefs(), route.refs || [])
+        && currentFilters.author === routeFilters.author
+        && currentFilters.title_query === routeFilters.title_query
+        && currentFilters.text_tags.join('\n') === routeFilters.text_tags.join('\n')
+        && currentFilters.image_tags.join('\n') === routeFilters.image_tags.join('\n'),
       );
       if (sameSnapshot || sameQuery) return;
       if (snapshotId) {

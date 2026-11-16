@@ -777,6 +777,21 @@ class ProvenanceStore:
             ).fetchall()
         return [str(row["point_id"]) for row in rows]
 
+    def point_ids_for_title(self, query: str) -> list[str]:
+        terms = [term for term in re.split(r"\s+", str(query or "").strip()) if term]
+        if not terms:
+            return []
+        clauses = " AND ".join(
+            "instr(LOWER(COALESCE(title, '')), ?) > 0" for _ in terms
+        )
+        with self._read() as connection:
+            rows = connection.execute(
+                f"SELECT point_id FROM image_source WHERE {clauses} "
+                "ORDER BY mtime_ns IS NULL, mtime_ns DESC, updated_at DESC, point_id",
+                [term.casefold() for term in terms],
+            ).fetchall()
+        return [str(row["point_id"]) for row in rows]
+
     def point_ids_for_tags(self, tags: Sequence[str]) -> list[str]:
         clean = [str(tag).strip() for tag in tags if str(tag).strip()]
         if not clean:

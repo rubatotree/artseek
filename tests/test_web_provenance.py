@@ -39,6 +39,14 @@ class _Store:
     def count(self) -> int:
         return len(self.payloads)
 
+    def point_ids_for_image_tags(self, tags: list[str]) -> list[str]:
+        wanted = {str(tag).casefold() for tag in tags}
+        return [
+            point_id
+            for point_id, payload in self.payloads.items()
+            if wanted.issubset({str(tag).casefold() for tag in payload.get("tags") or []})
+        ]
+
 
 class _Engine:
     def __init__(self, payloads: dict[str, dict[str, Any]]) -> None:
@@ -273,6 +281,55 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["applied_filters"]["author_key"], pixiv)
         self.assertEqual([item["id"] for item in response.json()["results"]], ["p1"])
+
+    def test_ambiguous_author_error_lists_candidate_payload(self) -> None:
+        first = self.store.ensure_author("pixiv", "1", name="alice", handle="alice")
+        second = self.store.ensure_author("twitter", "2", name="alina", handle="alina")
+        response = self.client.post(
+            "/api/search",
+            json={"query": "author:ali", "folder_keys": []},
+        )
+        self.assertEqual(response.status_code, 400)
+        detail = response.json()["detail"]
+        self.assertIsInstance(detail, dict)
+        self.assertEqual(
+            {item["key"] for item in detail["author_candidates"]},
+            {first, second},
+        )
+
+    def test_advanced_filters_run_without_loading_the_model(self) -> None:
+        parsed = parse_filename(self.image.name)
+        assert parsed is not None
+        self.store.upsert_scan("p1", self.payload, ParsedSource(parsed))
+        self.store.set_fetch_result(
+            "p1",
+            {
+                "platform": "pixiv",
+                "source_id": "12345678",
+                "page": 0,
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "status": "ok",
+                "title": "初音ミク",
+                "tags": ["オリジナル"],
+            },
+        )
+        self.engine.store.payloads["p1"]["tags"] = ["long_hair"]
+        before = len(self.engine.search_calls)
+        response = self.client.post(
+            "/api/search",
+            json={
+                "query": "",
+                "title_query": "晴れ",
+                "text_tags": ["オリジナル"],
+                "image_tags": ["long_hair"],
+                "folder_keys": [],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["id"] for item in response.json()["results"]], ["p1"])
+        self.assertEqual(len(self.engine.search_calls), before)
+        self.assertEqual(response.json()["applied_filters"]["title_query"], "晴れ")
+        self.assertEqual(response.json()["applied_filters"]["image_tags"], ["long_hair"])
 
     def test_search_filters_parse_author_and_tag_tokens(self) -> None:
         parsed = parse_filename("12345678_p0.png")
