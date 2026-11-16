@@ -347,20 +347,25 @@
     }
     .filter-suggestion small { flex: 0 0 auto; margin-left: auto; color: var(--muted); font-size: 10px; }
     .composer { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; margin-top: 10px; }
-    .text-weight-card, .ref-add {
+    .ref-add {
       width: 72px; height: 72px; padding: 0; border-radius: 12px;
       display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
       font-size: 11px; font-weight: 650;
     }
-    .text-weight-card { background: var(--rose-soft); color: #8a5268; }
-    .text-weight-card input {
-      width: 52px; height: 26px; border: 0; border-radius: 8px; padding: 0;
-      text-align: center; background: rgba(255,255,255,.7); color: inherit;
-      font: 700 15px/26px inherit; font-variant-numeric: tabular-nums;
+    .filter-text-label-control { flex-wrap: nowrap; }
+    .filter-text-label-control > input[type="text"] { flex: 1 1 auto; }
+    .filter-inline-weight {
+      display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px;
+      color: var(--muted); font-size: 10px; white-space: nowrap;
+    }
+    .filter-inline-weight input {
+      width: 44px; height: 24px; padding: 0 3px; border: 1px solid var(--line);
+      border-radius: 6px; background: #fff; color: var(--ink);
+      font: 600 11px/22px inherit; text-align: center; font-variant-numeric: tabular-nums;
       appearance: textfield; -moz-appearance: textfield;
     }
-    .text-weight-card input::-webkit-outer-spin-button,
-    .text-weight-card input::-webkit-inner-spin-button {
+    .filter-inline-weight input::-webkit-outer-spin-button,
+    .filter-inline-weight input::-webkit-inner-spin-button {
       -webkit-appearance: none; margin: 0;
     }
     .ref-strip { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -1194,8 +1199,7 @@
       .collection-sort-menu { width: min(270px, calc(100vw - 2 * var(--page-gutter))); }
       .collection-sort-option { min-height: 40px; padding: 8px; }
       .chip { padding: 3px 7px; font-size: 11px; }
-      .text-weight-card, .ref-add, .ref-card { width: 52px; height: 52px; border-radius: 10px; }
-      .text-weight-card input { width: 44px; font-size: 14px; }
+      .ref-add, .ref-card { width: 52px; height: 52px; border-radius: 10px; }
       .gallery {
         gap: 4px;
         width: 100%;
@@ -1420,7 +1424,7 @@
       <section class="search-panel" id="panel">
         <form id="search-form" autocomplete="off">
         <div class="search-row">
-          <input id="query" type="text" name="artseek-query" placeholder="搜索图片，或粘贴参考图..." title="可输入描述，或直接粘贴参考图" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" inputmode="search" enterkeyhint="search">
+          <input id="query" type="text" name="artseek-query" placeholder="搜索 tag、标题或作者，或粘贴参考图..." title="优先匹配来源/自动/手动 tag、标题和作者；带参考图或高级筛选时用向量检索" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" inputmode="search" enterkeyhint="search">
           <div class="search-actions">
             <button class="primary" id="search" type="submit">查询</button>
             <button class="filter-toggle" id="filter-toggle" type="button" aria-expanded="false" aria-controls="search-filters" aria-label="高级筛选" title="高级筛选">
@@ -1430,10 +1434,6 @@
           </div>
         </div>
         <div class="composer" id="composer">
-          <div class="text-weight-card" title="文字在混合查询中的权重">
-            <span>文字</span>
-            <input id="text-weight" type="number" min="0" max="8" step="0.1" value="1" inputmode="decimal">
-          </div>
           <div id="ref-drop-zone" class="ref-drop-zone" aria-label="搜索参考图">
             <div id="ref-strip" class="ref-strip"></div>
             <label class="ref-add" id="ref-add" for="upload" tabindex="0" title="选择参考图片">
@@ -1445,7 +1445,7 @@
         </div>
         <div id="search-filters" class="search-filters" hidden>
           <div class="filter-field-wrap">
-            <label class="filter-field"><span>标题模糊词</span>
+            <label class="filter-field"><span>标题</span>
               <div class="filter-control">
                 <input id="filter-title" type="text" autocomplete="off" spellcheck="false">
               </div>
@@ -1453,8 +1453,12 @@
           </div>
           <div class="filter-field-wrap">
             <label class="filter-field"><span>文字标签</span>
-              <div class="filter-control">
+              <div class="filter-control filter-text-label-control">
                 <input id="filter-text-label" type="text" autocomplete="off" spellcheck="false">
+                <span class="filter-inline-weight" title="文字标签在向量检索中的权重">
+                  权重
+                  <input id="text-weight" type="number" min="0" max="8" step="0.1" value="1" inputmode="decimal">
+                </span>
               </div>
             </label>
           </div>
@@ -6358,6 +6362,9 @@
         ? (frozen.advanced || { authors: [], title_query: '', text_label: '', tag_expression: '', text_tags: [] })
         : readAdvancedFilters();
       const hasFilters = hasAdvancedFilters(advanced);
+      const metadataSearch = frozen
+        ? Boolean(frozen.metadata_search)
+        : Boolean(query) && !hasFilters && !libraryRefs.length && !fileRefs.length;
       const filterOnly = !query && !advanced.text_label && !libraryRefs.length && !fileRefs.length;
       if (filterOnly && !hasFilters) {
         if (reset) $('query-info').textContent = '请先输入描述、添加参考图片或展开筛选。也可点击左侧目录名预览其中的图片。';
@@ -6367,7 +6374,7 @@
         if (reset) $('query-info').textContent = '请先勾选要检索的文件夹。新添加的目录默认不在查询范围内。';
         return;
       }
-      const keepSnapshot = !hasFilters;
+      const keepSnapshot = !hasFilters && !metadataSearch;
       if (reset) {
         state.mode = 'search';
         state.browseKey = '';
@@ -6388,12 +6395,14 @@
         state.offset = 0;
         state.hasMore = false;
         $('panel').classList.add('loading');
-        if (!filterOnly) {
+        if (!filterOnly && !metadataSearch) {
           try { await fetchModelStatus(); } catch { /* keep last known load state */ }
         }
-        $('query-info').textContent = filterOnly
-          ? '正在按筛选条件查找……'
-          : (modelUi.loaded ? '正在本地检索……' : '正在载入图文向量模型并检索……');
+        $('query-info').textContent = metadataSearch
+          ? '正在匹配 tag、标题与作者……'
+          : (filterOnly
+            ? '正在按筛选条件查找……'
+            : (modelUi.loaded ? '正在本地检索……' : '正在载入图文向量模型并检索……'));
         $('load-more').hidden = true;
       } else {
         state.loadingMore = true;
@@ -6470,10 +6479,23 @@
           form.append('file_weights', JSON.stringify(fileRefs.map((ref) => ref.weight)));
           response = await fetch('/api/search-upload', { method: 'POST', body: form });
         } else {
-          response = await fetch('/api/search', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...common, references: libraryRefs }),
-          });
+          response = await fetch(
+            metadataSearch ? '/api/local-search' : '/api/search',
+            {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(metadataSearch
+                ? {
+                    query: common.query,
+                    limit: common.limit,
+                    offset: common.offset,
+                    folder_keys: common.folder_keys,
+                    mtime_after: common.mtime_after,
+                    mtime_before: common.mtime_before,
+                    sort: common.sort,
+                  }
+                : { ...common, references: libraryRefs }),
+            },
+          );
         }
         const data = await parseResponse(response);
         if (seq !== state.searchSeq) return;
@@ -6496,6 +6518,7 @@
             text_label: common.text_label,
             tag_expression: common.tag_expression,
             text_tags: common.text_tags,
+            metadata_search: metadataSearch,
             sort: common.sort,
             advanced: {
               authors: advanced.authors || [],
@@ -6574,7 +6597,9 @@
       if (filters.text_label) filterChips.push(`<span class="chip">文字：${escapeHtml(filters.text_label)}</span>`);
       if (filters.tag_expression) filterChips.push(`<span class="chip">Tag：${escapeHtml(filters.tag_expression)}</span>`);
       const onlyFilters = !(data.query_plan && data.query_plan.original);
-      const label = onlyFilters ? '筛选' : (plan.used_llm ? '本地大模型已解析' : '内置插画词典已解析');
+      const label = data.metadata_search
+        ? '本地元信息匹配'
+        : (onlyFilters ? '筛选' : (plan.used_llm ? '本地大模型已解析' : '内置插画词典已解析'));
       const warning = data.llm_warning ? ` · Ollama 未就绪，已自动回退` : '';
       const more = state.hasMore ? ' · 下滑加载更多' : '';
       const resultTotal = Number.isFinite(Number(data.total)) ? Number(data.total) : total;

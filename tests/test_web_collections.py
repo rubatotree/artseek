@@ -488,8 +488,11 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn("clipboardImageFiles(event.clipboardData)", html)
         self.assertIn("if (fromFiles.length) return dedupeClipboardImages(fromFiles)", html)
         self.assertIn("addReferenceFiles(files)", html)
-        self.assertIn('placeholder="搜索图片，或粘贴参考图..."', html)
-        self.assertIn('title="可输入描述，或直接粘贴参考图"', html)
+        self.assertIn('placeholder="搜索 tag、标题或作者，或粘贴参考图..."', html)
+        self.assertIn(
+            'title="优先匹配来源/自动/手动 tag、标题和作者；带参考图或高级筛选时用向量检索"',
+            html,
+        )
         self.assertIn("event.key === 'Home'", html)
         self.assertIn('/api/collections', html)
         self.assertNotIn('data-collection-action="pin"', html)

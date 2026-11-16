@@ -989,6 +989,48 @@ class ProvenanceStore:
             ).fetchall()
         return [str(row["point_id"]) for row in rows]
 
+    def point_ids_for_metadata_search(
+        self, term_groups: Sequence[str | Sequence[str]]
+    ) -> list[str]:
+        groups: list[list[str]] = []
+        for group in term_groups:
+            values = [group] if isinstance(group, str) else list(group)
+            clean = [str(value).strip().lstrip("#") for value in values]
+            clean = list(dict.fromkeys(value for value in clean if value))
+            if clean:
+                groups.append(clean)
+        if not groups:
+            return []
+        clauses: list[str] = []
+        params: list[str] = []
+        for group in groups:
+            alternatives: list[str] = []
+            for term in group:
+                like = f"%{term.casefold()}%"
+                alternatives.append(
+                    "(EXISTS (SELECT 1 FROM all_tags "
+                    "WHERE all_tags.point_id = image_source.point_id "
+                    "AND LOWER(value) LIKE ?) "
+                    "OR LOWER(COALESCE(title, '')) LIKE ? "
+                    "OR EXISTS (SELECT 1 FROM author WHERE author.key = image_source.author_key "
+                    "AND (LOWER(COALESCE(name, '')) LIKE ? "
+                    "OR LOWER(COALESCE(handle, '')) LIKE ? OR LOWER(key) LIKE ?)))"
+                )
+                params.extend([like, like, like, like, like])
+            clauses.append("(" + " OR ".join(alternatives) + ")")
+        with self._read() as connection:
+            rows = connection.execute(
+                "WITH all_tags AS ("
+                "SELECT point_id, value FROM image_source, json_each(tags_json) "
+                "UNION ALL SELECT point_id, value FROM image_source, json_each(manual_tags_json) "
+                "UNION ALL SELECT point_id, value FROM image_source, json_each(auto_tags_json)"
+                ") SELECT point_id FROM image_source WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY mtime_ns IS NULL, mtime_ns DESC, updated_at DESC, point_id",
+                params,
+            ).fetchall()
+        return [str(row["point_id"]) for row in rows]
+
     def point_ids_for_tags(self, tags: Sequence[str]) -> list[str]:
         clean = [str(tag).strip() for tag in tags if str(tag).strip()]
         if not clean:

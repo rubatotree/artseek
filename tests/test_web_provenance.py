@@ -260,6 +260,43 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(alias.status_code, 200)
         self.assertEqual([item["id"] for item in alias.json()["results"]], ["p1"])
 
+    def test_local_metadata_search_matches_tags_title_and_author(self) -> None:
+        author = self.store.ensure_author(
+            "pixiv", "1", name="Alice", handle="alice"
+        )
+        self.store.upsert_scan(
+            "p1", self.payload, ParsedSource(parse_filename(self.image.name))
+        )
+        self.store.set_fetch_result(
+            "p1",
+            {
+                "platform": "pixiv",
+                "source_id": "12345678",
+                "page": 0,
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "status": "ok",
+                "title": "初音未来",
+                "tags": ["long_hair"],
+            },
+            author_key=author,
+        )
+        self.store.set_manual("p1", {"manual_tags": ["手动词"]})
+        self.store.set_auto_tags("p1", ["自动词"], {"自动词": 0.9})
+        for query in ("长发", "初音", "alice", "手动词", "自动词"):
+            response = self.client.post(
+                "/api/local-search",
+                json={"query": query, "folder_keys": []},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertTrue(response.json()["metadata_search"])
+            self.assertEqual([item["id"] for item in response.json()["results"]], ["p1"])
+        missing = self.client.post(
+            "/api/local-search",
+            json={"query": "不存在的内容", "folder_keys": []},
+        )
+        self.assertEqual(missing.status_code, 200)
+        self.assertEqual(missing.json()["results"], [])
+
     def test_tag_dictionary_expands_chinese_aliases(self) -> None:
         self.store.upsert_scan(
             "p1", self.payload, ParsedSource(parse_filename(self.image.name))

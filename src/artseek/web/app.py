@@ -1604,6 +1604,39 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         )
         return payload
 
+    @app.post("/api/local-search")
+    def local_search(request: TextSearchRequest) -> dict:
+        if app.state.index_job.running:
+            raise HTTPException(409, "正在索引图片，请稍后再检索")
+        terms = [
+            term.lstrip("#")
+            for term in re.split(r"\s+", request.query.strip())
+            if term.lstrip("#")
+        ]
+        if not terms:
+            raise HTTPException(400, "请输入 tag、标题或作者关键词")
+        store: ProvenanceStore = app.state.provenance
+        point_ids = store.point_ids_for_metadata_search(
+            [sorted(expand_tag_aliases(term)) for term in terms]
+        )
+        folder_keys = resolve_folder_keys(request.folder_keys)
+        payload = filter_only_search(
+            query=request.query,
+            author_key=None,
+            author_keys=[],
+            tag_tokens=[],
+            point_ids=point_ids,
+            offset=max(0, request.offset),
+            limit=max(1, min(request.limit, 200)),
+            folder_keys=folder_keys,
+            mtime_after=request.mtime_after,
+            mtime_before=request.mtime_before,
+            sort=request.sort,
+        )
+        payload["metadata_search"] = True
+        payload["applied_filters"]["mode"] = "metadata"
+        return payload
+
     @app.post("/api/search-upload")
     async def search_upload(
         files: list[UploadFile] = File(default=[]),
