@@ -262,7 +262,19 @@
       outline-offset: 3px;
       box-shadow: 0 0 0 6px rgba(217, 127, 158, .08);
     }
-    .search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+    .search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+    .search-input-wrap {
+      display: flex; align-items: center; min-width: 0; overflow: hidden;
+      border: 1px solid var(--line); border-radius: 14px; background: #fff;
+      transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    .search-input-wrap:focus-within { border-color: #ddb2c2; box-shadow: 0 0 0 4px var(--rose-soft); }
+    .search-row #query {
+      flex: 1 1 auto; width: auto; min-width: 0; padding: 13px 8px 13px 15px;
+      border: 0; border-radius: 0; background: transparent; box-shadow: none;
+    }
+    .search-row #query:focus { border: 0; box-shadow: none; }
+    #query::placeholder { color: #b7aab5; opacity: 1; }
     .search-actions { display: flex; gap: 8px; }
     .filter-toggle {
       position: relative; display: inline-flex; align-items: center; justify-content: center;
@@ -346,7 +358,6 @@
       color: var(--muted); font-size: 11px; font-weight: 400; line-height: 16px;
     }
     .filter-suggestion small { flex: 0 0 auto; margin-left: auto; color: var(--muted); font-size: 10px; line-height: 16px; }
-    .composer { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; margin-top: 10px; }
     .ref-add {
       width: 72px; height: 72px; padding: 0; border-radius: 12px;
       display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
@@ -369,6 +380,22 @@
       -webkit-appearance: none; margin: 0;
     }
     .ref-strip { display: flex; flex-wrap: wrap; gap: 8px; }
+    .ref-inline {
+      flex: 0 1 auto; min-width: 0; max-width: 50%; min-height: 0; padding: 0 5px 0 0;
+      flex-wrap: nowrap; align-items: center; gap: 6px; overflow: visible;
+    }
+    .ref-inline .ref-strip {
+      flex: 0 1 auto; min-width: 0; flex-wrap: nowrap; gap: 6px;
+      overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
+    }
+    .ref-inline .ref-add, .ref-inline .ref-card { width: 38px; height: 38px; border-radius: 9px; }
+    .ref-inline .ref-add { gap: 0; }
+    .ref-inline .ref-add span:first-child { font-size: 20px; }
+    .ref-inline .ref-add span:last-child { display: none; }
+    .ref-inline .ref-card { cursor: ew-resize; user-select: none; }
+    .ref-inline .ref-card .ref-weight { left: 2px; bottom: 2px; padding: 0 4px; font-size: 9px; }
+    .ref-inline .ref-card .ref-remove { top: 1px; right: 1px; width: 16px; height: 16px; font-size: 11px; }
+    .ref-card.is-weight-dragging { cursor: ew-resize; outline-color: #c97a98; }
     .ref-card, .ref-add {
       position: relative; flex: 0 0 auto;
       outline: 1px solid transparent; outline-offset: 1px;
@@ -424,6 +451,10 @@
     .ref-drop-zone {
       position: relative; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px;
       min-height: 78px; padding: 0;
+    }
+    .ref-drop-zone.ref-inline {
+      min-height: 0; padding: 0 5px 0 0;
+      flex-wrap: nowrap; align-items: center; gap: 6px;
     }
     .ref-drop-zone .ref-strip { flex: 0 1 auto; }
     .ref-drop-zone .ref-strip:empty { display: none; }
@@ -1121,7 +1152,6 @@
       .search-actions { gap: 6px; }
       #search { min-height: 44px; padding: 10px 12px; box-shadow: none; }
       .filter-toggle { width: 44px; min-width: 44px; height: 44px; }
-      .composer { margin-top: 8px; }
       .tree-panel { order: -1; }
       .results-column { order: 0; }
       .search-panel.loading { opacity: .55; pointer-events: none; }
@@ -1218,6 +1248,15 @@
     }
     @media (max-width: 720px) {
       .search-filters { grid-template-columns: 1fr; }
+      .search-input-wrap { flex-wrap: nowrap; }
+      .ref-drop-zone.ref-inline { flex: 0 1 auto; max-width: 50%; padding: 0 5px 0 0; }
+      .search-row #query { flex: 1 1 auto; }
+      .search-input-wrap.has-refs { flex-wrap: wrap; }
+      .search-input-wrap.has-refs #query { flex: 1 1 100%; }
+      .search-input-wrap.has-refs .ref-drop-zone.ref-inline {
+        flex: 1 1 100%; max-width: 100%; padding: 0 6px 4px;
+      }
+      .search-input-wrap.has-refs .ref-inline .ref-strip { flex: 1 1 auto; }
       header { padding-top: 8px; }
       .brand { font-size: 20px; line-height: 1.1; }
       .subtitle { margin: 0; padding: 0; font-size: 11px; }
@@ -1425,7 +1464,16 @@
       <section class="search-panel" id="panel">
         <form id="search-form" autocomplete="off">
         <div class="search-row">
-          <input id="query" type="text" name="artseek-query" title="优先匹配来源/自动/手动 tag、标题和作者；带参考图或高级筛选时用向量检索" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" inputmode="search" enterkeyhint="search">
+          <div class="search-input-wrap">
+            <input id="query" type="text" name="artseek-query" placeholder="搜索画面、标签、作者或作品链接" aria-label="搜索画面、标签、作者或作品链接" title="优先匹配来源/自动/手动 tag、标题和作者；带参考图或高级筛选时用向量检索" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" inputmode="search" enterkeyhint="search">
+            <div id="ref-drop-zone" class="ref-drop-zone ref-inline" aria-label="搜索参考图">
+              <div id="ref-strip" class="ref-strip"></div>
+              <label class="ref-add" id="ref-add" for="upload" tabindex="0" title="选择参考图片">
+                <span>+</span>
+                <span>参考图</span>
+              </label>
+            </div>
+          </div>
           <div class="search-actions">
             <button class="primary" id="search" type="submit">查询</button>
             <button class="filter-toggle" id="filter-toggle" type="button" aria-expanded="false" aria-controls="search-filters" aria-label="高级筛选" title="高级筛选">
@@ -1434,16 +1482,7 @@
             </button>
           </div>
         </div>
-        <div class="composer" id="composer">
-          <div id="ref-drop-zone" class="ref-drop-zone" aria-label="搜索参考图">
-            <div id="ref-strip" class="ref-strip"></div>
-            <label class="ref-add" id="ref-add" for="upload" tabindex="0" title="选择参考图片">
-              <span>+</span>
-              <span>参考图</span>
-            </label>
-          </div>
-          <input id="upload" type="file" accept="image/*" multiple autocomplete="off">
-        </div>
+        <input id="upload" type="file" accept="image/*" multiple autocomplete="off">
         <div id="search-filters" class="search-filters" hidden>
           <div class="filter-field-wrap">
             <label class="filter-field"><span>标题</span>
@@ -4512,21 +4551,78 @@
         card.setAttribute('aria-pressed', String(on));
       });
     }
+    let refWeightDrag = null;
+    function updateReferenceWeight(card, ref, next) {
+      const weight = clampWeight(next);
+      if (ref.weight === weight) return;
+      ref.weight = weight;
+      const badge = card.querySelector('.ref-weight');
+      if (badge) badge.textContent = formatWeight(weight);
+      card.setAttribute('aria-label', `参考图 ${ref.name}，权重 ${formatWeight(weight)}`);
+      if (state.viewerSource === 'reference' && state.currentRefKey === ref.key && $('viewer').open) {
+        $('viewer-weight').value = String(weight);
+      }
+    }
     function renderReferences() {
       const strip = $('ref-strip');
       strip.replaceChildren();
+      $('ref-drop-zone')?.closest('.search-input-wrap')?.classList.toggle('has-refs', state.references.length > 0);
       state.references.forEach((ref) => {
-        const card = document.createElement('div');
+        const referenceCard = document.createElement('div');
         const selected = state.viewerSource === 'reference' && ref.key === state.currentRefKey;
-        card.className = selected ? 'ref-card is-selected' : 'ref-card';
-        card.dataset.key = ref.key;
-        card.tabIndex = 0;
-        card.setAttribute('role', 'button');
-        card.setAttribute('aria-pressed', String(selected));
-        card.setAttribute('aria-label', `参考图 ${ref.name}`);
-        card.innerHTML = `<img src="${ref.preview}" alt=""><span class="ref-weight">${formatWeight(ref.weight)}</span><button class="ref-remove" type="button" title="移除" aria-label="移除参考图">×</button>`;
+        referenceCard.className = selected ? 'ref-card is-selected' : 'ref-card';
+        referenceCard.dataset.key = ref.key;
+        referenceCard.tabIndex = 0;
+        referenceCard.setAttribute('role', 'button');
+        referenceCard.setAttribute('aria-pressed', String(selected));
+        referenceCard.setAttribute('aria-label', `参考图 ${ref.name}，权重 ${formatWeight(ref.weight)}`);
+        referenceCard.title = '点击查看参考图；左右拖动调整权重';
+        referenceCard.innerHTML = `<img src="${ref.preview}" alt="" draggable="false"><span class="ref-weight" title="左右拖动调整权重">${formatWeight(ref.weight)}</span><button class="ref-remove" type="button" title="移除" aria-label="移除参考图">×</button>`;
         const open = () => openReferenceViewer(ref.key);
-        card.addEventListener('click', (event) => {
+        referenceCard.addEventListener('pointerdown', (event) => {
+          if (event.button !== 0 || event.pointerType !== 'mouse' || event.target.closest('.ref-remove')) return;
+          refWeightDrag = {
+            referenceCard,
+            ref,
+            startX: event.clientX,
+            startWeight: ref.weight,
+            pointerId: event.pointerId,
+            moved: false,
+          };
+          referenceCard.setPointerCapture(event.pointerId);
+        });
+        referenceCard.addEventListener('pointermove', (event) => {
+          const drag = refWeightDrag;
+          if (!drag || drag.referenceCard !== referenceCard || drag.pointerId !== event.pointerId) return;
+          const delta = event.clientX - drag.startX;
+          if (!drag.moved && Math.abs(delta) < 4) return;
+          drag.moved = true;
+          event.preventDefault();
+          referenceCard.classList.add('is-weight-dragging');
+          updateReferenceWeight(referenceCard, drag.ref, drag.startWeight + delta * 0.02);
+        });
+        const finishWeightDrag = (event) => {
+          const drag = refWeightDrag;
+          if (!drag || drag.referenceCard !== referenceCard || drag.pointerId !== event.pointerId) return;
+          refWeightDrag = null;
+          referenceCard.classList.remove('is-weight-dragging');
+          if (referenceCard.hasPointerCapture(event.pointerId)) referenceCard.releasePointerCapture(event.pointerId);
+          if (drag.moved) {
+            referenceCard.dataset.weightDragged = '1';
+            setTimeout(() => {
+              if (referenceCard.dataset.weightDragged) delete referenceCard.dataset.weightDragged;
+            }, 0);
+          }
+        };
+        referenceCard.addEventListener('pointerup', finishWeightDrag);
+        referenceCard.addEventListener('pointercancel', finishWeightDrag);
+        referenceCard.addEventListener('click', (event) => {
+          if (referenceCard.dataset.weightDragged === '1') {
+            delete referenceCard.dataset.weightDragged;
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
           if (event.target.closest('.ref-remove')) {
             event.preventDefault();
             event.stopPropagation();
@@ -4536,14 +4632,14 @@
           }
           open();
         });
-        card.addEventListener('keydown', (event) => {
+        referenceCard.addEventListener('keydown', (event) => {
           if (event.target.closest('.ref-remove')) return;
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
             open();
           }
         });
-        strip.appendChild(card);
+        strip.appendChild(referenceCard);
       });
     }
     function currentReference() {
