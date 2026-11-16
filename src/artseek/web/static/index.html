@@ -1504,6 +1504,24 @@
     const COLLECTION_SORT_LABELS = Object.fromEntries(
       COLLECTION_SORT_OPTIONS.map((option) => [option.value, option.label])
     );
+    const FOLDER_SORT_OPTIONS = [
+      { value: 'name', label: '名称 · A→Z' },
+      { value: 'name_desc', label: '名称 · Z→A' },
+      { value: 'mtime', label: '最近更新' },
+      { value: 'mtime_asc', label: '最早更新' },
+    ];
+    const FOLDER_SORT_LABELS = Object.fromEntries(
+      FOLDER_SORT_OPTIONS.map((option) => [option.value, option.label])
+    );
+    const FOLDER_SORT_STORAGE_KEY = 'artseek.folderSort';
+    function loadFolderSort() {
+      try {
+        const value = localStorage.getItem(FOLDER_SORT_STORAGE_KEY);
+        return FOLDER_SORT_LABELS[value] ? value : 'name';
+      } catch (_) {
+        return 'name';
+      }
+    }
     function collectionSortIcon(value) {
       const mode = String(value || 'added_asc');
       const base = mode.startsWith('mtime')
@@ -1528,6 +1546,7 @@
       searchSnapshotId: '', searchRequest: null,
       colHeights: [],
       mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
+      browseSort: loadFolderSort(),
       randomSeed: null, randomTotal: 0,
       collections: [], collectionId: '', collectionName: '', collectionTotal: null,
       editingCollectionId: '', pendingCreatedCollectionId: '', collectionEditMode: '', collectionEditModeTransitionTimer: 0, collectionSearchTimer: 0,
@@ -3744,16 +3763,24 @@
       $('collection-sort-toggle').setAttribute('aria-expanded', 'false');
       if (restoreFocus) $('collection-sort-toggle').focus();
     }
+    function browseSortActive() {
+      return state.mode === 'browse' && Boolean(state.browseKey);
+    }
+    function effectiveBrowseSort() {
+      return FOLDER_SORT_LABELS[state.browseSort] ? state.browseSort : 'name';
+    }
     function renderCollectionSortMenu() {
       const menu = $('collection-sort-menu');
-      const sort = effectiveCollectionSort();
-      menu.innerHTML = `<div class="collection-sort-title">排序方式</div>${COLLECTION_SORT_OPTIONS.map((option) => `
+      const browse = browseSortActive();
+      const options = browse ? FOLDER_SORT_OPTIONS : COLLECTION_SORT_OPTIONS;
+      const sort = browse ? effectiveBrowseSort() : effectiveCollectionSort();
+      menu.innerHTML = `<div class="collection-sort-title">${browse ? '图片排序' : '排序方式'}</div>${options.map((option) => `
         <button class="collection-sort-option" type="button" role="menuitemradio" aria-checked="${option.value === sort}" data-sort-value="${option.value}">
           ${collectionSortIcon(option.value)}
           <span>${option.label}</span>
           <span class="collection-sort-check" aria-hidden="true">${option.value === sort ? '✓' : ''}</span>
         </button>`).join('')}
-        <label class="collection-sort-temp"><input id="collection-sort-temp" type="checkbox" ${state.collectionSortTemp ? 'checked' : ''}> 仅本次查看，不保存</label>`;
+        ${browse ? '' : `<label class="collection-sort-temp"><input id="collection-sort-temp" type="checkbox" ${state.collectionSortTemp ? 'checked' : ''}> 仅本次查看，不保存</label>`}`;
       menu.querySelectorAll('[data-sort-value]').forEach((button) => {
         button.addEventListener('click', () => {
           applyCollectionSort(button.dataset.sortValue, { temporary: state.collectionSortTemp });
@@ -3773,7 +3800,8 @@
     function syncCollectionSortMenuChecks() {
       const menu = $('collection-sort-menu');
       if (menu.hidden) return;
-      const sort = effectiveCollectionSort();
+      const browse = browseSortActive();
+      const sort = browse ? effectiveBrowseSort() : effectiveCollectionSort();
       menu.querySelectorAll('[data-sort-value]').forEach((button) => {
         const selected = button.dataset.sortValue === sort;
         button.setAttribute('aria-checked', String(selected));
@@ -3793,26 +3821,37 @@
     }
     function renderCollectionSort() {
       const bar = $('collection-sort');
-      const active = state.mode === 'collection' && Boolean(state.collectionId);
+      const browse = browseSortActive();
+      const active = browse || (state.mode === 'collection' && Boolean(state.collectionId));
       bar.hidden = !active;
       if (!active) {
         closeCollectionSortMenu();
         return;
       }
-      const sort = effectiveCollectionSort();
-      const temporary = Boolean(state.collectionViewSort);
+      const sort = browse ? effectiveBrowseSort() : effectiveCollectionSort();
+      const temporary = browse ? false : Boolean(state.collectionViewSort);
       const toggle = $('collection-sort-toggle');
       toggle.innerHTML = collectionSortIcon(sort);
       toggle.classList.toggle('is-temporary', temporary);
-      toggle.disabled = state.collectionSortBusy;
-      const label = COLLECTION_SORT_LABELS[sort] || sort;
-      const title = `排序：${label}${temporary ? '（仅本次查看）' : ''}`;
+      toggle.disabled = browse ? false : state.collectionSortBusy;
+      const label = (browse ? FOLDER_SORT_LABELS : COLLECTION_SORT_LABELS)[sort] || sort;
+      const title = `${browse ? '图片排序' : '排序'}：${label}${temporary ? '（仅本次查看）' : ''}`;
       toggle.setAttribute('aria-label', title);
       toggle.title = title;
-      $('collection-sort-pin').hidden = !temporary || state.collectionSortBusy;
+      $('collection-sort-pin').hidden = browse || !temporary || state.collectionSortBusy;
       syncCollectionSortMenuChecks();
     }
     async function applyCollectionSort(sort, { temporary = false } = {}) {
+      if (browseSortActive()) {
+        if (!FOLDER_SORT_LABELS[sort]) return;
+        state.browseSort = sort;
+        try { localStorage.setItem(FOLDER_SORT_STORAGE_KEY, sort); }
+        catch (_) { /* keep in-memory */ }
+        closeCollectionSortMenu({ restoreFocus: true });
+        renderCollectionSort();
+        await fetchFolderImages({ reset: true });
+        return;
+      }
       if (!state.collectionId || state.collectionSortBusy) return;
       const label = COLLECTION_SORT_LABELS[sort] || sort;
       closeCollectionSortMenu({ restoreFocus: true });
@@ -5116,6 +5155,7 @@
       state.collectionTotal = null;
       renderTree();
       renderCollectionList();
+      renderCollectionSort();
       if (window.matchMedia('(max-width: 900px)').matches) {
         $('tree-panel').classList.remove('is-open');
         $('scope-toggle').setAttribute('aria-expanded', 'false');
@@ -5142,7 +5182,7 @@
       try {
         const params = new URLSearchParams({
           folder_key: key,
-          sort: treeState.sort || 'name',
+          sort: state.browseSort || 'name',
           limit: String(Number($('limit').value) || 40),
           offset: String(reset ? 0 : state.results.length),
         });
@@ -5186,14 +5226,14 @@
 
     function renderBrowseInfo(data, shown) {
       const total = data.total || 0;
-      const sortLabel = $('tree-sort').selectedOptions[0]?.textContent || '';
+      const sortLabel = FOLDER_SORT_LABELS[state.browseSort] || state.browseSort;
+      renderCollectionSort();
       if (!total) {
         $('query-info').textContent = `「${data.folder_name || state.browseName}」及其子目录里没有已索引的图片。`;
         return;
       }
       const more = state.hasMore ? ' · 下滑加载更多' : '';
-      const order = sortLabel ? ` · ${sortLabel}` : '';
-      $('query-info').textContent = `浏览「${data.folder_name || state.browseName}」· ${shown} / ${total} 张图${order}${more}`;
+      $('query-info').textContent = `浏览「${data.folder_name || state.browseName}」· ${shown} / ${total} 张图 · ${sortLabel}${more}`;
     }
 
     async function fetchResults({ reset, skipRoute = false }) {
@@ -6927,7 +6967,6 @@
       treeState.sort = $('tree-sort').value;
       renderTree();
       saveLibraryTree();
-      if (state.mode === 'browse' && state.browseKey) fetchFolderImages({ reset: true });
     });
     const loadMore = $('load-more');
     const scrollObserver = new IntersectionObserver((entries) => {
@@ -7553,6 +7592,13 @@
         }),
       ]);
       const route = parseAppRoute();
+      // A fresh page starts with no checked folders. Search/random deep links
+      // keep their persisted scope because they cannot run without one.
+      if (route.kind !== 'search' && route.kind !== 'random') {
+        treeState.selected.clear();
+        renderTree();
+        updateTreeSummary();
+      }
       history.replaceState({ artseek: 1, overlay: 0, ...route }, '', currentHref());
       if (route.kind !== 'home') await applyAppRoute(route);
     }
