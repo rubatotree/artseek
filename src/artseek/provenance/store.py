@@ -12,7 +12,7 @@ from typing import Any
 
 from .parser import ParsedSource, SourceRef, canonical_pixiv_url, twitter_photo_url
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ORIGIN_PRIORITY = {"filename": 1, "embedded": 2, "manual": 3, "saucy": 4, "ascii2d": 4}
 AUTHOR_TTL_SECONDS = 30 * 24 * 60 * 60
 _STATUSES = frozenset(
@@ -153,12 +153,41 @@ class ProvenanceStore:
                 connection.execute(
                     "ALTER TABLE author ADD COLUMN profile_fetched INTEGER NOT NULL DEFAULT 0"
                 )
+            version_row = connection.execute(
+                "SELECT value FROM meta WHERE key = 'schema_version'"
+            ).fetchone()
+            previous_version = 0
+            if version_row is not None:
+                try:
+                    previous_version = int(version_row[0])
+                except (TypeError, ValueError):
+                    previous_version = 0
+            if previous_version < 2:
+                self._repair_twitter_bio_descriptions(connection)
             connection.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
             )
             connection.commit()
             self._schema_ready = True
+
+    @staticmethod
+    def _repair_twitter_bio_descriptions(connection: sqlite3.Connection) -> None:
+        """Clear the legacy fallback that copied an author bio into tweet text."""
+        rows = connection.execute(
+            "SELECT point_id, description, raw_json FROM image_source "
+            "WHERE platform = 'twitter' AND description IS NOT NULL "
+            "AND raw_json IS NOT NULL"
+        ).fetchall()
+        for row in rows:
+            raw = _loads(row["raw_json"], {})
+            bio = raw.get("author_description") if isinstance(raw, dict) else None
+            if bio and str(bio) == str(row["description"]):
+                connection.execute(
+                    "UPDATE image_source SET description = NULL, updated_at = ? "
+                    "WHERE point_id = ?",
+                    (_now(), row["point_id"]),
+                )
 
     @contextmanager
     def _read(self):

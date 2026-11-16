@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -162,6 +163,35 @@ class ProvenanceStoreTests(unittest.TestCase):
         self.assertEqual(self.store.domain_state("pixiv.net")["last_error"], "429")
         self.store.set_long_remaining("saucenao.com", 0)
         self.assertEqual(self.store.domain_state("saucenao.com")["long_remaining"], 0)
+
+    def test_legacy_twitter_bio_description_is_repaired(self) -> None:
+        self.store.upsert_scan(
+            "p1",
+            self.payload,
+            _parsed("1761931720818122000_1.jpg"),
+        )
+        bio = "author bio that was wrongly stored as tweet text"
+        self.store.set_fetch_result(
+            "p1",
+            {
+                "platform": "twitter",
+                "source_id": "1761931720818122000",
+                "page": 1,
+                "url": "https://x.com/i/status/1761931720818122000",
+                "status": "ok",
+                "description": bio,
+                "raw": {"author_description": bio},
+            },
+        )
+        connection = sqlite3.connect(self.path)
+        connection.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
+        connection.commit()
+        connection.close()
+        reopened = ProvenanceStore(self.path)
+        record = reopened.get("p1")
+        self.assertIsNotNone(record)
+        assert record is not None
+        self.assertIsNone(record["description"])
 
     def test_stale_detection_uses_content_hash(self) -> None:
         self.store.upsert_scan("p1", self.payload, _parsed("12345678_p0.png"))

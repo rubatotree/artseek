@@ -443,7 +443,7 @@ class FxTwitterClient:
             page=page,
             url=ref.url,
             title=None,
-            description=text or description,
+            description=text or None,
             author_platform="twitter",
             author_id=_str_or_none(author.get("id")),
             author_name=_str_or_none(author.get("name")),

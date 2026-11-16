@@ -1840,9 +1840,14 @@
     function viewerTitleModel(data, fallback) {
       const record = data && data.record;
       const author = data && data.author;
-      const primary = record
+      let primary = record
         ? (record.title || provenancePlainText(record.description).slice(0, 120))
         : '';
+      if (!primary && record) {
+        primary = record.platform === 'other'
+          ? (record.url ? '其他来源' : '未识别来源')
+          : '无题';
+      }
       if (!primary) return { fallback };
       const tags = (record.tags || [])
         .filter((tag) => tag && !primary.includes(tag))
@@ -1953,7 +1958,10 @@
       const record = (data && data.record) || {};
       const author = data && data.author;
       const platform = { pixiv: 'Pixiv', twitter: 'X/Twitter', other: '其他来源' }[record.platform] || '未识别';
-      const title = record.title || (record.platform === 'other' ? '其他来源' : provenancePlainText(record.description).slice(0, 80) || record.source_id || '未识别来源');
+      const emptyTitle = record.platform === 'other'
+        ? (record.url ? '其他来源' : '未识别来源')
+        : '无题';
+      const title = record.title || provenancePlainText(record.description).slice(0, 80) || emptyTitle;
       const tags = (record.tags || []).map((tag) => `<span class="provenance-tag">${escapeHtml(tag)}</span>`).join('');
       const authorName = author ? (author.name || author.handle || author.key) : '';
       const authorButton = author

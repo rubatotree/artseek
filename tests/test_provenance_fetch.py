@@ -92,6 +92,34 @@ class PixivClientTests(unittest.TestCase):
 
 
 class FxTwitterClientTests(unittest.TestCase):
+    def test_empty_tweet_text_does_not_fall_back_to_author_bio(self) -> None:
+        tweet = {
+            "tweet": {
+                "id": "1761931720818122000",
+                "text": "",
+                "author": {
+                    "id": "1",
+                    "screen_name": "artist",
+                    "name": "Artist",
+                    "description": "author bio should not become the title",
+                    "url": "https://x.com/artist",
+                },
+                "media": {"all": [{"type": "photo", "width": 300, "height": 400}]},
+            }
+        }
+        client = httpx.Client(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, json=tweet))
+        )
+        result = FxTwitterClient(client).fetch(
+            SourceRef("twitter", "1761931720818122000", 1, "https://x.com/i/status/1761931720818122000")
+        )
+        self.assertIsNone(result.description)
+        self.assertIsNone(result.title)
+        self.assertEqual(
+            result.raw["author_description"],
+            "author bio should not become the title",
+        )
+
     def test_multi_photo_page_is_matched_by_dimensions(self) -> None:
         tweet = {
             "tweet": {
