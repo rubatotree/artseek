@@ -82,7 +82,12 @@ from ..query import QueryPlan
 from ..search import SearchEngine
 from ..search_cache import SearchSnapshotStore, is_snapshot_id
 from ..store import VectorStore
-from ..tag_dictionary import search_tags, tag_info
+from ..tag_dictionary import expand_tag_aliases, search_tags, tag_info
+from ..tag_query import (
+    TagQueryError,
+    evaluate_tag_expression_with_universe,
+    parse_tag_expression,
+)
 
 
 def _parse_id_list(raw: str) -> list[str]:
@@ -136,6 +141,7 @@ class TextSearchRequest(BaseModel):
     author_keys: list[str] = Field(default_factory=list)
     title_query: str = ""
     text_label: str = ""
+    tag_expression: str = ""
     sort: str = "mtime_desc"
     text_tags: list[str] = Field(default_factory=list)
     tag_text: list[str] = Field(default_factory=list)
@@ -1518,6 +1524,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             title_query=request.title_query,
             tag_text=request.tag_text,
             image_tags=request.image_tags,
+            tag_expression=request.tag_expression,
         )
         search_text = cleaned_query
         if tag_tokens:
@@ -1535,6 +1542,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 title_query=request.title_query,
                 tag_text=request.tag_text,
                 image_tags=request.image_tags,
+                tag_expression=request.tag_expression,
                 sort=request.sort,
                 offset=max(0, request.offset),
                 limit=max(1, min(request.limit, 200)),
@@ -1569,6 +1577,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 "tags": text_tags,
                 "title_query": request.title_query,
                 "text_label": request.text_label,
+                "tag_expression": request.tag_expression,
                 "tag_text": request.tag_text,
                 "image_tags": request.image_tags,
             }
@@ -1615,6 +1624,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         author_keys: str = Form(default="[]"),
         title_query: str = Form(default=""),
         text_label: str = Form(default=""),
+        tag_expression: str = Form(default=""),
         sort: str = Form(default="mtime_desc"),
         text_tags: str = Form(default="[]"),
         tag_text: str = Form(default="[]"),
@@ -1672,6 +1682,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 title_query=title_query,
                 tag_text=tag_text,
                 image_tags=image_tags,
+                tag_expression=tag_expression,
             )
             search_text = " ".join(
                 [cleaned_query, *tag_tokens]
@@ -1698,6 +1709,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                     title_query=title_query,
                     tag_text=tag_text,
                     image_tags=image_tags,
+                    tag_expression=tag_expression,
                     sort=sort,
                 )
             else:
@@ -1724,6 +1736,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                     "tags": text_tags,
                     "title_query": title_query,
                     "text_label": text_label,
+                    "tag_expression": tag_expression,
                     "tag_text": tag_text,
                     "image_tags": image_tags,
                 }
@@ -1870,6 +1883,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         title_query: str = "",
         tag_text: list[str] | None = None,
         image_tags: list[str] | None = None,
+        tag_expression: str = "",
     ) -> list[str] | None:
         store: ProvenanceStore = app.state.provenance
         result: set[str] | None = None
@@ -1891,6 +1905,20 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         if tag_text:
             matching = set(store.point_ids_for_tag_text(tag_text))
             result = matching if result is None else result & matching
+        if tag_expression.strip():
+            try:
+                node = parse_tag_expression(tag_expression)
+            except TagQueryError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            universe = set(store.all_point_ids())
+            matching = evaluate_tag_expression_with_universe(
+                node,
+                lambda atom: set(
+                    store.point_ids_for_any_tags(sorted(expand_tag_aliases(atom)))
+                ),
+                universe,
+            )
+            result = matching if result is None else result & matching
         if image_tags:
             tagged = set(app.state.engine.store.point_ids_for_image_tags(image_tags))
             result = tagged if result is None else result & tagged
@@ -1911,6 +1939,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         title_query: str = "",
         tag_text: list[str] | None = None,
         image_tags: list[str] | None = None,
+        tag_expression: str = "",
         sort: str = "mtime_desc",
     ) -> dict[str, Any]:
         scoped = point_ids

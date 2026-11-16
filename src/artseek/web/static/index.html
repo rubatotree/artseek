@@ -1472,6 +1472,13 @@
             </label>
             <div id="filter-text-suggestions" class="filter-suggestions" hidden></div>
           </div>
+          <div class="filter-field-wrap">
+            <label class="filter-field"><span>Tag 表达式</span>
+              <div class="filter-control">
+                <input id="filter-tag-expression" type="text" title="例：(#a+#b*#c)-#d；+ 为 OR，* 为 AND，- 为 NOT" autocomplete="off" spellcheck="false">
+              </div>
+            </label>
+          </div>
         </div>
         </form>
       </section>
@@ -3636,7 +3643,7 @@
     $('filter-toggle').addEventListener('click', () => {
       setFilterPanelOpen($('search-filters').hidden);
     });
-    ['filter-author', 'filter-title', 'filter-text-tags', 'filter-text-label'].forEach((id) => {
+    ['filter-author', 'filter-title', 'filter-text-tags', 'filter-text-label', 'filter-tag-expression'].forEach((id) => {
       $(id).addEventListener('input', updateFilterBadge);
     });
     $('upload').addEventListener('change', (event) => {
@@ -4046,6 +4053,7 @@
         authors: chipValues('filter-author-chips'),
         title_query: $('filter-title').value.trim(),
         text_label: $('filter-text-label').value.trim(),
+        tag_expression: $('filter-tag-expression').value.trim(),
         text_tags: chipValues('filter-text-chips'),
       };
     }
@@ -4054,6 +4062,7 @@
         filters.authors.length
         || filters.title_query
         || filters.text_label
+        || filters.tag_expression
         || filters.text_tags.length
       );
     }
@@ -4063,6 +4072,7 @@
         ...filters.authors,
         filters.title_query,
         filters.text_label,
+        filters.tag_expression,
         ...filters.text_tags,
       ].filter(Boolean).length;
       const badge = $('filter-count');
@@ -4073,6 +4083,7 @@
       $('filter-author').value = '';
       $('filter-title').value = filters.title_query || '';
       $('filter-text-label').value = filters.text_label || '';
+      $('filter-tag-expression').value = filters.tag_expression || '';
       $('filter-text-tags').value = '';
       Object.keys(FILTER_SUGGEST_CONFIG).forEach(updateSuggestToggle);
       Object.values(FILTER_CHIP_CONFIG).forEach((config) => $(config.chips).replaceChildren());
@@ -6266,7 +6277,7 @@
       const libraryRefs = frozen ? frozen.references : librarySearchRefs();
       const fileRefs = state.references.filter((ref) => ref.file);
       const advanced = frozen
-        ? (frozen.advanced || { authors: [], title_query: '', text_label: '', text_tags: [] })
+        ? (frozen.advanced || { authors: [], title_query: '', text_label: '', tag_expression: '', text_tags: [] })
         : readAdvancedFilters();
       const hasFilters = hasAdvancedFilters(advanced);
       const filterOnly = !query && !advanced.text_label && !libraryRefs.length && !fileRefs.length;
@@ -6329,6 +6340,7 @@
           author_keys: frozen.author_keys || [],
           title_query: frozen.title_query || '',
           text_label: frozen.text_label || '',
+          tag_expression: frozen.tag_expression || '',
           text_tags: frozen.text_tags || [],
           sort: frozen.sort || state.searchSort,
           exclude_ids: state.results.map((item) => item.id),
@@ -6348,6 +6360,7 @@
           author_keys: advanced.authors,
           title_query: advanced.title_query || '',
           text_label: advanced.text_label || '',
+          tag_expression: advanced.tag_expression || '',
           text_tags: advanced.text_tags || [],
           sort: state.searchSort,
           exclude_ids: reset ? [] : state.results.map((item) => item.id),
@@ -6371,6 +6384,7 @@
           form.append('title_query', common.title_query || '');
           form.append('text_tags', JSON.stringify(common.text_tags || []));
           form.append('text_label', common.text_label || '');
+          form.append('tag_expression', common.tag_expression || '');
           form.append('sort', common.sort || state.searchSort);
           form.append('references', JSON.stringify(libraryRefs));
           if (common.snapshot_id) form.append('snapshot_id', common.snapshot_id);
@@ -6402,12 +6416,14 @@
             author_keys: common.author_keys,
             title_query: common.title_query,
             text_label: common.text_label,
+            tag_expression: common.tag_expression,
             text_tags: common.text_tags,
             sort: common.sort,
             advanced: {
               authors: advanced.authors || [],
               title_query: advanced.title_query || '',
               text_label: advanced.text_label || '',
+              tag_expression: advanced.tag_expression || '',
               text_tags: advanced.text_tags || [],
             },
           };
@@ -6423,6 +6439,7 @@
             authors: common.author_keys || [],
             title: common.title_query,
             text_label: common.text_label,
+            tag_expression: common.tag_expression,
             text_tags: common.text_tags,
           };
           if (appRouteHref(next) !== currentHref()) {
@@ -6477,6 +6494,7 @@
       if (filters.title_query) filterChips.push(`<span class="chip">标题：${escapeHtml(filters.title_query)}</span>`);
       for (const tag of filters.tags || []) filterChips.push(`<span class="chip">来源：${escapeHtml(tag)}</span>`);
       if (filters.text_label) filterChips.push(`<span class="chip">文字：${escapeHtml(filters.text_label)}</span>`);
+      if (filters.tag_expression) filterChips.push(`<span class="chip">Tag：${escapeHtml(filters.tag_expression)}</span>`);
       const onlyFilters = !(data.query_plan && data.query_plan.original);
       const label = onlyFilters ? '筛选' : (plan.used_llm ? '本地大模型已解析' : '内置插画词典已解析');
       const warning = data.llm_warning ? ` · Ollama 未就绪，已自动回退` : '';
@@ -8329,6 +8347,7 @@
           authors: parseRouteTagList(params.get('authors') || '[]'),
           title: params.get('title') || '',
           text_label: params.get('text_label') || '',
+          tag_expression: params.get('tag_expression') || '',
           text_tags: parseRouteTagList(params.get('text_tags') || '[]'),
         };
       }
@@ -8361,6 +8380,7 @@
         if (route.authors && route.authors.length) params.set('authors', JSON.stringify(route.authors));
         if (route.title) params.set('title', route.title);
         if (route.text_label) params.set('text_label', route.text_label);
+        if (route.tag_expression) params.set('tag_expression', route.tag_expression);
         if (route.text_tags && route.text_tags.length) params.set('text_tags', JSON.stringify(route.text_tags));
         const query = params.toString();
         return query ? `/search?${query}` : '/search';
@@ -8408,6 +8428,7 @@
           authors: filters.authors,
           title: filters.title_query,
           text_label: filters.text_label,
+          tag_expression: filters.tag_expression,
           text_tags: filters.text_tags,
         };
       }
@@ -8447,6 +8468,7 @@
         || (route.authors && route.authors.length)
         || route.title
         || route.text_label
+        || route.tag_expression
         || (route.text_tags && route.text_tags.length)
       )) {
         document.title = `${route.query || '筛选'} · ArtSeek`;
@@ -8660,6 +8682,7 @@
         authors: route.authors || [],
         title_query: route.title || '',
         text_label: route.text_label || '',
+        tag_expression: route.tag_expression || '',
         text_tags: route.text_tags || [],
       };
       $('query').value = route.query || '';

@@ -202,6 +202,63 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(len(tags.json()["tags"]), 1)
         self.assertTrue(tags.json()["has_more"] is False)
 
+    def test_boolean_tag_expression_and_alias_union(self) -> None:
+        for point_id, tags, digest in (
+            ("p1", ["a", "b", "long_hair"], "a" * 64),
+            ("p2", ["a", "c"], "b" * 64),
+        ):
+            payload = dict(
+                self.payload,
+                path=str(self.root / f"{point_id}.png"),
+                path_key=str(self.root / f"{point_id}.png").casefold(),
+                content_hash=digest,
+            )
+            self.engine.store.payloads[point_id] = payload
+            self.store.upsert_scan(
+                point_id, payload, ParsedSource(parse_filename(self.image.name))
+            )
+            self.store.set_fetch_result(
+                point_id,
+                {
+                    "platform": "pixiv",
+                    "source_id": point_id,
+                    "page": 0,
+                    "url": f"https://www.pixiv.net/artworks/{point_id}",
+                    "status": "ok",
+                    "tags": tags,
+                },
+            )
+        both = self.client.post(
+            "/api/search",
+            json={
+                "query": "",
+                "tag_expression": "#a*(#b+#c)",
+                "folder_keys": [],
+            },
+        )
+        self.assertEqual(both.status_code, 200)
+        self.assertEqual({item["id"] for item in both.json()["results"]}, {"p1", "p2"})
+        only = self.client.post(
+            "/api/search",
+            json={
+                "query": "",
+                "tag_expression": "#a*#b-#c",
+                "folder_keys": [],
+            },
+        )
+        self.assertEqual(only.status_code, 200)
+        self.assertEqual([item["id"] for item in only.json()["results"]], ["p1"])
+        alias = self.client.post(
+            "/api/search",
+            json={
+                "query": "",
+                "tag_expression": "#长发",
+                "folder_keys": [],
+            },
+        )
+        self.assertEqual(alias.status_code, 200)
+        self.assertEqual([item["id"] for item in alias.json()["results"]], ["p1"])
+
     def test_tag_dictionary_expands_chinese_aliases(self) -> None:
         self.store.upsert_scan(
             "p1", self.payload, ParsedSource(parse_filename(self.image.name))

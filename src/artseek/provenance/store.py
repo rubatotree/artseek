@@ -603,7 +603,7 @@ class ProvenanceStore:
         with self._read() as connection:
             connection.execute(
                 "UPDATE image_source SET manual_fields = NULL, source_origin = 'filename', "
-                "title = NULL, description = NULL, author_key = NULL, tags_json = NULL, "
+                "title = NULL, description = NULL, author_key = NULL, "
                 "manual_tags_json = NULL, status = 'pending', updated_at = ? WHERE point_id = ?",
                 (_now(), point_id),
             )
@@ -927,6 +927,32 @@ class ProvenanceStore:
                 for row in rows:
                     result[str(row["point_id"])] = _int_or_none(row["mtime_ns"]) or 0
         return result
+
+    def point_ids_for_any_tags(self, tags: Sequence[str]) -> list[str]:
+        clean = [str(tag).strip() for tag in tags if str(tag).strip()]
+        if not clean:
+            return []
+        clauses = " OR ".join(
+            "EXISTS (SELECT 1 FROM all_tags WHERE all_tags.point_id = image_source.point_id "
+            "AND value = ? COLLATE NOCASE)"
+            for _ in clean
+        )
+        with self._read() as connection:
+            rows = connection.execute(
+                "WITH all_tags AS ("
+                "SELECT point_id, value FROM image_source, json_each(tags_json) "
+                "UNION ALL SELECT point_id, value FROM image_source, json_each(manual_tags_json) "
+                "UNION ALL SELECT point_id, value FROM image_source, json_each(auto_tags_json)"
+                ") SELECT point_id FROM image_source WHERE "
+                f"{clauses} ORDER BY mtime_ns IS NULL, mtime_ns DESC, updated_at DESC, point_id",
+                clean,
+            ).fetchall()
+        return [str(row["point_id"]) for row in rows]
+
+    def all_point_ids(self) -> list[str]:
+        with self._read() as connection:
+            rows = connection.execute("SELECT point_id FROM image_source").fetchall()
+        return [str(row["point_id"]) for row in rows]
 
     def point_ids_for_title(self, query: str) -> list[str]:
         terms = [term for term in re.split(r"\s+", str(query or "").strip()) if term]

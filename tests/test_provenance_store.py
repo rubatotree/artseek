@@ -110,12 +110,15 @@ class ProvenanceStoreTests(unittest.TestCase):
 
     def test_clear_manual_restores_automatic_fields(self) -> None:
         self.store.upsert_scan("p1", self.payload, _parsed("12345678_p0.png"))
-        self.store.set_manual("p1", {"title": "手动", "tags": ["x"]})
+        self.store.set_manual(
+            "p1", {"title": "手动", "tags": ["来源"], "manual_tags": ["x"]}
+        )
         cleared = self.store.clear_manual("p1")
         self.assertIsNotNone(cleared)
         assert cleared is not None
         self.assertIsNone(cleared["title"])
-        self.assertEqual(cleared["tags"], [])
+        self.assertEqual(cleared["tags"], ["来源"])
+        self.assertEqual(cleared["manual_tags"], [])
         self.assertEqual(cleared["status"], "pending")
 
     def test_author_alias_group_and_point_filter(self) -> None:
