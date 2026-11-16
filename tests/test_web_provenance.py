@@ -13,6 +13,7 @@ from PIL import Image
 from artseek.config import AppConfig
 from artseek.image_io import canonical_path
 from artseek.provenance.fetch import FetchResult, NotFoundError
+from artseek.provenance.parser import ParsedSource, parse_filename
 from artseek.search import SearchResponse
 from artseek.web.app import create_app
 
@@ -61,11 +62,15 @@ class _FolderAcc:
 
 class _Catalog:
     def __init__(self, point_ids: list[str]) -> None:
-        self.point_ids = point_ids
+        self._ids = point_ids
         self.folders = {canonical_path("d:/art/收藏"): _FolderAcc()}
 
+    def point_ids(self, selected, *, after_ns=None, before_ns=None):
+        del selected, after_ns, before_ns
+        return list(self._ids)
+
     def list_folder_images(self, key: str, method: str):
-        return [(point_id, f"{point_id}.png", 0) for point_id in self.point_ids]
+        return [(point_id, f"{point_id}.png", 0) for point_id in self._ids]
 
     def all_keys(self):
         return list(self.folders)
@@ -180,6 +185,50 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(data["record"]["title"], "初音ミク")
         self.assertEqual(data["record"]["author_key"], "pixiv:1554775")
         self.assertEqual(data["author"]["image_count"], 1)
+
+    def test_search_filters_parse_author_and_tag_tokens(self) -> None:
+        parsed = parse_filename("12345678_p0.png")
+        assert parsed is not None
+        self.store.upsert_scan("p1", self.payload, ParsedSource(parsed))
+        author_key = self.store.ensure_author("pixiv", "1554775", name="米山舞")
+        self.store.set_fetch_result(
+            "p1",
+            {
+                "platform": "pixiv",
+                "source_id": "12345678",
+                "page": 0,
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "status": "ok",
+                "title": "初音ミク",
+                "tags": ["オリジナル"],
+            },
+            author_key=author_key,
+        )
+        filtered = self.client.post(
+            "/api/search",
+            json={"query": "author:pixiv:1554775", "folder_keys": []},
+        )
+        self.assertEqual(filtered.status_code, 200)
+        self.assertEqual([item["id"] for item in filtered.json()["results"]], ["p1"])
+        self.assertEqual(filtered.json()["applied_filters"]["author_key"], author_key)
+
+        tagged = self.client.post(
+            "/api/search",
+            json={"query": "tag:オリジナル", "folder_keys": []},
+        )
+        self.assertEqual(tagged.status_code, 200)
+        self.assertEqual(
+            self.engine.search_calls[-1]["restrict_ids"], ["p1"]
+        )
+        self.assertEqual(
+            self.engine.search_calls[-1]["text"], "オリジナル"
+        )
+
+        missing = self.client.post(
+            "/api/search",
+            json={"query": "author:没有这个人", "folder_keys": []},
+        )
+        self.assertEqual(missing.status_code, 400)
 
     def test_enrich_from_empty_sidecar_starts_a_scan(self) -> None:
         with patch(

@@ -437,6 +437,19 @@
     .provenance-section { display: grid; gap: 8px; margin-bottom: 16px; }
     .provenance-section > strong { color: #665866; font-size: 12px; letter-spacing: .04em; }
     .provenance-title { color: var(--ink); font-size: 15px; font-weight: 700; line-height: 1.4; }
+    .platform-icons { display: inline-flex; align-items: center; gap: 4px; margin-left: 2px; }
+    .platform-icon {
+      display: inline-grid; place-items: center; width: 20px; height: 20px;
+      border-radius: 50%; color: #fff; font: 700 11px/1 inherit;
+      text-decoration: none; background: #8a8290;
+    }
+    .platform-icon.pixiv { background: #0096fa; }
+    .platform-icon.twitter { background: #17151a; }
+    .platform-icon.manual, .platform-icon.other { background: #a79daa; }
+    .provenance-file {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--muted); font-size: 11px;
+    }
     .provenance-description {
       max-height: 9em; overflow: auto; white-space: pre-wrap; word-break: break-word;
       color: #665866; font-size: 12px; line-height: 1.55;
@@ -474,7 +487,11 @@
     .provenance-form input:focus { outline: 2px solid #ddb2c2; outline-offset: 1px; }
     .provenance-hint { color: var(--muted); font-size: 11px; line-height: 1.45; }
     .provenance-dialog {
-      width: min(540px, calc(100vw - 24px)); max-height: min(720px, calc(100dvh - 24px));
+      inset: 0; margin: auto;
+      inline-size: min(540px, calc(100vw - 24px));
+      block-size: auto; max-inline-size: calc(100vw - 24px);
+      max-block-size: min(720px, calc(100dvh - 24px));
+      width: min(540px, calc(100vw - 24px)); height: auto;
       padding: 0; border: 0; border-radius: 18px; background: #fff; color: var(--ink);
       box-shadow: 0 24px 70px rgba(42, 28, 48, .28);
     }
@@ -1234,6 +1251,11 @@
           </div>
         </div>
         <div id="tab-advanced" class="advanced-options" role="tabpanel" aria-labelledby="tab-btn-advanced" hidden>
+          <div class="storage-block">
+            <div class="storage-title">来源元信息</div>
+            <button class="secondary" id="provenance-tools" type="button" title="扫描并补全来源元信息">来源扫描与补全</button>
+            <p class="model-hint">搜索框支持 author:pixiv:1554775、author:作者名、tag:标签。批量抓取按额度限速，可暂停与继续。</p>
+          </div>
           <label><input id="use-llm" type="checkbox" checked> 本地大模型理解条件</label>
           <label><input id="strict-tags" type="checkbox"> 细节标签至少命中一项</label>
           <label title="相同文件、相同内容哈希或相同感知哈希的图片只保留最先检索到的"><input id="dedupe" type="checkbox" checked> 去除重复</label>
@@ -1292,7 +1314,6 @@
           <div class="search-actions">
             <button class="primary" id="search" type="submit">查询</button>
             <button class="secondary random-browse" id="random-browse" type="button" title="在当前选定范围内随机翻阅">随机瀑布</button>
-            <button class="secondary" id="provenance-tools" type="button" title="扫描并补全来源元信息">来源</button>
           </div>
         </div>
         <div class="composer" id="composer">
@@ -1506,6 +1527,7 @@
       authorKey: '', authorName: '', authorTotal: 0,
       provenance: { open: false, imageId: '', data: null, seq: 0, loading: false },
       provenancePoll: 0, provenanceIdlePolls: 0,
+      viewerTitleCache: new Map(), viewerTitlePending: new Set(), viewerTitleTimer: 0,
       viewerMenuTrigger: null, viewerMenuSession: 0,
       cardMenuItem: null, cardMenuTrigger: null, cardMenuSession: 0,
     };
@@ -1800,6 +1822,58 @@
     function provenancePlainText(value) {
       return String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     }
+    function viewerTitleText(data, fallback) {
+      const record = data && data.record;
+      if (!record) return fallback;
+      const primary = record.title
+        || provenancePlainText(record.description).slice(0, 120);
+      if (!primary) return fallback;
+      const tags = (record.tags || [])
+        .filter((tag) => tag && !primary.includes(tag))
+        .slice(0, 4);
+      return primary + (tags.length ? ` · ${tags.join(' ')}` : '');
+    }
+    function cacheViewerTitle(pointId, text) {
+      if (!pointId || !text) return;
+      state.viewerTitleCache.set(pointId, text);
+      while (state.viewerTitleCache.size > 240) {
+        state.viewerTitleCache.delete(state.viewerTitleCache.keys().next().value);
+      }
+    }
+    function refreshViewerTitle(item) {
+      if (!item) return;
+      const fallback = item.path || item.name || '';
+      $('viewer-title').textContent = fallback;
+      if (!item.id) return;
+      const cached = state.viewerTitleCache.get(item.id);
+      if (cached) {
+        $('viewer-title').textContent = cached;
+        return;
+      }
+      clearTimeout(state.viewerTitleTimer);
+      state.viewerTitleTimer = setTimeout(() => fetchViewerTitle(item), 120);
+    }
+    async function fetchViewerTitle(item) {
+      if (!item || !item.id) return;
+      const cachedNow = state.viewerTitleCache.get(item.id);
+      if (cachedNow) {
+        if (state.current && state.current.id === item.id) $('viewer-title').textContent = cachedNow;
+        return;
+      }
+      if (state.viewerTitlePending.has(item.id)) return;
+      const fallback = item.path || item.name || '';
+      state.viewerTitlePending.add(item.id);
+      try {
+        const data = await parseResponse(await fetch(`/api/images/${encodeURIComponent(item.id)}/provenance`));
+        const text = viewerTitleText(data, fallback);
+        cacheViewerTitle(item.id, text);
+        if (state.current && state.current.id === item.id) $('viewer-title').textContent = text;
+      } catch (_) {
+        /* keep the path fallback */
+      } finally {
+        state.viewerTitlePending.delete(item.id);
+      }
+    }
     function provenanceStatusLabel(status) {
       return {
         pending: '待补全',
@@ -1836,22 +1910,32 @@
       const conflict = candidates.length
         ? `<div class="provenance-hint">其他候选：${candidates.map((item) => `${escapeHtml(item.platform)}:${escapeHtml(item.source_id)}${item.page != null ? `#${escapeHtml(String(item.page))}` : ''}`).join('；')}</div>`
         : '';
-      const links = [];
-      if (url) links.push(`<a href="${escapeHtml(url)}" target="_blank" rel="noopener">打开原帖</a>`);
+      const members = author && Array.isArray(author.members) ? author.members : [];
+      const platformIcons = members.map((member) => {
+        const profile = member.profile_url
+          || (member.platform === 'twitter' && member.handle ? `https://x.com/${member.handle}` : '');
+        if (!profile) return '';
+        const label = member.platform === 'pixiv' ? 'P' : member.platform === 'twitter' ? 'X' : '↗';
+        const title = `${member.platform}${member.handle ? ` · ${member.handle}` : ''}`;
+        return `<a class="platform-icon ${escapeHtml(member.platform)}" href="${escapeHtml(profile)}" target="_blank" rel="noopener" title="${escapeHtml(title)}">${label}</a>`;
+      }).join('');
+      const postButton = url
+        ? '<button type="button" data-prov-action="open-post">打开原帖</button>'
+        : '';
       body.innerHTML = `
         <div class="provenance-section">
           <div class="provenance-title">${escapeHtml(title)}</div>
           ${description ? `<div class="provenance-description">${escapeHtml(description)}</div>` : ''}
           <div class="provenance-row"><b>${platform}</b><span>${escapeHtml(record.source_id || '')}</span><span>${escapeHtml(data.page_label || '')}</span></div>
-          <div class="provenance-row"><span>作者</span>${authorButton}</div>
+          <div class="provenance-row"><span>作者</span>${authorButton}${platformIcons ? `<span class="platform-icons">${platformIcons}</span>` : ''}</div>
           <div class="provenance-row"><span>发布</span><span>${escapeHtml(record.posted_at || '')}</span></div>
           <div class="provenance-row"><span>状态</span><b>${escapeHtml(status)}</b></div>
-          <div class="provenance-row"><span>${links.join(' ')}</span></div>
+          <div class="provenance-row"><span>文件</span><span class="provenance-file" title="${escapeHtml(data.path || '')}">${escapeHtml(data.path || '')}</span></div>
           ${conflict}
           <div class="provenance-tags">${tags}</div>
           <div class="provenance-actions">
             <button type="button" data-prov-action="refresh">重新抓取</button>
-            <button type="button" data-prov-action="open-image">打开原图</button>
+            ${postButton}
             <button type="button" data-prov-action="saucenao">SauceNAO</button>
             <button type="button" data-prov-action="ascii2d">ascii2d</button>
             <button type="button" data-prov-action="copy-path">复制原图路径</button>
@@ -1874,8 +1958,8 @@
           </div>
         </form>`;
       body.querySelector('[data-prov-action="refresh"]')?.addEventListener('click', () => resolveProvenanceUrl(url, { silent: true }));
-      body.querySelector('[data-prov-action="open-image"]')?.addEventListener('click', () => {
-        if (data.point_id) window.open(`/image/${encodeURIComponent(data.point_id)}`, '_blank', 'noopener');
+      body.querySelector('[data-prov-action="open-post"]')?.addEventListener('click', () => {
+        if (url) window.open(url, '_blank', 'noopener');
       });
       body.querySelector('[data-prov-action="saucenao"]')?.addEventListener('click', () => window.open((data.reverse_search && data.reverse_search.saucenao) || 'https://saucenao.com/', '_blank', 'noopener'));
       body.querySelector('[data-prov-action="ascii2d"]')?.addEventListener('click', () => window.open((data.reverse_search && data.reverse_search.ascii2d) || 'https://ascii2d.net/', '_blank', 'noopener'));
@@ -1924,6 +2008,9 @@
         const data = await parseResponse(await fetch(`/api/images/${encodeURIComponent(pointId)}/provenance`));
         if (seq !== state.provenance.seq || state.provenance.imageId !== pointId) return;
         state.provenance.data = data;
+        const title = viewerTitleText(data, (state.current && state.current.path) || '');
+        cacheViewerTitle(pointId, title);
+        if (state.current && state.current.id === pointId) $('viewer-title').textContent = title;
         renderProvenance(data);
       } catch (error) {
         if (seq !== state.provenance.seq) return;
@@ -1947,6 +2034,9 @@
           body: JSON.stringify({ url }),
         }));
         state.provenance.data = data;
+        const title = viewerTitleText(data, (state.current && state.current.path) || '');
+        cacheViewerTitle(pointId, title);
+        if (state.current && state.current.id === pointId) $('viewer-title').textContent = title;
         renderProvenance(data);
       } catch (error) {
         if (!silent) $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">解析失败：${escapeHtml(error.message)}</p>`);
@@ -1970,6 +2060,9 @@
           body: JSON.stringify(body),
         }));
         state.provenance.data = data;
+        const title = viewerTitleText(data, (state.current && state.current.path) || '');
+        cacheViewerTitle(pointId, title);
+        if (state.current && state.current.id === pointId) $('viewer-title').textContent = title;
         renderProvenance(data);
       } catch (error) {
         $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">保存失败：${escapeHtml(error.message)}</p>`);
@@ -5975,6 +6068,7 @@
       state.current = item;
       state.currentRefKey = null;
       $('viewer-title').textContent = item.path;
+      refreshViewerTitle(item);
       updateViewerNav();
       updateProvenanceButton();
       loadImageNotes();
@@ -5986,6 +6080,7 @@
       state.currentRefKey = ref.key;
       state.current = ref.id ? { id: ref.id, name: ref.name, path: ref.name } : null;
       $('viewer-title').textContent = ref.name;
+      updateProvenanceButton();
       updateViewerNav();
       loadImageNotes();
     }

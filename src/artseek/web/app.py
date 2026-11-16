@@ -4,6 +4,7 @@ import dataclasses
 import json
 import mimetypes
 import random
+import re
 import tempfile
 import threading
 import time
@@ -71,6 +72,7 @@ from ..provenance import (
     parse_source_text,
     scan_payloads,
 )
+from ..query import QueryPlan
 from ..search import SearchEngine
 from ..search_cache import SearchSnapshotStore, is_snapshot_id
 from ..store import VectorStore
@@ -1255,31 +1257,56 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         if request.reference_id:
             specs.append(ReferenceSpec(id=request.reference_id, weight=1.0))
         paths, weights = resolve_library_references(specs)
-        restrict_ids = (
-            app.state.provenance.point_ids_for_author(request.author_key)
-            if request.author_key
-            else None
+        cleaned_query, author_token, tag_tokens = parse_query_filters(request.query)
+        author_key = request.author_key or (
+            resolve_author_token(author_token) if author_token else None
         )
-        try:
-            response = app.state.engine.search(
-                request.query,
-                images=paths,
-                text_weight=request.text_weight,
-                image_weights=weights,
-                limit=request.limit,
-                expand=request.expand,
-                strict_tags=request.strict_tags,
-                folder_keys=resolve_folder_keys(request.folder_keys),
+        restrict_ids = restricted_ids(
+            author_key=author_key,
+            tag_tokens=tag_tokens,
+        )
+        search_text = cleaned_query
+        if tag_tokens:
+            search_text = " ".join([search_text, *tag_tokens]).strip()
+        folder_keys = resolve_folder_keys(request.folder_keys)
+        if not search_text and not specs and restrict_ids is not None:
+            payload = filter_only_search(
+                query=request.query,
+                author_key=author_key,
+                tag_tokens=tag_tokens,
+                point_ids=restrict_ids,
+                offset=max(0, request.offset),
+                limit=max(1, min(request.limit, 200)),
+                folder_keys=folder_keys,
                 mtime_after=request.mtime_after,
                 mtime_before=request.mtime_before,
-                offset=request.offset,
-                exclude_ids=request.exclude_ids,
-                dedupe=request.dedupe,
-                restrict_ids=restrict_ids,
             )
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        return persist_search_snapshot(
+        else:
+            try:
+                response = app.state.engine.search(
+                    search_text,
+                    images=paths,
+                    text_weight=request.text_weight,
+                    image_weights=weights,
+                    limit=request.limit,
+                    expand=request.expand,
+                    strict_tags=request.strict_tags,
+                    folder_keys=folder_keys,
+                    mtime_after=request.mtime_after,
+                    mtime_before=request.mtime_before,
+                    offset=request.offset,
+                    exclude_ids=request.exclude_ids,
+                    dedupe=request.dedupe,
+                    restrict_ids=restrict_ids,
+                )
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            payload = dataclasses.asdict(response)
+            payload["applied_filters"] = {
+                "author_key": author_key,
+                "tags": tag_tokens,
+            }
+        payload = persist_search_snapshot(
             snapshot_id=request.snapshot_id,
             query=request.query,
             text_weight=request.text_weight,
@@ -1288,12 +1315,17 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             strict_tags=request.strict_tags,
             dedupe=request.dedupe,
             limit=request.limit,
-            folder_keys=resolve_folder_keys(request.folder_keys),
+            folder_keys=folder_keys,
             mtime_after=request.mtime_after,
             mtime_before=request.mtime_before,
             offset=request.offset,
-            payload=dataclasses.asdict(response),
+            payload=payload,
         )
+        payload.setdefault(
+            "applied_filters",
+            {"author_key": author_key, "tags": tag_tokens},
+        )
+        return payload
 
     @app.post("/api/search-upload")
     async def search_upload(
@@ -1327,27 +1359,57 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                     temps.append(Path(handle.name))
                     handle.write(await file.read())
             folder_keys_list = resolve_folder_keys(parse_folder_keys(folder_keys))
-            response = app.state.engine.search(
-                query,
-                images=library_paths + temps,
-                text_weight=max(0.0, min(text_weight, 8.0)),
-                image_weights=library_weights + upload_weights,
-                limit=max(1, min(limit, 200)),
-                expand=expand,
-                strict_tags=strict_tags,
-                folder_keys=folder_keys_list,
-                mtime_after=mtime_after or None,
-                mtime_before=mtime_before or None,
-                offset=max(0, min(offset, 4000)),
-                exclude_ids=_parse_id_list(exclude_ids),
-                dedupe=dedupe,
-                restrict_ids=(
-                    app.state.provenance.point_ids_for_author(author_key)
-                    if author_key
-                    else None
-                ),
+            cleaned_query, author_token, tag_tokens = parse_query_filters(query)
+            resolved_author = author_key.strip() or (
+                resolve_author_token(author_token) if author_token else None
             )
-            return persist_search_snapshot(
+            restrict_ids = restricted_ids(
+                author_key=resolved_author,
+                tag_tokens=tag_tokens,
+            )
+            search_text = " ".join(
+                [cleaned_query, *tag_tokens]
+            ).strip()
+            if (
+                not search_text
+                and not library_paths
+                and not temps
+                and restrict_ids is not None
+            ):
+                payload = filter_only_search(
+                    query=query,
+                    author_key=resolved_author,
+                    tag_tokens=tag_tokens,
+                    point_ids=restrict_ids,
+                    offset=max(0, min(offset, 4000)),
+                    limit=max(1, min(limit, 200)),
+                    folder_keys=folder_keys_list,
+                    mtime_after=mtime_after or None,
+                    mtime_before=mtime_before or None,
+                )
+            else:
+                response = app.state.engine.search(
+                    search_text,
+                    images=library_paths + temps,
+                    text_weight=max(0.0, min(text_weight, 8.0)),
+                    image_weights=library_weights + upload_weights,
+                    limit=max(1, min(limit, 200)),
+                    expand=expand,
+                    strict_tags=strict_tags,
+                    folder_keys=folder_keys_list,
+                    mtime_after=mtime_after or None,
+                    mtime_before=mtime_before or None,
+                    offset=max(0, min(offset, 4000)),
+                    exclude_ids=_parse_id_list(exclude_ids),
+                    dedupe=dedupe,
+                    restrict_ids=restrict_ids,
+                )
+                payload = dataclasses.asdict(response)
+                payload["applied_filters"] = {
+                    "author_key": resolved_author,
+                    "tags": tag_tokens,
+                }
+            payload = persist_search_snapshot(
                 snapshot_id=snapshot_id or None,
                 query=query,
                 text_weight=max(0.0, min(text_weight, 8.0)),
@@ -1360,9 +1422,14 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 mtime_after=mtime_after or None,
                 mtime_before=mtime_before or None,
                 offset=max(0, min(offset, 4000)),
-                payload=dataclasses.asdict(response),
+                payload=payload,
                 had_file_refs=bool(files),
             )
+            payload.setdefault(
+                "applied_filters",
+                {"author_key": resolved_author, "tags": tag_tokens},
+            )
+            return payload
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         finally:
@@ -1397,6 +1464,100 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         return payload
 
     # --------------------------------------------------------------- provenance
+
+    filter_token_re = re.compile(
+        r'(?:^|\s)(author|artist|tag):(?:"([^"]+)"|(\S+))',
+        re.IGNORECASE,
+    )
+
+    def parse_query_filters(query: str) -> tuple[str, str | None, list[str]]:
+        author: str | None = None
+        tags: list[str] = []
+
+        def take(match: re.Match[str]) -> str:
+            nonlocal author
+            key = match.group(1).casefold()
+            value = (match.group(2) or match.group(3) or "").strip()
+            if key in {"author", "artist"} and value:
+                author = value
+            elif key == "tag" and value:
+                tags.append(value)
+            return " "
+
+        cleaned = re.sub(r"\s+", " ", filter_token_re.sub(take, query or "")).strip()
+        return cleaned, author, tags
+
+    def resolve_author_token(value: str) -> str:
+        store: ProvenanceStore = app.state.provenance
+        token = str(value or "").strip().lstrip("@")
+        summary = store.author_summary(token)
+        if summary is not None:
+            return str(summary["key"])
+        matches = store.list_authors(token, limit=6)
+        if len(matches) == 1:
+            return str(matches[0]["key"])
+        if not matches:
+            raise HTTPException(400, f"没有找到作者：{value}")
+        names = "、".join(
+            f"{item.get('name') or item['key']}（{item['key']}）" for item in matches
+        )
+        raise HTTPException(400, f"作者不唯一，请使用完整 key：{names}")
+
+    def restricted_ids(
+        *,
+        author_key: str | None,
+        tag_tokens: list[str],
+    ) -> list[str] | None:
+        store: ProvenanceStore = app.state.provenance
+        result: set[str] | None = None
+        if author_key:
+            result = set(store.point_ids_for_author(author_key))
+        if tag_tokens:
+            tagged = set(store.point_ids_for_tags(tag_tokens))
+            result = tagged if result is None else result & tagged
+        return list(result) if result is not None else None
+
+    def filter_only_search(
+        *,
+        query: str,
+        author_key: str | None,
+        tag_tokens: list[str],
+        point_ids: list[str],
+        offset: int,
+        limit: int,
+        folder_keys: list[str] | None,
+        mtime_after: str | None,
+        mtime_before: str | None,
+    ) -> dict[str, Any]:
+        scoped = point_ids
+        if folder_keys is not None:
+            catalog = app.state.engine.folder_catalog()
+            scope_ids = catalog.point_ids(
+                folder_keys,
+                after_ns=day_start_ns(mtime_after),
+                before_ns=day_end_ns(mtime_before),
+            )
+            if scope_ids is not None:
+                allowed = set(scope_ids)
+                scoped = [item_id for item_id in scoped if item_id in allowed]
+        page_ids = scoped[offset : offset + limit]
+        payloads = app.state.engine.store.retrieve_payloads(page_ids)
+        results = [
+            gallery_result(point_id, payloads[point_id])
+            for point_id in page_ids
+            if isinstance(payloads.get(point_id), dict)
+        ]
+        plan = QueryPlan(original=query, semantic_zh="", positive_tags=tag_tokens)
+        return {
+            "query_plan": dataclasses.asdict(plan),
+            "results": results,
+            "has_more": offset + len(page_ids) < len(scoped),
+            "offset": offset,
+            "applied_filters": {
+                "author_key": author_key,
+                "tags": tag_tokens,
+            },
+        }
 
     def provenance_budgets() -> list[dict[str, Any]]:
         store: ProvenanceStore = app.state.provenance
