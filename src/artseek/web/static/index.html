@@ -1660,6 +1660,7 @@
       SEARCH_SORT_OPTIONS.map((option) => [option.value, option.label])
     );
     const FOLDER_SORT_STORAGE_KEY = 'artseek.folderSort';
+    const FOLDER_SELECTION_STORAGE_KEY = 'artseek.selectedFolders';
     function loadFolderSort() {
       try {
         const value = localStorage.getItem(FOLDER_SORT_STORAGE_KEY);
@@ -7553,6 +7554,36 @@
       if (selected === keys.length) return 'all';
       return 'mixed';
     }
+    function loadCachedFolderSelection() {
+      try {
+        const raw = localStorage.getItem(FOLDER_SELECTION_STORAGE_KEY);
+        if (raw === null) return null;
+        const value = JSON.parse(raw);
+        return Array.isArray(value) ? value.filter((key) => typeof key === 'string' && key) : null;
+      } catch (_) {
+        return null;
+      }
+    }
+    function saveCachedFolderSelection() {
+      try {
+        localStorage.setItem(
+          FOLDER_SELECTION_STORAGE_KEY,
+          JSON.stringify([...treeState.selected]),
+        );
+      } catch (_) {
+        // Storage can be unavailable in private contexts.
+      }
+    }
+    function restoreCachedFolderSelection() {
+      const cached = loadCachedFolderSelection();
+      if (cached === null) return false;
+      const valid = new Set(allFolderKeys(treeState.roots));
+      treeState.selected = new Set(cached.filter((key) => valid.has(key)));
+      renderTree();
+      updateTreeSummary();
+      saveCachedFolderSelection();
+      return true;
+    }
     function setFolderSelection(keys, selected) {
       for (const key of keys) {
         if (selected) treeState.selected.add(key);
@@ -7560,6 +7591,7 @@
       }
       renderTree();
       updateTreeSummary();
+      saveCachedFolderSelection();
       scheduleTreeSave();
       refreshDefaultGallery();
     }
@@ -8656,12 +8688,14 @@
         }),
       ]);
       const route = parseAppRoute();
-      // A fresh page starts with no checked folders. Search/random deep links
-      // keep their persisted scope because they cannot run without one.
-      if (route.kind !== 'search' && route.kind !== 'random' && route.kind !== 'author') {
-        treeState.selected.clear();
-        renderTree();
-        updateTreeSummary();
+      if (!restoreCachedFolderSelection()) {
+        // No browser cache yet: keep the server-persisted scope for deep links,
+        // and start the landing page with no checked folders.
+        if (route.kind !== 'search' && route.kind !== 'random' && route.kind !== 'author') {
+          treeState.selected.clear();
+          renderTree();
+          updateTreeSummary();
+        }
       }
       history.replaceState({ artseek: 1, overlay: 0, ...route }, '', currentHref());
       if (route.kind === 'home') resetGalleryToIdle();
