@@ -6064,7 +6064,7 @@
         return;
       }
       if (snapshot.mode === 'scope') {
-        commitRoute({ kind: 'home' }, { replace: true, overlay: 0 });
+        commitRoute({ kind: 'scope' }, { replace: true, overlay: 0 });
         startScopeBrowse({ skipRoute: true });
         return;
       }
@@ -8412,6 +8412,9 @@
       if (parts[0] === 'tag' && parts[1]) {
         return { kind: 'tag', tag: decodeURIComponent(parts[1]) };
       }
+      if (parts[0] === 'scope') {
+        return { kind: 'scope' };
+      }
       return { kind: 'home' };
     }
     function appRouteHref(route) {
@@ -8431,6 +8434,7 @@
         const query = params.toString();
         return query ? `/search?${query}` : '/search';
       }
+      if (route.kind === 'scope') return '/scope';
       if (route.kind === 'folder') {
         const author = route.author ? `&author=${encodeURIComponent(route.author)}` : '';
         return `/folder?key=${encodeURIComponent(route.key || '')}${author}`;
@@ -8478,6 +8482,7 @@
           text_tags: filters.text_tags,
         };
       }
+      if (state.mode === 'scope') return { kind: 'scope' };
       if (state.mode === 'browse' && state.browseKey) {
         return { kind: 'folder', key: state.browseKey, author: state.authorKey || '' };
       }
@@ -8538,6 +8543,10 @@
       }
       if (route.kind === 'random') {
         document.title = '随机浏览 · ArtSeek';
+        return;
+      }
+      if (route.kind === 'scope') {
+        document.title = '范围浏览 · ArtSeek';
         return;
       }
       document.title = 'ArtSeek · 本地插画检索';
@@ -8800,6 +8809,10 @@
         }
         if (route.kind === 'search') {
           await applySearchRoute(route);
+        } else if (route.kind === 'scope') {
+          if (!(state.mode === 'scope' && state.results.length)) {
+            startScopeBrowse({ skipRoute: true });
+          }
         } else if (route.kind === 'folder' && route.key) {
           if (!(state.mode === 'browse' && state.browseKey === route.key && state.results.length)) {
             previewFolder(route.key, route.key, { skipRoute: true });
@@ -8898,7 +8911,7 @@
       if (!restoreCachedFolderSelection()) {
         // No browser cache yet: keep the server-persisted scope for deep links,
         // and start the landing page with no checked folders.
-        if (route.kind !== 'search' && route.kind !== 'random' && route.kind !== 'author') {
+        if (route.kind !== 'search' && route.kind !== 'random' && route.kind !== 'author' && route.kind !== 'scope') {
           treeState.selected.clear();
           renderTree();
           updateTreeSummary();
