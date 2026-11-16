@@ -1019,6 +1019,20 @@
       font-size: 22px; line-height: 1;
     }
     .viewer-close:hover { transform: none; background: rgba(48, 43, 52, .94); }
+    .viewer-ui-toggle {
+      position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; height: 76px;
+      display: block; padding: 0; border: 0; border-radius: 0; background: transparent;
+      cursor: default; touch-action: none; -webkit-tap-highlight-color: transparent;
+    }
+    .viewer-ui-toggle:focus-visible { outline: 2px solid #ddb2c2; outline-offset: -8px; }
+    #viewer.is-ui-hidden .modal-bar { display: none; }
+    #viewer.is-ui-hidden .viewer-close,
+    #viewer.is-ui-hidden .viewer-nav,
+    #viewer.is-ui-hidden .viewer-mobile-actions,
+    #viewer.is-ui-hidden .viewer-mobile-details-menu,
+    #viewer.is-ui-hidden .viewer-collection-menu {
+      opacity: 0; visibility: hidden; pointer-events: none;
+    }
     .viewer-mobile-actions, .viewer-mobile-details-menu { display: none; }
     .modal-bar {
       flex: 0 0 auto; padding: 8px 12px; display: flex; flex-wrap: wrap;
@@ -1351,6 +1365,27 @@
         display: flex; align-items: center; justify-content: space-between;
         padding: 0 14px; pointer-events: none;
       }
+      .viewer-mobile-actions::before {
+        content: ""; position: absolute; left: 0; right: 0; top: -18px; bottom: -14px;
+        z-index: -1; pointer-events: none;
+        background: linear-gradient(to top, rgba(10,8,12,.62), rgba(10,8,12,0));
+      }
+      .viewer-mobile-meta {
+        flex: 1 1 auto; min-width: 0; margin: 0 10px; text-align: center;
+        color: #fff; pointer-events: none;
+        text-shadow: 0 1px 4px rgba(0,0,0,.72);
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      }
+      .viewer-mobile-title {
+        overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+        font-size: 14px; line-height: 1.25; font-weight: 600; letter-spacing: -.01em;
+      }
+      .viewer-mobile-author {
+        overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+        margin-top: 1px; color: rgba(255,255,255,.74);
+        font-size: 11px; line-height: 1.2; font-weight: 450;
+      }
+      .viewer-mobile-author[hidden] { display: none; }
       .viewer-mobile-actions[hidden] { display: none; }
       .viewer-mobile-action {
         width: 48px; height: 48px; min-width: 48px; padding: 0;
@@ -1657,6 +1692,7 @@
       </div>
       <div class="provenance-body" id="provenance-body"></div>
     </aside>
+      <button id="viewer-ui-toggle" class="viewer-ui-toggle" type="button" aria-label="隐藏界面" aria-pressed="false"></button>
     </div>
     <div class="modal-bar">
       <span id="viewer-title"></span>
@@ -1679,6 +1715,10 @@
       <button id="viewer-mobile-details" class="viewer-mobile-action" type="button" aria-label="详细信息" aria-haspopup="dialog" aria-expanded="false" aria-controls="viewer-mobile-details-menu">
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 10.8v5.4M12 7.8h.01"/></svg>
       </button>
+      <div class="viewer-mobile-meta" aria-hidden="true">
+        <div id="viewer-mobile-title" class="viewer-mobile-title"></div>
+        <div id="viewer-mobile-author" class="viewer-mobile-author"></div>
+      </div>
       <button id="viewer-mobile-favorite" class="viewer-mobile-action" type="button" aria-label="收藏到收藏夹" aria-haspopup="dialog" aria-expanded="false" aria-controls="viewer-collection-menu">
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20.8 8.6c0 5.2-8.8 10.1-8.8 10.1S3.2 13.8 3.2 8.6A4.6 4.6 0 0 1 12 6.1a4.6 4.6 0 0 1 8.8 2.5Z"/></svg>
       </button>
@@ -1844,7 +1884,7 @@
       tempReturn: null,
       searchSort: 'mtime_desc', searchSeed: null,
       mobileSearchOpen: false, mobileSearchIgnoreScrollUntil: 0,
-      cardActionRevealCard: null, cardActionRevealTimer: 0,
+      cardActionRevealCard: null, cardActionRevealTimer: 0, viewerUiHidden: false,
       authorSort: 'mtime', authorSeed: null, tagSort: 'mtime', tagSeed: null,
       colHeights: [],
       mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
@@ -2241,7 +2281,19 @@
         state.viewerTitleCache.delete(state.viewerTitleCache.keys().next().value);
       }
     }
+    function renderMobileViewerMeta(item, model) {
+      const title = String((model && model.title) || (model && model.fallback) || (item && (item.name || item.path)) || '');
+      const author = String((model && model.authorName) || '');
+      const titleEl = $('viewer-mobile-title');
+      const authorEl = $('viewer-mobile-author');
+      titleEl.textContent = title || '无题';
+      titleEl.title = title;
+      authorEl.textContent = author;
+      authorEl.title = author;
+      authorEl.hidden = !author;
+    }
     function renderViewerTitle(item, model) {
+      renderMobileViewerMeta(item, model);
       const host = $('viewer-title');
       host.replaceChildren();
       if (!model || !model.title) {
@@ -2872,6 +2924,20 @@
         $('provenance-dialog-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">操作失败：${escapeHtml(error.message)}</p>`);
       }
       await refreshProvenanceDialog();
+    }
+    function setViewerUiHidden(hidden) {
+      state.viewerUiHidden = Boolean(hidden);
+      $('viewer').classList.toggle('is-ui-hidden', state.viewerUiHidden);
+      const toggle = $('viewer-ui-toggle');
+      toggle.setAttribute('aria-pressed', String(state.viewerUiHidden));
+      toggle.setAttribute('aria-label', state.viewerUiHidden ? '显示界面' : '隐藏界面');
+      if (state.viewerUiHidden) {
+        closeMobileViewerDetails();
+        closeViewerCollectionMenu({ restoreFocus: false });
+      }
+      requestAnimationFrame(() => {
+        if ($('viewer').open && typeof fitViewerFrame === 'function') fitViewerFrame();
+      });
     }
     function closeMobileViewerDetails() {
       const menu = $('viewer-mobile-details-menu');
@@ -3903,6 +3969,13 @@
       event.preventDefault();
       closeMobileViewerDetails();
     }, true);
+    $('viewer-ui-toggle').addEventListener('click', () => {
+      setViewerUiHidden(!state.viewerUiHidden);
+    });
+    $('viewer').querySelector('.modal-bar').addEventListener('click', (event) => {
+      if (event.target.closest('button, a, input, label, select')) return;
+      setViewerUiHidden(!state.viewerUiHidden);
+    });
     $('viewer-close').addEventListener('click', () => dismissViewer());
     $('viewer').addEventListener('cancel', (event) => {
       event.preventDefault();
@@ -3910,6 +3983,7 @@
       else dismissViewer();
     });
     $('viewer').addEventListener('close', () => {
+      setViewerUiHidden(false);
       closeMobileViewerDetails();
       closeViewerCollectionMenu({ restoreFocus: false });
       closeNotesPane({ skipRoute: true });
@@ -8030,6 +8104,7 @@
       state.currentRefKey = ref.key;
       state.current = ref.id ? { id: ref.id, name: ref.name, path: ref.name } : null;
       $('viewer-title').textContent = ref.name;
+      renderMobileViewerMeta(ref, { title: ref.name });
       updateProvenanceButton();
       updateViewerNav();
       loadImageNotes();
@@ -8037,6 +8112,7 @@
     function openViewer(item) {
       const alreadyOpen = $('viewer').open;
       if (!alreadyOpen) state.viewerReturnRoute = appRouteHref(currentGalleryRoute());
+      if (!alreadyOpen) setViewerUiHidden(false);
       applyGalleryViewerState(item);
       resetView();
       if (!alreadyOpen) $('viewer').showModal();
@@ -8303,13 +8379,6 @@
         view.lastTapX = event.clientX;
         view.lastTapY = event.clientY;
         clearTimeout(view.clickTimer);
-        if (view.hitImage) {
-          view.clickTimer = setTimeout(() => {
-            view.clickTimer = 0;
-            dismissViewer();
-          }, 400);
-          return;
-        }
         if (!isViewFitted()) return;
         const rect = stage.getBoundingClientRect();
         const ratio = (event.clientX - rect.left) / rect.width;
