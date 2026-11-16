@@ -280,12 +280,14 @@ def provenance_enrich_command(
             PIXIV_DOMAIN,
             min_interval=max(0.0, cfg.provenance.pixiv_min_interval),
             daily_limit=cfg.provenance.pixiv_daily_limit,
+            concurrency=max(1, cfg.provenance.pixiv_concurrency),
         ),
         twitter_limiter=RateLimiter(
             store,
             TWITTER_DOMAIN,
             min_interval=max(0.0, cfg.provenance.twitter_min_interval),
             daily_limit=cfg.provenance.twitter_daily_limit,
+            concurrency=max(1, cfg.provenance.twitter_concurrency),
         ),
     )
     try:

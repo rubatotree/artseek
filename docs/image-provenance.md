@@ -193,7 +193,7 @@ CREATE TABLE fetch_state (
 | Pixiv 作品 | `https://www.pixiv.net/ajax/illust/{id}` | 未登录可返回公开作品；限流、Cloudflare、reCAPTCHA | 1 请求 / 0.75 秒，单并发 |
 | Pixiv 分页 | `https://www.pixiv.net/ajax/illust/{id}/pages` | 返回每页原图 URL、宽高 | 与作品信息合并，最多 2 请求/作品 |
 | Pixiv 作者 | `https://www.pixiv.net/ajax/user/{uid}?full=1` | 返回 `social.twitter.url` | 每个作者只取一次 |
-| X/Twitter | `https://api.fxtwitter.com/status/{id}` | 公开 API；文档标称 1000 请求/分钟/IP | 1–2 请求/秒，单并发 |
+| X/Twitter | `https://api.fxtwitter.com/status/{id}` | 公开 API；文档标称 1000 请求/分钟/IP | ~5 请求/秒，4 并发 |
 | SauceNAO | `https://saucenao.com/search.php?output_type=2&api_key=...` | 响应头含 `short_remaining`（30 秒）与 `long_remaining`（24 小时）；403 = key 无效；非 200 = 过载或额度耗尽 | 4 请求 / 30 秒；每日额度以 `long_remaining` 为准 |
 | ascii2d | `https://ascii2d.net/search/file` | 无公开 API；Cloudflare 会拦截脚本；HTML 结构易变 | 仅手动触发，1 请求 / 10 秒，失败即停 |
 
@@ -216,8 +216,8 @@ CREATE TABLE fetch_state (
 所有外网请求走一个单例 `FetchScheduler`：
 
 ```text
-per-domain 单并发
-per-domain 最小间隔（pixiv 2s, fxtwitter 1s, saucenao 7.5s, ascii2d 10s）
+Pixiv 默认 1 并发；FxTwitter 默认 4 并发
+per-domain 请求起始间隔（pixiv 0.75s, fxtwitter 0.2s, saucenao 7.5s, ascii2d 10s）
 全局指数退避：30m → 2h → 12h → 24h
 收到 403/429：立即写入 blocked_until，当前任务暂停，不重试
 每日预算：默认不设上限（`0`）；仍保留每域名最小间隔；saucenao = long_remaining；ascii2d 200
@@ -242,10 +242,10 @@ per-domain 最小间隔（pixiv 2s, fxtwitter 1s, saucenao 7.5s, ascii2d 10s）
 2. **补全已识别来源（小时级）**：只请求已有 `pixiv:{id}` / `twitter:{id}` 的记录。默认动作。
 3. **反向搜图（天/周级）**：SauceNAO / ascii2d，只处理未识别的图；必须手动确认预算。
 
-估算（单并发）：
+估算（Pixiv 1 并发 + FxTwitter 4 并发）：
 
 - <pixiv-work-count> 个 Pixiv 作品 × 2 请求 / 0.75 秒 ≈ 3.4 小时（作者资料有缓存）。
-- <twitter-status-count> 条推文 / 0.2 秒 ≈ 1 小时。
+- <twitter-status-count> 条推文，4 并发、约 4 请求/秒 ≈ 1.2 小时；两个平台并行执行。
 - <unresolved-count> 张未识别图，SauceNAO 100 次/天 ≈ **150 天**；这是必须提前告诉用户的数字。
 - ascii2d 不稳定，不作为批量方案。
 
@@ -398,7 +398,7 @@ tag:オリジナル tag:女の子
 2. **Pixiv Cookie**：不使用登录 Cookie；公开作品直接读取元信息。
 3. **作者筛选**：有图库范围时在当前范围内过滤；直接打开图片时进入 `/author/{key}` 作者页。
 4. **自动补全**：`[provenance] auto_enrich = true` 默认开启，只自动补 Pixiv/X；不自动反向搜图。
-5. **限速**：Pixiv 0.75 秒/请求、FxTwitter 0.2 秒/请求；默认不设每日上限；可在 `config.toml` 调整或恢复 `daily_limit > 0`。
+5. **限速**：Pixiv 0.75 秒/请求、1 并发；FxTwitter 0.2 秒/请求、4 并发；默认不设每日上限；可在 `config.toml` 调整并发/间隔或恢复 `daily_limit > 0`。
 
 ---
 

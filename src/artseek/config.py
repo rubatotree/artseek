@@ -91,6 +91,8 @@ class ProvenanceConfig:
     auto_enrich: bool = True
     pixiv_min_interval: float = 0.75
     twitter_min_interval: float = 0.2
+    pixiv_concurrency: int = 1
+    twitter_concurrency: int = 4
     pixiv_daily_limit: int = 0
     twitter_daily_limit: int = 0
     author_ttl_days: int = 30
@@ -238,10 +240,12 @@ full_verification_interval_seconds = 86400
 [provenance]
 # 索引完成后自动为能识别的 Pixiv/X 文件名补全来源；不自动调用反向搜图。
 auto_enrich = true
-# 单并发、按域名限速。提高额度前请先了解 pixiv 的限流与风控。
+# 按域名限速；Pixiv 默认单并发，FxTwitter 默认 4 并发。
 pixiv_min_interval = 0.75
 twitter_min_interval = 0.2
-# 0 表示不设每日请求上限，仅保留每个域名的请求间隔。
+pixiv_concurrency = 1
+twitter_concurrency = 4
+# 0 表示不设每日请求上限，仅保留每个域名的请求间隔与并发数。
 pixiv_daily_limit = 0
 twitter_daily_limit = 0
 author_ttl_days = 30

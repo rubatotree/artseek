@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable, Iterable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from queue import Empty, Queue
 from typing import Any
 
 import httpx
@@ -106,6 +107,7 @@ class FetchResult:
 class BudgetSnapshot:
     domain: str
     min_interval: float
+    concurrency: int
     daily_limit: int | None
     used_today: int
     blocked_until: int
@@ -115,6 +117,7 @@ class BudgetSnapshot:
         return {
             "domain": self.domain,
             "min_interval": self.min_interval,
+            "concurrency": self.concurrency,
             "daily_limit": self.daily_limit,
             "used_today": self.used_today,
             "blocked_until": self.blocked_until,
@@ -123,6 +126,7 @@ class BudgetSnapshot:
 
 
 _DOMAIN_LOCKS: dict[tuple[str, str], threading.RLock] = {}
+_DOMAIN_SEMAPHORES: dict[tuple[str, str], threading.BoundedSemaphore] = {}
 _DOMAIN_LOCKS_GUARD = threading.Lock()
 
 
@@ -130,6 +134,16 @@ def _domain_lock(store: ProvenanceStore, domain: str) -> threading.RLock:
     key = (str(store.path.resolve()).casefold(), domain)
     with _DOMAIN_LOCKS_GUARD:
         return _DOMAIN_LOCKS.setdefault(key, threading.RLock())
+
+
+def _domain_semaphore(
+    store: ProvenanceStore, domain: str, concurrency: int
+) -> threading.BoundedSemaphore:
+    key = (str(store.path.resolve()).casefold(), domain)
+    with _DOMAIN_LOCKS_GUARD:
+        return _DOMAIN_SEMAPHORES.setdefault(
+            key, threading.BoundedSemaphore(max(1, int(concurrency)))
+        )
 
 
 class RateLimiter:
@@ -140,6 +154,7 @@ class RateLimiter:
         *,
         min_interval: float,
         daily_limit: int,
+        concurrency: int = 1,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.time,
     ):
@@ -151,6 +166,8 @@ class RateLimiter:
         self.sleep = sleep
         self.clock = clock
         self._lock = _domain_lock(store, domain)
+        self.concurrency = max(1, int(concurrency))
+        self._semaphore = _domain_semaphore(store, domain, self.concurrency)
 
     def snapshot(self) -> BudgetSnapshot:
         state = self.store.domain_state(self.domain)
@@ -159,6 +176,7 @@ class RateLimiter:
         return BudgetSnapshot(
             domain=self.domain,
             min_interval=self.min_interval,
+            concurrency=self.concurrency,
             daily_limit=self.daily_limit,
             used_today=used_today,
             blocked_until=int(state.get("blocked_until") or 0),
@@ -200,6 +218,47 @@ class RateLimiter:
     def record(self) -> None:
         self.store.note_request(self.domain)
 
+    def _reserve(
+        self,
+        *,
+        stop_event: threading.Event | None = None,
+        pause_event: threading.Event | None = None,
+    ) -> None:
+        """Reserve a request start time while allowing concurrent in-flight calls."""
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                raise BudgetExhausted("任务已停止")
+            while pause_event is not None and pause_event.is_set():
+                if stop_event is not None and stop_event.is_set():
+                    raise BudgetExhausted("任务已停止")
+                self.sleep(0.25)
+            with self._lock:
+                state = self.store.domain_state(self.domain)
+                now = int(self.clock())
+                blocked_until = int(state.get("blocked_until") or 0)
+                if blocked_until > now:
+                    wait_for = min(5.0, max(0.25, blocked_until - now))
+                else:
+                    day = time.strftime("%Y-%m-%d", time.gmtime(now))
+                    used = (
+                        int(state.get("day_count") or 0)
+                        if state.get("day") == day
+                        else 0
+                    )
+                    if self.daily_limit is not None and used >= self.daily_limit:
+                        raise BudgetExhausted(
+                            f"{self.domain} 今日预算已用完（{used}/{self.daily_limit}）"
+                        )
+                    start = max(
+                        float(self.clock()),
+                        float(state.get("last_request") or 0.0) + self.min_interval,
+                    )
+                    if start <= self.clock():
+                        self.store.note_request(self.domain)
+                        return
+                    wait_for = start - self.clock()
+            self.sleep(min(5.0, max(0.05, wait_for)))
+
     @contextmanager
     def slot(
         self,
@@ -207,19 +266,10 @@ class RateLimiter:
         stop_event: threading.Event | None = None,
         pause_event: threading.Event | None = None,
     ):
-        """Serialize the request slot across every service instance.
-
-        The first wait happens outside the lock so a paused scan/enrichment job
-        cannot block a manual viewer request. The second wait closes the race
-        between two threads that both observed a free slot.
-        """
-        self.wait(stop_event=stop_event, pause_event=pause_event)
-        with self._lock:
-            self.wait(stop_event=stop_event, pause_event=pause_event)
-            try:
-                yield
-            finally:
-                self.record()
+        """Allow up to `concurrency` in-flight requests, spaced by the interval."""
+        with self._semaphore:
+            self._reserve(stop_event=stop_event, pause_event=pause_event)
+            yield
 
     def block(self, seconds: int, error: str) -> int:
         return self.store.set_blocked(self.domain, seconds, error)
@@ -610,47 +660,112 @@ class ProvenanceService:
         rows = list(records)
         if limit is not None:
             rows = rows[: max(0, int(limit))]
-        summary = {"total": len(rows), "ok": 0, "failed": 0, "stopped": False}
-        for index, record in enumerate(rows, start=1):
-            if self.stop_event.is_set():
-                summary["stopped"] = True
-                break
+        summary: dict[str, Any] = {
+            "total": len(rows),
+            "ok": 0,
+            "failed": 0,
+            "stopped": False,
+        }
+        if not rows:
+            return summary
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for record in rows:
+            groups.setdefault(str(record.get("platform") or ""), []).append(record)
+        lock = threading.Lock()
+        done = [0]
+
+        def report(record: dict[str, Any]) -> None:
+            with lock:
+                done[0] += 1
+                current = done[0]
+                if progress is not None:
+                    label = str(record.get("title") or record.get("source_id") or "")
+                    progress(current, len(rows), label)
+
+        def handle(record: dict[str, Any], abort: threading.Event) -> None:
+            if self.stop_event.is_set() or abort.is_set():
+                return
             while self.pause_event.is_set():
                 if self.stop_event.is_set():
-                    summary["stopped"] = True
-                    break
+                    return
                 time.sleep(0.25)
-            if self.stop_event.is_set():
-                summary["stopped"] = True
-                break
             try:
                 self.enrich_record(record)
-                summary["ok"] += 1
+                with lock:
+                    summary["ok"] += 1
             except BudgetExhausted:
-                summary["stopped"] = True
-                break
+                with lock:
+                    summary["stopped"] = True
+                abort.set()
             except RateLimitError as exc:
                 seconds = exc.retry_after or 30 * 60
                 self._block_for(record.get("platform"), seconds, str(exc))
                 self.store.set_status(record["point_id"], "rate_limited", str(exc))
-                summary["failed"] += 1
-                summary["stopped"] = True
-                break
+                with lock:
+                    summary["failed"] += 1
+                    summary["stopped"] = True
+                abort.set()
             except ProtectedError as exc:
                 self.store.set_status(record["point_id"], "protected", str(exc))
-                summary["failed"] += 1
+                with lock:
+                    summary["failed"] += 1
             except NotFoundError as exc:
                 self.store.set_status(record["point_id"], "not_found", str(exc))
-                summary["failed"] += 1
+                with lock:
+                    summary["failed"] += 1
             except FetchError as exc:
                 self.store.set_status(record["point_id"], exc.status, str(exc))
-                summary["failed"] += 1
+                with lock:
+                    summary["failed"] += 1
             except Exception as exc:  # keep one bad record from killing the job
                 self.store.set_status(record["point_id"], "error", str(exc))
-                summary["failed"] += 1
-            if progress is not None:
-                label = str(record.get("title") or record.get("source_id") or "")
-                progress(index, len(rows), label)
+                with lock:
+                    summary["failed"] += 1
+            report(record)
+
+        def run_group(platform: str, group: list[dict[str, Any]]) -> None:
+            concurrency = 1
+            if platform == "pixiv":
+                concurrency = self.pixiv_limiter.concurrency
+            elif platform == "twitter":
+                concurrency = self.twitter_limiter.concurrency
+            abort = threading.Event()
+            queue: Queue[dict[str, Any]] = Queue()
+            for record in group:
+                queue.put(record)
+
+            def worker() -> None:
+                while not self.stop_event.is_set() and not abort.is_set():
+                    try:
+                        record = queue.get_nowait()
+                    except Empty:
+                        return
+                    handle(record, abort)
+
+            threads = [
+                threading.Thread(target=worker, daemon=True)
+                for _ in range(max(1, concurrency))
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+        threads = [
+            threading.Thread(
+                target=run_group,
+                args=(platform, group),
+                daemon=True,
+                name=f"artseek-provenance-{platform or 'other'}",
+            )
+            for platform, group in groups.items()
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        if self.stop_event.is_set():
+            summary["stopped"] = True
         return summary
 
     def _block_for(self, platform: Any, seconds: int, error: str) -> None:

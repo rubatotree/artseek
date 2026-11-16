@@ -2290,7 +2290,8 @@
         const limitText = budget.daily_limit == null ? '不限' : String(Number(budget.daily_limit));
         const blocked = Number(budget.blocked_until || 0);
         const blockedHint = blocked > Date.now() / 1000 ? ` · 暂停到 ${formatBudgetTime(blocked)}` : '';
-        return `<div class="provenance-hint">${escapeHtml(budget.domain)}：今日 ${used} / ${escapeHtml(limitText)}${escapeHtml(blockedHint)}</div>`;
+        const workers = Number(budget.concurrency || 1);
+        return `<div class="provenance-hint">${escapeHtml(budget.domain)}：今日 ${used} / ${escapeHtml(limitText)} · 并发 ${workers}${escapeHtml(blockedHint)}</div>`;
       }).join('');
       const controls = [];
       controls.push('<button type="button" data-prov-job="scan">本地扫描</button>');

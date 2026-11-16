@@ -1607,12 +1607,14 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 PIXIV_DOMAIN,
                 min_interval=max(0.0, cfg.pixiv_min_interval),
                 daily_limit=cfg.pixiv_daily_limit,
+                concurrency=max(1, cfg.pixiv_concurrency),
             ).snapshot().as_dict(),
             RateLimiter(
                 store,
                 TWITTER_DOMAIN,
                 min_interval=max(0.0, cfg.twitter_min_interval),
                 daily_limit=cfg.twitter_daily_limit,
+                concurrency=max(1, cfg.twitter_concurrency),
             ).snapshot().as_dict(),
         ]
 
@@ -1696,12 +1698,14 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 PIXIV_DOMAIN,
                 min_interval=max(0.0, cfg.pixiv_min_interval),
                 daily_limit=cfg.pixiv_daily_limit,
+                concurrency=max(1, cfg.pixiv_concurrency),
             ),
             twitter_limiter=RateLimiter(
                 store,
                 TWITTER_DOMAIN,
                 min_interval=max(0.0, cfg.twitter_min_interval),
                 daily_limit=cfg.twitter_daily_limit,
+                concurrency=max(1, cfg.twitter_concurrency),
             ),
         )
 
@@ -1711,6 +1715,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         limit: int | None = None,
         point_ids: list[str] | None = None,
         reset_stop: bool = True,
+        allow_running: bool = False,
     ) -> bool:
         store: ProvenanceStore = app.state.provenance
         job: ProvenanceJob = app.state.provenance_job
@@ -1731,7 +1736,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         if limit is not None:
             records = records[: max(0, int(limit))]
         with app.state.provenance_lock:
-            if job.running:
+            if job.running and not allow_running:
                 return False
             if not reset_stop and job.stop_event.is_set():
                 return False
@@ -1836,12 +1841,16 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 job.error = str(exc)
                 job.message = "来源扫描失败"
             finally:
-                job.running = False
-                job.paused = False
+                started_enrich = False
                 if should_enrich and not job.stop_event.is_set() and job.error is None:
-                    start_enrich_job(
-                        platforms=["pixiv", "twitter"], reset_stop=False
+                    started_enrich = start_enrich_job(
+                        platforms=["pixiv", "twitter"],
+                        reset_stop=False,
+                        allow_running=True,
                     )
+                if not started_enrich:
+                    job.running = False
+                    job.paused = False
 
         threading.Thread(target=run, daemon=True, name="artseek-provenance-scan").start()
         return True
