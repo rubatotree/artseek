@@ -536,6 +536,36 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "caption": payload.get("caption"),
         }
 
+    def attach_provenance(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Attach a compact source snapshot so cards/viewer need no extra fetch."""
+        if not results:
+            return results
+        store: ProvenanceStore = app.state.provenance
+        ids = [str(item.get("id") or "") for item in results]
+        records = store.get_many([item for item in ids if item])
+        author_keys = [
+            str(record["author_key"])
+            for record in records.values()
+            if record.get("author_key")
+        ]
+        names = store.author_names(author_keys)
+        for item in results:
+            record = records.get(str(item.get("id") or ""))
+            if record is None:
+                continue
+            author_key = record.get("author_key")
+            item["source"] = {
+                "title": record.get("title"),
+                "description": record.get("description"),
+                "url": record.get("url"),
+                "tags": list(record.get("tags") or []),
+                "platform": record.get("platform"),
+                "status": record.get("status"),
+                "author_key": author_key,
+                "author_name": names.get(str(author_key), "") if author_key else "",
+            }
+        return results
+
     def collection_summary(collection: Collection) -> dict[str, Any]:
         return collection.summary()
 
@@ -799,6 +829,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         for point_id, name, _mtime in page:
             payload = payloads.get(point_id) or {}
             results.append(gallery_result(point_id, payload, name))
+        attach_provenance(results)
         return {
             "folder_key": key,
             "folder_name": acc.name,
@@ -1067,7 +1098,9 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "total": total,
             "total_exact": total_exact,
             "has_more": has_more,
-            "results": [gallery_result(point_id, payload) for point_id, payload in page],
+            "results": attach_provenance(
+                [gallery_result(point_id, payload) for point_id, payload in page]
+            ),
         }
 
     @app.post("/api/random-browse")
@@ -1108,6 +1141,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         for point_id in page_ids:
             payload = payloads.get(point_id) or {}
             results.append(gallery_result(point_id, payload))
+        attach_provenance(results)
         return {
             "seed": seed,
             "offset": start,
@@ -1237,6 +1271,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 live.append(item)
             else:
                 live.append(row)
+        attach_provenance(live)
         return live
 
     @app.get("/api/search-snapshots/{snapshot_id}")
@@ -1306,6 +1341,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 "author_key": author_key,
                 "tags": tag_tokens,
             }
+        attach_provenance(payload.get("results") or [])
         payload = persist_search_snapshot(
             snapshot_id=request.snapshot_id,
             query=request.query,
@@ -1409,6 +1445,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                     "author_key": resolved_author,
                     "tags": tag_tokens,
                 }
+            attach_provenance(payload.get("results") or [])
             payload = persist_search_snapshot(
                 snapshot_id=snapshot_id or None,
                 query=query,
@@ -1542,11 +1579,13 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 scoped = [item_id for item_id in scoped if item_id in allowed]
         page_ids = scoped[offset : offset + limit]
         payloads = app.state.engine.store.retrieve_payloads(page_ids)
-        results = [
-            gallery_result(point_id, payloads[point_id])
-            for point_id in page_ids
-            if isinstance(payloads.get(point_id), dict)
-        ]
+        results = attach_provenance(
+            [
+                gallery_result(point_id, payloads[point_id])
+                for point_id in page_ids
+                if isinstance(payloads.get(point_id), dict)
+            ]
+        )
         plan = QueryPlan(original=query, semantic_zh="", positive_tags=tag_tokens)
         return {
             "query_plan": dataclasses.asdict(plan),
@@ -2002,11 +2041,13 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         page_size = max(1, min(int(limit), 200))
         page_ids = ids[offset : offset + page_size]
         payloads = retrieve_collection_payloads(page_ids)
-        results = [
-            gallery_result(point_id, payloads[point_id])
-            for point_id in page_ids
-            if isinstance(payloads.get(point_id), dict)
-        ]
+        results = attach_provenance(
+            [
+                gallery_result(point_id, payloads[point_id])
+                for point_id in page_ids
+                if isinstance(payloads.get(point_id), dict)
+            ]
+        )
         return {
             "author": summary,
             "offset": offset,

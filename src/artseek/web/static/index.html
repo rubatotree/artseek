@@ -1837,16 +1837,38 @@
     function provenancePlainText(value) {
       return String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     }
+    function viewerTitleModelFromItem(item) {
+      const source = item && item.source;
+      if (!source) return null;
+      if (source.status === 'unresolved' || source.status === 'stale') return null;
+      return viewerTitleModel(
+        {
+          record: {
+            title: source.title,
+            description: source.description,
+            url: source.url,
+            tags: source.tags || [],
+            platform: source.platform,
+            status: source.status,
+          },
+          author: source.author_key
+            ? { key: source.author_key, name: source.author_name }
+            : null,
+        },
+        (item.path || item.name || ''),
+      );
+    }
     function viewerTitleModel(data, fallback) {
       const record = data && data.record;
       const author = data && data.author;
+      if (!record || record.status === 'unresolved' || record.status === 'stale') {
+        return { fallback };
+      }
       let primary = record
         ? (record.title || provenancePlainText(record.description).slice(0, 120))
         : '';
-      if (!primary && record) {
-        primary = record.platform === 'other'
-          ? (record.url ? '其他来源' : '未识别来源')
-          : '无题';
+      if (!primary) {
+        primary = record.platform === 'other' ? '其他来源' : '无题';
       }
       if (!primary) return { fallback };
       const tags = (record.tags || [])
@@ -1906,6 +1928,13 @@
       const fallback = item.path || item.name || '';
       renderViewerTitle(item, { fallback });
       if (!item.id) return;
+      const fromItem = viewerTitleModelFromItem(item);
+      if (fromItem) {
+        cacheViewerTitle(item.id, fromItem);
+        renderViewerTitle(item, fromItem);
+        return;
+      }
+      if (item.source) return;
       const cached = state.viewerTitleCache.get(item.id);
       if (cached) {
         renderViewerTitle(item, cached);
@@ -1916,6 +1945,13 @@
     }
     async function prefetchProvenance(item) {
       if (!item || !item.id) return;
+      const fromItem = viewerTitleModelFromItem(item);
+      if (fromItem) {
+        cacheViewerTitle(item.id, fromItem);
+        if (state.current && state.current.id === item.id) renderViewerTitle(item, fromItem);
+        return;
+      }
+      if (item.source) return;
       const cachedNow = state.viewerTitleCache.get(item.id);
       if (cachedNow) {
         if (state.current && state.current.id === item.id) renderViewerTitle(item, cachedNow);
@@ -1958,9 +1994,10 @@
       const record = (data && data.record) || {};
       const author = data && data.author;
       const platform = { pixiv: 'Pixiv', twitter: 'X/Twitter', other: '其他来源' }[record.platform] || '未识别';
-      const emptyTitle = record.platform === 'other'
-        ? (record.url ? '其他来源' : '未识别来源')
-        : '无题';
+      const missing = !data.record || record.status === 'unresolved' || record.status === 'stale';
+      const emptyTitle = missing
+        ? (data.path || '未识别来源')
+        : (record.platform === 'other' ? '其他来源' : '无题');
       const title = record.title || provenancePlainText(record.description).slice(0, 80) || emptyTitle;
       const tags = (record.tags || []).map((tag) => `<span class="provenance-tag">${escapeHtml(tag)}</span>`).join('');
       const authorName = author ? (author.name || author.handle || author.key) : '';

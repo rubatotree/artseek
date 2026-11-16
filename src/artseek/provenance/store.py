@@ -759,6 +759,25 @@ class ProvenanceStore:
             ).fetchall()
         return [str(row["point_id"]) for row in rows]
 
+    def author_names(self, keys: Sequence[str]) -> dict[str, str]:
+        clean = list(dict.fromkeys(str(key) for key in keys if key))
+        if not clean:
+            return {}
+        result: dict[str, str] = {}
+        with self._read() as connection:
+            for start in range(0, len(clean), 256):
+                batch = clean[start : start + 256]
+                placeholders = ",".join("?" for _ in batch)
+                rows = connection.execute(
+                    f"SELECT key, name, handle FROM author WHERE key IN ({placeholders})",
+                    batch,
+                ).fetchall()
+                for row in rows:
+                    result[str(row["key"])] = str(
+                        row["name"] or row["handle"] or row["key"]
+                    )
+        return result
+
     def author_summary(self, key: str) -> dict[str, Any] | None:
         canonical = self.canonical_author_key(key)
         author = self.get_author(canonical)

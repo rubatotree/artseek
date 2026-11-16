@@ -142,6 +142,10 @@ class ProvenanceApiTests(unittest.TestCase):
         )
         self.assertEqual(folder.status_code, 200)
         self.assertEqual([item["id"] for item in folder.json()["results"]], ["p1"])
+        source = folder.json()["results"][0]["source"]
+        self.assertEqual(source["title"], "手动标题")
+        self.assertEqual(source["author_name"], "某画师")
+        self.assertEqual(source["author_key"], author_key)
 
         search = self.client.post(
             "/api/search",
