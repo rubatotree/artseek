@@ -2483,34 +2483,6 @@
       if (state.mode === 'tag') return fetchTagImages({ reset: true });
       return Promise.resolve();
     }
-    function applyTagFilter(tag) {
-      const name = String(tag || '').trim();
-      if (!name) return;
-      if ($('viewer').open) finishDismissViewer();
-      state.mode = 'tag';
-      state.tagName = name;
-      state.tagTotal = 0;
-      state.authorKey = '';
-      state.authorName = '';
-      state.authorTotal = 0;
-      state.searchSnapshotId = '';
-      state.searchRequest = null;
-      state.results = [];
-      state.hasMore = false;
-      state.browseKey = '';
-      state.browseName = '';
-      state.browseTotal = 0;
-      state.collectionId = '';
-      state.collectionName = '';
-      state.collectionTotal = null;
-      updateAuthorFilter();
-      updateTagFilter();
-      renderTree();
-      renderCollectionList();
-      renderGallery(state.results, { append: false });
-      commitGalleryRoute({ forcePush: true });
-      fetchTagImages({ reset: true });
-    }
     function clearTagFilter() {
       if ($('viewer').open) finishDismissViewer();
       if (state.mode !== 'tag') {
