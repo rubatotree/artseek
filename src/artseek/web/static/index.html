@@ -298,8 +298,8 @@
     .filter-toggle::before {
       content: ""; display: block; width: 20px; height: 20px;
       background: currentColor;
-      -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 5h18l-7 8v6l-4 2v-8z'/%3E%3C/svg%3E") center / contain no-repeat;
-      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 5h18l-7 8v6l-4 2v-8z'/%3E%3C/svg%3E") center / contain no-repeat;
+      -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='5' cy='12' r='1.8'/%3E%3Ccircle cx='12' cy='12' r='1.8'/%3E%3Ccircle cx='19' cy='12' r='1.8'/%3E%3C/svg%3E") center / contain no-repeat;
+      mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='5' cy='12' r='1.8'/%3E%3Ccircle cx='12' cy='12' r='1.8'/%3E%3Ccircle cx='19' cy='12' r='1.8'/%3E%3C/svg%3E") center / contain no-repeat;
     }
     .filter-toggle svg { display: none; }
     .filter-toggle[aria-expanded="true"] { background: #eabfce; color: #7a4058; }
@@ -1118,6 +1118,16 @@
     .search-fab[hidden] { display: none; }
     .search-fab svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
     .search-fab:hover { transform: none; background: #fff; }
+    .scroll-top {
+      position: fixed; right: 12px; bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+      z-index: 34; width: 44px; height: 44px; min-width: 44px; padding: 0;
+      display: grid; place-items: center; border: 1px solid #e4d9e1; border-radius: 999px;
+      background: rgba(255,255,255,.96); color: #8a5268;
+      box-shadow: 0 8px 22px rgba(69,51,76,.18);
+    }
+    .scroll-top[hidden] { display: none; }
+    .scroll-top svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .scroll-top:hover { transform: none; background: #fff; }
     @media (max-width: 900px) {
       :root { --page-gutter: 12px; }
       .shell { padding-inline: 0; width: 100%; }
@@ -1410,6 +1420,9 @@
     </header>
     <button id="search-fab" class="search-fab" type="button" aria-label="打开搜索" aria-controls="panel" aria-expanded="false" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>
+    </button>
+    <button id="scroll-top" class="scroll-top" type="button" aria-label="回到最上方" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 14l6-6 6 6"/></svg>
     </button>
     <div class="search-layout">
       <aside class="tree-panel" id="tree-panel" aria-label="查询范围">
@@ -1831,6 +1844,7 @@
       tempReturn: null,
       searchSort: 'mtime_desc', searchSeed: null,
       mobileSearchOpen: false, mobileSearchIgnoreScrollUntil: 0,
+      cardActionRevealCard: null, cardActionRevealTimer: 0,
       authorSort: 'mtime', authorSeed: null, tagSort: 'mtime', tagSeed: null,
       colHeights: [],
       mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
@@ -3817,6 +3831,7 @@
     });
     $('home-logo').addEventListener('click', () => goHome());
     $('search-fab').addEventListener('click', () => setMobileSearchOpen(true));
+    $('scroll-top').addEventListener('click', scrollToTop);
     document.addEventListener('click', closeMobileSearchIfOutside, true);
     window.addEventListener('scroll', () => {
       if (
@@ -3827,7 +3842,9 @@
       ) {
         setMobileSearchOpen(false, { preserveScroll: false });
       }
+      hideCardActionReveal();
       syncSearchFabVisibility();
+      syncScrollTopVisibility();
     }, { passive: true });
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape' || !state.mobileSearchOpen) return;
@@ -3875,6 +3892,8 @@
       else closeViewerCollectionMenu();
     });
     document.addEventListener('pointerdown', (event) => {
+      const revealed = state.cardActionRevealCard;
+      if (revealed && !revealed.contains(event.target)) hideCardActionReveal();
       if ($('viewer-mobile-details-menu').hidden) return;
       if (event.target.closest('#viewer-mobile-details-menu, #viewer-mobile-actions')) return;
       closeMobileViewerDetails();
@@ -4464,6 +4483,14 @@
     function syncSearchFabVisibility() {
       const visible = !state.mobileSearchOpen && window.scrollY > 80;
       $('search-fab').hidden = !visible;
+    }
+    function syncScrollTopVisibility() {
+      const threshold = Math.max(480, window.innerHeight * 0.75);
+      $('scroll-top').hidden = window.scrollY <= threshold;
+    }
+    function scrollToTop() {
+      const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
     }
     function setMobileSearchOpen(open, { preserveScroll = true } = {}) {
       const next = Boolean(open);
@@ -7269,9 +7296,16 @@
             return;
           }
           if (action === 'remove') {
-            setCollectionStatus('拖动图片到「移除」上松开即可移出收藏夹。');
+            if (window.matchMedia('(hover: none), (pointer: coarse)').matches) {
+              hideCardActionReveal();
+              void removeFromActiveCollection(item);
+            } else {
+              setCollectionStatus('拖动图片到「移除」上松开即可移出收藏夹。');
+            }
             return;
           }
+          if (handleCardBottomTap(event, card)) return;
+          hideCardActionReveal();
           openViewer(item);
         });
         card.addEventListener('keydown', (event) => {
@@ -7341,6 +7375,28 @@
       });
     }
 
+    function hideCardActionReveal() {
+      clearTimeout(state.cardActionRevealTimer);
+      state.cardActionRevealTimer = 0;
+      state.cardActionRevealCard?.classList.remove('is-action-active');
+      state.cardActionRevealCard = null;
+    }
+    function revealCardActions(card) {
+      hideCardActionReveal();
+      state.cardActionRevealCard = card;
+      card.classList.add('is-action-active');
+      state.cardActionRevealTimer = setTimeout(hideCardActionReveal, 4500);
+    }
+    function handleCardBottomTap(event, card) {
+      if (!window.matchMedia('(hover: none), (pointer: coarse)').matches) return false;
+      const imageWrap = card.querySelector('.image-wrap');
+      if (!imageWrap) return false;
+      const rect = imageWrap.getBoundingClientRect();
+      const zone = Math.max(52, Math.min(96, rect.height * 0.28));
+      if (event.clientY < rect.bottom - zone) return false;
+      revealCardActions(card);
+      return true;
+    }
     function clearCardActionTargets(gesture) {
       gesture.targetElement?.classList.remove('is-action-hover');
       gesture.targetElement = null;
@@ -8742,6 +8798,7 @@
     window.addEventListener('resize', () => {
       syncQueryPlaceholder();
       syncSearchFabVisibility();
+      syncScrollTopVisibility();
       clearTimeout(galleryResizeTimer);
       galleryResizeTimer = setTimeout(() => {
         const gallery = $('gallery');
@@ -9506,6 +9563,7 @@
       ]);
       syncQueryPlaceholder();
       syncSearchFabVisibility();
+      syncScrollTopVisibility();
       const route = parseAppRoute();
       if (!restoreCachedFolderSelection()) {
         // No browser cache yet: keep the server-persisted scope for deep links,
