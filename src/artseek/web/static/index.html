@@ -1705,6 +1705,9 @@
     const SEARCH_SORT_OPTIONS = [
       { value: 'mtime_desc', label: '修改日期 · 新→旧' },
       { value: 'mtime_asc', label: '修改日期 · 旧→新' },
+      { value: 'name_asc', label: '文件名 · A→Z' },
+      { value: 'name_desc', label: '文件名 · Z→A' },
+      { value: 'random', label: '随机' },
     ];
     const SEARCH_SORT_LABELS = Object.fromEntries(
       SEARCH_SORT_OPTIONS.map((option) => [option.value, option.label])
@@ -1745,7 +1748,7 @@
       viewerReturnRoute: '',
       provenanceTagAliasCache: new Map(),
       tempReturn: null,
-      searchSort: 'mtime_desc',
+      searchSort: 'mtime_desc', searchSeed: null,
       colHeights: [],
       mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
       browseSort: loadFolderSort(), browseSeed: null, scopeTotal: 0,
@@ -4807,6 +4810,7 @@
       if (searchSortActive()) {
         if (!SEARCH_SORT_LABELS[sort]) return;
         state.searchSort = sort;
+        state.searchSeed = sort === 'random' ? newRandomSeed() : null;
         closeCollectionSortMenu({ restoreFocus: true });
         renderCollectionSort();
         await fetchResults({ reset: true, skipRoute: true });
@@ -6437,6 +6441,10 @@
         const response = await fetch(`/api/folder-images?${params}`);
         const data = await parseResponse(response);
         if (seq !== state.searchSeq) return;
+        if (data.seed != null) {
+          state.searchSeed = Number(data.seed);
+          if (state.searchRequest) state.searchRequest.seed = state.searchSeed;
+        }
         const incoming = data.results || [];
         state.browseName = data.folder_name || state.browseName;
         state.browseTotal = data.total || 0;
@@ -6574,6 +6582,7 @@
           tag_expression: frozen.tag_expression || '',
           text_tags: frozen.text_tags || [],
           sort: frozen.sort || state.searchSort,
+          seed: frozen.seed ?? state.searchSeed,
           exclude_ids: state.results.map((item) => item.id),
           snapshot_id: keepSnapshot ? (state.searchSnapshotId || '') : '',
         } : {
@@ -6594,6 +6603,7 @@
           tag_expression: advanced.tag_expression || '',
           text_tags: advanced.text_tags || [],
           sort: state.searchSort,
+          seed: state.searchSort === 'random' ? state.searchSeed : null,
           exclude_ids: reset ? [] : state.results.map((item) => item.id),
           snapshot_id: keepSnapshot && !reset ? (state.searchSnapshotId || '') : '',
         };
@@ -6617,6 +6627,7 @@
           form.append('text_label', common.text_label || '');
           form.append('tag_expression', common.tag_expression || '');
           form.append('sort', common.sort || state.searchSort);
+          if (common.seed != null) form.append('seed', String(common.seed));
           form.append('references', JSON.stringify(libraryRefs));
           if (common.snapshot_id) form.append('snapshot_id', common.snapshot_id);
           fileRefs.forEach((ref) => form.append('files', ref.file, ref.file.name));
@@ -6636,6 +6647,7 @@
                     mtime_after: common.mtime_after,
                     mtime_before: common.mtime_before,
                     sort: common.sort,
+                    seed: common.seed,
                   }
                 : { ...common, references: libraryRefs }),
             },
@@ -6664,6 +6676,7 @@
             text_tags: common.text_tags,
             metadata_search: metadataSearch,
             sort: common.sort,
+            seed: common.seed,
             advanced: {
               authors: advanced.authors || [],
               title_query: advanced.title_query || '',

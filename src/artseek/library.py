@@ -82,6 +82,10 @@ def _natural_key(name: str) -> tuple[tuple[int, int | str], ...]:
     return tuple(key)
 
 
+def natural_key(name: str) -> tuple[tuple[int, int | str], ...]:
+    return _natural_key(name)
+
+
 def _sort_method(sort: str) -> str:
     return sort if sort in SORT_KEYS else DEFAULT_SORT
 

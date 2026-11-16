@@ -618,6 +618,51 @@ class ProvenanceApiTests(unittest.TestCase):
         )
         self.assertEqual(oldest.status_code, 200)
         self.assertEqual([item["id"] for item in oldest.json()["results"]], ["p1", "p2"])
+        by_name = self.client.post(
+            "/api/search",
+            json={
+                "query": "",
+                "text_tags": ["排序测试"],
+                "sort": "name_asc",
+                "folder_keys": [],
+            },
+        )
+        self.assertEqual([item["id"] for item in by_name.json()["results"]], ["p1", "p2"])
+        by_name_desc = self.client.post(
+            "/api/search",
+            json={
+                "query": "",
+                "text_tags": ["排序测试"],
+                "sort": "name_desc",
+                "folder_keys": [],
+            },
+        )
+        self.assertEqual([item["id"] for item in by_name_desc.json()["results"]], ["p2", "p1"])
+        first_random = self.client.post(
+            "/api/search",
+            json={
+                "query": "",
+                "text_tags": ["排序测试"],
+                "sort": "random",
+                "seed": 7,
+                "folder_keys": [],
+            },
+        )
+        second_random = self.client.post(
+            "/api/search",
+            json={
+                "query": "",
+                "text_tags": ["排序测试"],
+                "sort": "random",
+                "seed": 7,
+                "folder_keys": [],
+            },
+        )
+        self.assertEqual(first_random.json()["seed"], 7)
+        self.assertEqual(
+            [item["id"] for item in first_random.json()["results"]],
+            [item["id"] for item in second_random.json()["results"]],
+        )
 
     def test_text_label_is_a_model_search_input(self) -> None:
         before = len(self.engine.search_calls)
