@@ -5524,7 +5524,7 @@
         state.authorName = author.name || state.authorName;
         state.authorTotal = Number(data.total || 0);
         updateAuthorFilter();
-        if (reset && !keepSnapshot) state.searchSnapshotId = '';
+        if (reset) state.searchSnapshotId = '';
         if (reset) {
           state.results = incoming;
           renderGallery(state.results, { append: false });
