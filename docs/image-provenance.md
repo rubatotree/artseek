@@ -319,7 +319,7 @@ tag:オリジナル tag:女の子
 | 作者 | 作者组名称/key/handle |
 | 来源 Tag | 精确匹配 Pixiv/X 来源标签 |
 
-主搜索框、参考图和标签输入都为空、只保留作者/标题筛选时，直接分页 payload，不加载图文向量模型；有主搜索文字时才进入向量检索。作者和标签输入会生成可删除的 chip。高级字段写入 `/search?title=&text_tags=&tag_text=&image_tags=&author=`，可分享和回退。目录范围请求使用 POST body，避免选中数百个目录时 GET URL 过长。
+主搜索框、参考图和标签输入都为空、只保留作者/标题筛选时，直接分页 payload，不加载图文向量模型；筛选结果默认按文件修改时间从新到旧，可在结果头部切换旧到新；有主搜索文字时才进入向量检索。作者和标签输入会生成可删除的 chip。高级字段写入 `/search?title=&text_tags=&tag_text=&image_tags=&author=`，可分享和回退。目录范围请求使用 POST body，避免选中数百个目录时 GET URL 过长。
 
 ### 6.2 查看器
 

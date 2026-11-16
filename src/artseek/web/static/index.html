@@ -1652,6 +1652,13 @@
     const FOLDER_SORT_LABELS = Object.fromEntries(
       FOLDER_SORT_OPTIONS.map((option) => [option.value, option.label])
     );
+    const SEARCH_SORT_OPTIONS = [
+      { value: 'mtime_desc', label: '修改日期 · 新→旧' },
+      { value: 'mtime_asc', label: '修改日期 · 旧→新' },
+    ];
+    const SEARCH_SORT_LABELS = Object.fromEntries(
+      SEARCH_SORT_OPTIONS.map((option) => [option.value, option.label])
+    );
     const FOLDER_SORT_STORAGE_KEY = 'artseek.folderSort';
     function loadFolderSort() {
       try {
@@ -1683,6 +1690,7 @@
       references: [], refSeq: 0, current: null, currentRefKey: null, viewerSource: 'gallery',
       results: [], offset: 0, hasMore: false, loadingMore: false, searchSeq: 0,
       searchSnapshotId: '', searchRequest: null, filterApplyTimer: 0,
+      searchSort: 'mtime_desc',
       colHeights: [],
       mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
       browseSort: loadFolderSort(), browseSeed: null, scopeTotal: 0,
@@ -4349,21 +4357,33 @@
     function browseSortActive() {
       return state.mode === 'scope' || (state.mode === 'browse' && Boolean(state.browseKey));
     }
+    function searchSortActive() {
+      return Boolean(
+        state.mode === 'search'
+        && !$('query').value.trim()
+        && !librarySearchRefs().length
+        && !state.references.some((ref) => ref.file)
+      );
+    }
+    function effectiveSearchSort() {
+      return SEARCH_SORT_LABELS[state.searchSort] ? state.searchSort : 'mtime_desc';
+    }
     function effectiveBrowseSort() {
       return FOLDER_SORT_LABELS[state.browseSort] ? state.browseSort : 'name';
     }
     function renderCollectionSortMenu() {
       const menu = $('collection-sort-menu');
+      const search = searchSortActive();
       const browse = browseSortActive();
-      const options = browse ? FOLDER_SORT_OPTIONS : COLLECTION_SORT_OPTIONS;
-      const sort = browse ? effectiveBrowseSort() : effectiveCollectionSort();
-      menu.innerHTML = `<div class="collection-sort-title">${browse ? '图片排序' : '排序方式'}</div>${options.map((option) => `
+      const options = search ? SEARCH_SORT_OPTIONS : (browse ? FOLDER_SORT_OPTIONS : COLLECTION_SORT_OPTIONS);
+      const sort = search ? effectiveSearchSort() : (browse ? effectiveBrowseSort() : effectiveCollectionSort());
+      menu.innerHTML = `<div class="collection-sort-title">${search ? '筛选排序' : (browse ? '图片排序' : '排序方式')}</div>${options.map((option) => `
         <button class="collection-sort-option" type="button" role="menuitemradio" aria-checked="${option.value === sort}" data-sort-value="${option.value}">
           ${collectionSortIcon(option.value)}
           <span>${option.label}</span>
           <span class="collection-sort-check" aria-hidden="true">${option.value === sort ? '✓' : ''}</span>
         </button>`).join('')}
-        ${browse ? '' : `<label class="collection-sort-temp"><input id="collection-sort-temp" type="checkbox" ${state.collectionSortTemp ? 'checked' : ''}> 仅本次查看，不保存</label>`}`;
+        ${browse || search ? '' : `<label class="collection-sort-temp"><input id="collection-sort-temp" type="checkbox" ${state.collectionSortTemp ? 'checked' : ''}> 仅本次查看，不保存</label>`}`;
       menu.querySelectorAll('[data-sort-value]').forEach((button) => {
         button.addEventListener('click', () => {
           applyCollectionSort(button.dataset.sortValue, { temporary: state.collectionSortTemp });
@@ -4383,8 +4403,9 @@
     function syncCollectionSortMenuChecks() {
       const menu = $('collection-sort-menu');
       if (menu.hidden) return;
+      const search = searchSortActive();
       const browse = browseSortActive();
-      const sort = browse ? effectiveBrowseSort() : effectiveCollectionSort();
+      const sort = search ? effectiveSearchSort() : (browse ? effectiveBrowseSort() : effectiveCollectionSort());
       menu.querySelectorAll('[data-sort-value]').forEach((button) => {
         const selected = button.dataset.sortValue === sort;
         button.setAttribute('aria-checked', String(selected));
@@ -4404,27 +4425,36 @@
     }
     function renderCollectionSort() {
       const bar = $('collection-sort');
+      const search = searchSortActive();
       const browse = browseSortActive();
-      const active = browse || (state.mode === 'collection' && Boolean(state.collectionId));
+      const active = search || browse || (state.mode === 'collection' && Boolean(state.collectionId));
       bar.hidden = !active;
       if (!active) {
         closeCollectionSortMenu();
         return;
       }
-      const sort = browse ? effectiveBrowseSort() : effectiveCollectionSort();
-      const temporary = browse ? false : Boolean(state.collectionViewSort);
+      const sort = search ? effectiveSearchSort() : (browse ? effectiveBrowseSort() : effectiveCollectionSort());
+      const temporary = !search && !browse && Boolean(state.collectionViewSort);
       const toggle = $('collection-sort-toggle');
       toggle.innerHTML = collectionSortIcon(sort);
       toggle.classList.toggle('is-temporary', temporary);
-      toggle.disabled = browse ? false : state.collectionSortBusy;
-      const label = (browse ? FOLDER_SORT_LABELS : COLLECTION_SORT_LABELS)[sort] || sort;
-      const title = `${browse ? '图片排序' : '排序'}：${label}${temporary ? '（仅本次查看）' : ''}`;
+      toggle.disabled = browse || search ? false : state.collectionSortBusy;
+      const label = (search ? SEARCH_SORT_LABELS : (browse ? FOLDER_SORT_LABELS : COLLECTION_SORT_LABELS))[sort] || sort;
+      const title = `${search ? '筛选排序' : (browse ? '图片排序' : '排序')}：${label}${temporary ? '（仅本次查看）' : ''}`;
       toggle.setAttribute('aria-label', title);
       toggle.title = title;
-      $('collection-sort-pin').hidden = browse || sort === 'random' || !temporary || state.collectionSortBusy;
+      $('collection-sort-pin').hidden = search || browse || sort === 'random' || !temporary || state.collectionSortBusy;
       syncCollectionSortMenuChecks();
     }
     async function applyCollectionSort(sort, { temporary = false } = {}) {
+      if (searchSortActive()) {
+        if (!SEARCH_SORT_LABELS[sort]) return;
+        state.searchSort = sort;
+        closeCollectionSortMenu({ restoreFocus: true });
+        renderCollectionSort();
+        await fetchResults({ reset: true, skipRoute: true });
+        return;
+      }
       if (browseSortActive()) {
         if (!FOLDER_SORT_LABELS[sort]) return;
         state.browseSort = sort;
@@ -6120,6 +6150,7 @@
           title_query: frozen.title_query || '',
           text_tags: frozen.text_tags || [],
           tag_text: frozen.tag_text || [],
+          sort: frozen.sort || state.searchSort,
           exclude_ids: state.results.map((item) => item.id),
           snapshot_id: keepSnapshot ? (state.searchSnapshotId || '') : '',
         } : {
@@ -6137,6 +6168,7 @@
           title_query: advanced.title_query || '',
           text_tags: advanced.text_tags || [],
           tag_text: advanced.tag_text || [],
+          sort: state.searchSort,
           exclude_ids: reset ? [] : state.results.map((item) => item.id),
           snapshot_id: keepSnapshot && !reset ? (state.searchSnapshotId || '') : '',
         };
@@ -6157,6 +6189,7 @@
           form.append('title_query', common.title_query || '');
           form.append('text_tags', JSON.stringify(common.text_tags || []));
           form.append('tag_text', JSON.stringify(common.tag_text || []));
+          form.append('sort', common.sort || state.searchSort);
           form.append('references', JSON.stringify(libraryRefs));
           if (common.snapshot_id) form.append('snapshot_id', common.snapshot_id);
           fileRefs.forEach((ref) => form.append('files', ref.file, ref.file.name));
@@ -6187,6 +6220,7 @@
             title_query: common.title_query,
             text_tags: common.text_tags,
             tag_text: common.tag_text,
+            sort: common.sort,
             advanced: {
               author: advanced.author || '',
               title_query: advanced.title_query || '',

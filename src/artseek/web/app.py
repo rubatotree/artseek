@@ -133,6 +133,7 @@ class TextSearchRequest(BaseModel):
     snapshot_id: str | None = None
     author_key: str | None = None
     title_query: str = ""
+    sort: str = "mtime_desc"
     text_tags: list[str] = Field(default_factory=list)
     tag_text: list[str] = Field(default_factory=list)
     image_tags: list[str] = Field(default_factory=list)
@@ -1504,6 +1505,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 title_query=request.title_query,
                 tag_text=request.tag_text,
                 image_tags=request.image_tags,
+                sort=request.sort,
                 offset=max(0, request.offset),
                 limit=max(1, min(request.limit, 200)),
                 folder_keys=folder_keys,
@@ -1579,6 +1581,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         snapshot_id: str = Form(default=""),
         author_key: str = Form(default=""),
         title_query: str = Form(default=""),
+        sort: str = Form(default="mtime_desc"),
         text_tags: str = Form(default="[]"),
         tag_text: str = Form(default="[]"),
         image_tags: str = Form(default="[]"),
@@ -1646,6 +1649,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                     title_query=title_query,
                     tag_text=tag_text,
                     image_tags=image_tags,
+                    sort=sort,
                 )
             else:
                 response = app.state.engine.search(
@@ -1847,6 +1851,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         title_query: str = "",
         tag_text: list[str] | None = None,
         image_tags: list[str] | None = None,
+        sort: str = "mtime_desc",
     ) -> dict[str, Any]:
         scoped = point_ids
         if folder_keys is not None:
@@ -1859,6 +1864,12 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             if scope_ids is not None:
                 allowed = set(scope_ids)
                 scoped = [item_id for item_id in scoped if item_id in allowed]
+        order = sort if sort in {"mtime_desc", "mtime_asc"} else "mtime_desc"
+        mtimes = app.state.provenance.point_mtimes(scoped)
+        scoped.sort(
+            key=lambda item_id: (mtimes.get(item_id, 0), item_id),
+            reverse=order == "mtime_desc",
+        )
         page_ids = scoped[offset : offset + limit]
         payloads = app.state.engine.store.retrieve_payloads(page_ids)
         results = attach_provenance(
@@ -1874,6 +1885,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "results": results,
             "has_more": offset + len(page_ids) < len(scoped),
             "offset": offset,
+            "sort": order,
             "applied_filters": {
                 "author_key": author_key,
                 "tags": tag_tokens,

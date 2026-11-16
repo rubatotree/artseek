@@ -797,6 +797,22 @@ class ProvenanceStore:
             ).fetchall()
         return [{"tag": str(row["tag"]), "count": int(row["count"])} for row in rows]
 
+    def point_mtimes(self, point_ids: Sequence[str]) -> dict[str, int]:
+        clean = [str(item) for item in dict.fromkeys(point_ids) if item]
+        result: dict[str, int] = {}
+        with self._read() as connection:
+            for start in range(0, len(clean), 512):
+                batch = clean[start : start + 512]
+                placeholders = ",".join("?" for _ in batch)
+                rows = connection.execute(
+                    f"SELECT point_id, mtime_ns FROM image_source "
+                    f"WHERE point_id IN ({placeholders})",
+                    batch,
+                ).fetchall()
+                for row in rows:
+                    result[str(row["point_id"])] = _int_or_none(row["mtime_ns"]) or 0
+        return result
+
     def point_ids_for_title(self, query: str) -> list[str]:
         terms = [term for term in re.split(r"\s+", str(query or "").strip()) if term]
         if not terms:

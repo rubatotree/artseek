@@ -305,6 +305,48 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(response.json()["applied_filters"]["author_key"], pixiv)
         self.assertEqual([item["id"] for item in response.json()["results"]], ["p1"])
 
+    def test_filter_only_results_default_to_newest_first(self) -> None:
+        for point_id, mtime, digest in (("p1", 1_000, "a" * 64), ("p2", 3_000, "b" * 64)):
+            payload = dict(
+                self.payload,
+                path=str(self.root / f"{point_id}.png"),
+                path_key=str(self.root / f"{point_id}.png").casefold(),
+                mtime_ns=mtime,
+                content_hash=digest,
+            )
+            self.engine.store.payloads[point_id] = payload
+            self.store.upsert_scan(
+                point_id, payload, ParsedSource(parse_filename(self.image.name))
+            )
+            self.store.set_fetch_result(
+                point_id,
+                {
+                    "platform": "pixiv",
+                    "source_id": point_id,
+                    "page": 0,
+                    "url": f"https://www.pixiv.net/artworks/{point_id}",
+                    "status": "ok",
+                    "tags": ["排序测试"],
+                },
+            )
+        newest = self.client.post(
+            "/api/search",
+            json={"query": "", "text_tags": ["排序测试"], "folder_keys": []},
+        )
+        self.assertEqual(newest.status_code, 200)
+        self.assertEqual([item["id"] for item in newest.json()["results"]], ["p2", "p1"])
+        oldest = self.client.post(
+            "/api/search",
+            json={
+                "query": "",
+                "text_tags": ["排序测试"],
+                "sort": "mtime_asc",
+                "folder_keys": [],
+            },
+        )
+        self.assertEqual(oldest.status_code, 200)
+        self.assertEqual([item["id"] for item in oldest.json()["results"]], ["p1", "p2"])
+
     def test_ambiguous_author_error_lists_candidate_payload(self) -> None:
         first = self.store.ensure_author("pixiv", "1", name="alice", handle="alice")
         second = self.store.ensure_author("twitter", "2", name="alina", handle="alina")
