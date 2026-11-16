@@ -340,12 +340,12 @@
       color: var(--ink); font: 500 12px/1.2 inherit; text-align: left;
     }
     .filter-suggestion:hover { transform: none; background: var(--rose-soft); }
-    .filter-suggestion-name { flex: 0 0 auto; color: var(--ink); }
+    .filter-suggestion-name { flex: 0 0 auto; color: var(--ink); line-height: 16px; }
     .filter-suggestion-alias {
       flex: 1 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere;
-      color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.35;
+      color: var(--muted); font-size: 11px; font-weight: 400; line-height: 16px;
     }
-    .filter-suggestion small { flex: 0 0 auto; margin-left: auto; color: var(--muted); font-size: 10px; }
+    .filter-suggestion small { flex: 0 0 auto; margin-left: auto; color: var(--muted); font-size: 10px; line-height: 16px; }
     .composer { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; margin-top: 10px; }
     .ref-add {
       width: 72px; height: 72px; padding: 0; border-radius: 12px;
@@ -423,9 +423,10 @@
     }
     .ref-drop-zone {
       position: relative; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px;
-      min-height: 78px; padding: 3px;
+      min-height: 78px; padding: 0;
     }
     .ref-drop-zone .ref-strip { flex: 0 1 auto; }
+    .ref-drop-zone .ref-strip:empty { display: none; }
     .ref-drop-zone.is-gallery-drop-target {
       outline: 2px dashed #d7a3b6; outline-offset: 3px; border-radius: 14px; background: #fff8fb;
     }
@@ -1424,7 +1425,7 @@
       <section class="search-panel" id="panel">
         <form id="search-form" autocomplete="off">
         <div class="search-row">
-          <input id="query" type="text" name="artseek-query" placeholder="搜索 tag、标题或作者，或粘贴参考图..." title="优先匹配来源/自动/手动 tag、标题和作者；带参考图或高级筛选时用向量检索" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" inputmode="search" enterkeyhint="search">
+          <input id="query" type="text" name="artseek-query" title="优先匹配来源/自动/手动 tag、标题和作者；带参考图或高级筛选时用向量检索" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" inputmode="search" enterkeyhint="search">
           <div class="search-actions">
             <button class="primary" id="search" type="submit">查询</button>
             <button class="filter-toggle" id="filter-toggle" type="button" aria-expanded="false" aria-controls="search-filters" aria-label="高级筛选" title="高级筛选">
@@ -1476,7 +1477,7 @@
             <label class="filter-field"><span>来源 Tag</span>
               <div class="filter-control">
                 <div id="filter-text-chips" class="filter-chips" aria-label="来源标签筛选"></div>
-                <input id="filter-text-tags" type="text" title="输入 Pixiv/X 来源 tag；支持 #a+#b*#c 布尔表达式" placeholder="tag 或 #a+#b" autocomplete="off" spellcheck="false">
+                <input id="filter-text-tags" type="text" title="输入 Pixiv/X 来源 tag；支持 #a+#b*#c 布尔表达式" autocomplete="off" spellcheck="false">
                 <button class="filter-suggest-toggle" type="button" data-suggest-kind="source" aria-label="显示来源标签列表" title="显示来源标签列表">+</button>
               </div>
             </label>
