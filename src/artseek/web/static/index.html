@@ -1884,7 +1884,6 @@
     function viewerTitleModelFromItem(item) {
       const source = item && item.source;
       if (!source) return null;
-      if (source.status === 'unresolved' || source.status === 'stale') return null;
       return viewerTitleModel(
         {
           record: {
@@ -1909,15 +1908,19 @@
     function viewerTitleModel(data, fallback) {
       const record = data && data.record;
       const author = data && data.author;
-      if (!record || record.status === 'unresolved' || record.status === 'stale') {
-        return { fallback };
-      }
-      let primary = record
-        ? (record.title || provenancePlainText(record.description).slice(0, 120))
-        : '';
+      if (!record) return { fallback };
+      const authorKey = author && author.key ? author.key : '';
+      let authorName = author ? (author.name || author.handle || author.key) : '';
+      let primary = record.title
+        || provenancePlainText(record.description).slice(0, 120);
       if (!primary) {
-        if (record.status !== 'ok') return { fallback };
-        primary = record.platform === 'other' ? '其他来源' : '无题';
+        if (authorKey || authorName) {
+          primary = '无题';
+        } else if (record.status === 'ok') {
+          primary = record.platform === 'other' ? '其他来源' : '无题';
+        } else {
+          return { fallback };
+        }
       }
       const tags = (record.tags || [])
         .filter((tag) => tag && !primary.includes(tag))
@@ -2105,10 +2108,16 @@
       const record = (data && data.record) || {};
       const author = data && data.author;
       const platform = { pixiv: 'Pixiv', twitter: 'X/Twitter', other: '其他来源' }[record.platform] || '未识别';
+      const hasAuthor = Boolean(
+        (author && (author.key || author.name || author.handle))
+        || record.author_key
+      );
       const missing = !data.record || record.status !== 'ok';
-      const emptyTitle = missing
-        ? (data.path || '未识别来源')
-        : (record.platform === 'other' ? '其他来源' : '无题');
+      const emptyTitle = hasAuthor
+        ? '无题'
+        : (missing
+          ? (data.path || '未识别来源')
+          : (record.platform === 'other' ? '其他来源' : '无题'));
       const title = record.title || provenancePlainText(record.description).slice(0, 80) || emptyTitle;
       const tags = (record.tags || []).map((tag) => `<span class="provenance-tag">${escapeHtml(tag)}</span>`).join('');
       const authorName = author ? (author.name || author.handle || author.key) : '';
