@@ -17,13 +17,16 @@ from .config import (
     load_auto_unload_seconds,
     save_auto_unload_seconds,
 )
+from .incremental_state import IncrementalIndexState
 from .library import (
     FolderCatalog,
     build_catalog,
+    build_catalog_from_state_rows,
     day_end_ns,
     day_start_ns,
     load_catalog,
     rebuild_catalog,
+    save_catalog,
 )
 from .llm import OllamaClient, OllamaUnavailable
 from .models.embedder import SiglipEmbedder
@@ -373,22 +376,44 @@ class SearchEngine:
         )
 
     def folder_catalog(self) -> FolderCatalog:
-        count = int(self.store.count()) if hasattr(self.store, "count") else None
-        cached = getattr(self, "_folder_catalog", None)
-        if cached is not None and getattr(self, "_folder_catalog_count", None) == count:
-            return cached
-        catalog = (
-            load_catalog(self.config.folder_catalog_path, count) if count is not None else None
-        )
-        if catalog is None:
-            if count is not None:
-                catalog = rebuild_catalog(self.store, self.config)
-            else:
-                rows = getattr(self.store, "iter_folder_payloads", self.store.iter_payloads)()
-                catalog = build_catalog(rows)
-        self._folder_catalog = catalog
-        self._folder_catalog_count = count
-        return catalog
+        lock = getattr(self, "_folder_catalog_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._folder_catalog_lock = lock
+        with lock:
+            count = int(self.store.count()) if hasattr(self.store, "count") else None
+            cached = getattr(self, "_folder_catalog", None)
+            if cached is not None and getattr(self, "_folder_catalog_count", None) == count:
+                return cached
+            catalog = (
+                load_catalog(self.config.folder_catalog_path, count)
+                if count is not None
+                else None
+            )
+            if catalog is None:
+                # The incremental sidecar is committed after Qdrant and already
+                # contains canonical folder keys. Rebuilding from it avoids a
+                # full Qdrant scroll and per-path Path.resolve() on large libraries.
+                state_rows = IncrementalIndexState(
+                    self.config.index_state_path
+                ).catalog_payloads()
+                if state_rows:
+                    catalog = build_catalog_from_state_rows(state_rows)
+                    save_catalog(
+                        self.config.folder_catalog_path,
+                        catalog,
+                        count if count is not None else len(state_rows),
+                    )
+                elif count is not None:
+                    catalog = rebuild_catalog(self.store, self.config)
+                else:
+                    rows = getattr(
+                        self.store, "iter_folder_payloads", self.store.iter_payloads
+                    )()
+                    catalog = build_catalog(rows)
+            self._folder_catalog = catalog
+            self._folder_catalog_count = count
+            return catalog
 
     def _plan(self, text: str, expand: bool) -> tuple[QueryPlan, str | None]:
         if not expand or not self.config.llm.enabled:

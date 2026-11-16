@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -379,6 +380,67 @@ def build_catalog(payloads: Iterable[tuple[str, dict[str, Any]]]) -> FolderCatal
         leaf.id_mtimes.append(stamp)
         leaf.mtime_ns = max(leaf.mtime_ns, stamp)
 
+    _restore_child_keys(folders)
+    return FolderCatalog(folders=folders, root_keys=root_keys)
+
+
+def build_catalog_from_state_rows(
+    payloads: Iterable[tuple[str, dict[str, Any]]],
+) -> FolderCatalog:
+    """Fast catalog rebuild from canonical path keys already in index_state.
+
+    Unlike `build_catalog`, this never calls Path.resolve()/stat for every
+    folder, which is prohibitively slow on a 44k-image library.
+    """
+    folders: dict[str, _FolderAcc] = {}
+    root_keys: list[str] = []
+    seen_roots: set[str] = set()
+    for point_id, payload in payloads:
+        leaf_key = str(payload.get("folder_key") or "")
+        root_key = str(payload.get("root_key") or "")
+        if not leaf_key or not root_key:
+            continue
+        chain: list[str] = []
+        current = leaf_key
+        while True:
+            chain.append(current)
+            if current == root_key:
+                break
+            parent = os.path.dirname(current)
+            if not parent or parent == current:
+                break
+            current = parent
+        chain.reverse()
+        if root_key not in seen_roots:
+            seen_roots.add(root_key)
+            root_keys.append(root_key)
+        parent_key: str | None = None
+        for key in chain:
+            acc = folders.get(key)
+            if acc is None:
+                acc = _FolderAcc(
+                    key=key,
+                    name=Path(key).name or key,
+                    path=key,
+                    parent_key=parent_key,
+                )
+                folders[key] = acc
+                if parent_key and parent_key in folders:
+                    parent = folders[parent_key]
+                    if key not in parent.child_keys:
+                        parent.child_keys.append(key)
+            parent_key = key
+        leaf = folders.get(leaf_key)
+        if leaf is None:
+            continue
+        leaf.count += 1
+        leaf.ids.append(point_id)
+        leaf.id_names.append(
+            str(payload.get("name") or Path(str(payload.get("path_key") or "")).name)
+        )
+        stamp = int(payload.get("mtime_ns", 0))
+        leaf.id_mtimes.append(stamp)
+        leaf.mtime_ns = max(leaf.mtime_ns, stamp)
     _restore_child_keys(folders)
     return FolderCatalog(folders=folders, root_keys=root_keys)
 

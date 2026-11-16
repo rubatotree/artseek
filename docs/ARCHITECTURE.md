@@ -92,7 +92,7 @@ $$
 
 ## 来源元信息
 
-`{index_dir}/provenance.sqlite3` 保存每张图的 Pixiv 作品或 X/Twitter 推文来源、作者组、抓取状态与限速预算。文件名与嵌入 XMP/EXIF 的解析完全离线；网络补全按域名调度：Pixiv 默认单并发、0.75 秒/请求，FxTwitter 默认 4 并发、0.2 秒/请求；默认不设每日请求上限（`0` = 不限），`blocked_until` 仍持久化。SauceNAO/ascii2d 不配置 API key，查看器只提供打开页面和 URL 粘贴。搜索、目录、收藏、随机接口都接受 `author_key`，作者页 `/author/{key}` 直接展示该作者组的分页结果。索引完成后只对新点做本地扫描，并按 `[provenance] auto_enrich` 决定是否启动低速网络补全。详见 `docs/image-provenance.md`。
+索引目录的 `folder_catalog.json` 缺失或损坏时，服务优先从 `index_state.sqlite3` 的规范路径键快速重建，而不是重新遍历 Qdrant；重建由进程内锁串行化并原子落盘。`{index_dir}/provenance.sqlite3` 保存每张图的 Pixiv 作品或 X/Twitter 推文来源、作者组、抓取状态与限速预算。文件名与嵌入 XMP/EXIF 的解析完全离线；网络补全按域名调度：Pixiv 默认单并发、0.75 秒/请求，FxTwitter 默认 4 并发、0.2 秒/请求；默认不设每日请求上限（`0` = 不限），`blocked_until` 仍持久化。SauceNAO/ascii2d 不配置 API key，查看器只提供打开页面和 URL 粘贴。搜索、目录、收藏、随机接口都接受 `author_key`，作者页 `/author/{key}` 直接展示该作者组的分页结果。索引完成后只对新点做本地扫描，并按 `[provenance] auto_enrich` 决定是否启动低速网络补全。详见 `docs/image-provenance.md`。
 
 ## 可扩展点
 

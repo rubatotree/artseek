@@ -10,6 +10,7 @@ from artseek.library import (
     FolderScope,
     apply_scope,
     build_catalog,
+    build_catalog_from_state_rows,
     day_end_ns,
     day_start_ns,
     folder_key_of,
@@ -35,6 +36,39 @@ def _payload(path: Path, root: Path, mtime: int = 1) -> dict:
 
 
 class LibraryTreeTests(unittest.TestCase):
+    def test_state_rows_build_catalog_without_filesystem_resolution(self) -> None:
+        root = Path("D:/art")
+        payloads = [
+            (
+                "p1",
+                {
+                    "folder_key": canonical_path(root / "a" / "b"),
+                    "root_key": canonical_path(root),
+                    "name": "one.png",
+                    "mtime_ns": 10,
+                },
+            ),
+            (
+                "p2",
+                {
+                    "folder_key": canonical_path(root / "a"),
+                    "root_key": canonical_path(root),
+                    "name": "two.png",
+                    "mtime_ns": 20,
+                },
+            ),
+        ]
+        catalog = build_catalog_from_state_rows(payloads)
+        self.assertEqual(catalog.root_keys, [canonical_path(root)])
+        self.assertEqual(
+            {key: len(acc.ids) for key, acc in catalog.folders.items()},
+            {
+                canonical_path(root): 0,
+                canonical_path(root / "a"): 1,
+                canonical_path(root / "a" / "b"): 1,
+            },
+        )
+
     def test_nested_tree_and_direct_counts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
