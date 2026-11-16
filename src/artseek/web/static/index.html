@@ -258,10 +258,17 @@
       color: var(--ink); background: #fff; font: inherit; font-size: 12px;
     }
     .search-panel {
-      position: sticky; top: 12px; z-index: 10;
+      position: static; z-index: auto;
       padding: 16px; border: 1px solid rgba(255,255,255,.9); border-radius: 22px;
       background: var(--panel); backdrop-filter: blur(18px); box-shadow: var(--shadow);
       transition: box-shadow .15s ease, outline-color .15s ease, background .15s ease;
+    }
+    body.mobile-search-open .search-panel {
+      position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+      z-index: 60; width: min(920px, calc(100vw - 24px));
+      max-height: calc(100dvh - 24px); overflow-y: auto;
+      border-radius: 18px;
+      box-shadow: 0 18px 40px rgba(69,51,76,.2);
     }
     body.file-drag .search-panel {
       background: #fff8fb;
@@ -1144,7 +1151,7 @@
       }
       body.mobile-search-open .search-panel {
         position: fixed; top: env(safe-area-inset-top, 0px); left: 0; right: 0;
-        z-index: 60; width: 100%; margin: 0;
+        transform: none; z-index: 60; width: 100%; margin: 0;
         max-height: calc(100dvh - env(safe-area-inset-top, 0px));
         overflow-y: auto;
         border: 0; border-bottom: 1px solid var(--line);
@@ -1746,9 +1753,9 @@
     function loadFolderSort() {
       try {
         const value = localStorage.getItem(FOLDER_SORT_STORAGE_KEY);
-        return FOLDER_SORT_LABELS[value] ? value : 'name';
+        return FOLDER_SORT_LABELS[value] ? value : 'mtime';
       } catch (_) {
-        return 'name';
+        return 'mtime';
       }
     }
     function collectionSortIcon(value) {
@@ -3737,7 +3744,6 @@
     $('search-fab').addEventListener('click', () => setMobileSearchOpen(true));
     document.addEventListener('click', closeMobileSearchIfOutside, true);
     window.addEventListener('scroll', () => {
-      if (!mobileSearchViewport()) return;
       if (
         state.mobileSearchOpen
         && !state.galleryDragItem
@@ -3748,6 +3754,11 @@
       }
       syncSearchFabVisibility();
     }, { passive: true });
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || !state.mobileSearchOpen) return;
+      event.preventDefault();
+      setMobileSearchOpen(false);
+    });
     $('search-form').addEventListener('submit', (event) => { event.preventDefault(); runSearch(); });
     $('filter-toggle').addEventListener('click', () => {
       setFilterPanelOpen($('search-filters').hidden);
@@ -4340,23 +4351,11 @@
     function compactInfo() {
       return window.matchMedia('(max-width: 720px)').matches;
     }
-    function mobileSearchViewport() {
-      return window.matchMedia('(max-width: 900px)').matches;
-    }
     function syncSearchFabVisibility() {
-      const visible = mobileSearchViewport()
-        && !state.mobileSearchOpen
-        && window.scrollY > 80;
+      const visible = !state.mobileSearchOpen && window.scrollY > 80;
       $('search-fab').hidden = !visible;
     }
     function setMobileSearchOpen(open) {
-      if (!mobileSearchViewport()) {
-        state.mobileSearchOpen = false;
-        document.body.classList.remove('mobile-search-open');
-        $('search-fab').hidden = true;
-        $('search-fab').setAttribute('aria-expanded', 'false');
-        return;
-      }
       state.mobileSearchOpen = Boolean(open);
       document.body.classList.toggle('mobile-search-open', state.mobileSearchOpen);
       $('search-fab').setAttribute('aria-expanded', String(state.mobileSearchOpen));
@@ -4826,7 +4825,7 @@
       return SEARCH_SORT_LABELS[state.searchSort] ? state.searchSort : 'mtime_desc';
     }
     function effectiveBrowseSort() {
-      return FOLDER_SORT_LABELS[state.browseSort] ? state.browseSort : 'name';
+      return FOLDER_SORT_LABELS[state.browseSort] ? state.browseSort : 'mtime';
     }
     function effectiveAuthorSort() {
       return FOLDER_SORT_LABELS[state.authorSort] ? state.authorSort : 'mtime';
@@ -6512,7 +6511,7 @@
       if (!reset && (state.loadingMore || !state.hasMore)) return;
       const seq = reset ? ++state.searchSeq : state.searchSeq;
       const timeRange = currentTimeRange();
-      const sort = state.browseSort || 'name';
+      const sort = state.browseSort || 'mtime';
       if (sort === 'random' && state.browseSeed == null) state.browseSeed = newRandomSeed();
       if (reset) {
         state.hasMore = false;
@@ -6640,7 +6639,7 @@
         $('load-more').hidden = false;
       }
       try {
-        const sort = state.browseSort || 'name';
+        const sort = state.browseSort || 'mtime';
         if (sort === 'random' && state.browseSeed == null) state.browseSeed = newRandomSeed();
         const params = new URLSearchParams({
           folder_key: key,
@@ -8609,7 +8608,6 @@
     let galleryResizeTimer = 0;
     window.addEventListener('resize', () => {
       syncQueryPlaceholder();
-      if (!mobileSearchViewport() && state.mobileSearchOpen) setMobileSearchOpen(false);
       syncSearchFabVisibility();
       clearTimeout(galleryResizeTimer);
       galleryResizeTimer = setTimeout(() => {
