@@ -2286,9 +2286,7 @@
       const tagLinks = (values, extraClass = '') => (values || [])
         .map((tag) => {
           const aliases = Array.isArray(tagAliasMap[tag]) ? tagAliasMap[tag] : [];
-          const title = aliases.length
-            ? `${aliases.join(' · ')} · 筛选该标签（Ctrl+点击在新标签页打开）`
-            : '筛选该标签（Ctrl+点击在新标签页打开）';
+          const title = aliases.length ? aliases.join(' · ') : '';
           return `<a class="provenance-tag ${extraClass}" href="/tag/${encodeURIComponent(tag)}" data-tag="${escapeHtml(tag)}" title="${escapeHtml(title)}">${escapeHtml(tag)}</a>`;
         })
         .join('');
