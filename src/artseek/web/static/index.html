@@ -2364,6 +2364,7 @@
       if (state.mode === 'browse') return fetchFolderImages({ reset: true });
       if (state.mode === 'collection') return fetchCollectionImages({ reset: true });
       if (state.mode === 'random') return fetchRandomBrowse({ reset: true });
+      if (state.mode === 'scope') return fetchScopeImages({ reset: true });
       if (state.mode === 'author') return fetchAuthorImages({ reset: true });
       if (state.mode === 'tag') return fetchTagImages({ reset: true });
       return Promise.resolve();
@@ -2433,7 +2434,7 @@
       state.searchSnapshotId = '';
       state.searchRequest = null;
       updateAuthorFilter();
-      if (!['search', 'browse', 'collection', 'random', 'author'].includes(state.mode)) {
+      if (!['search', 'browse', 'collection', 'random', 'scope', 'author'].includes(state.mode)) {
         state.mode = 'author';
         state.authorTotal = 0;
         state.results = [];
@@ -2445,19 +2446,24 @@
       else reloadCurrentGallery();
     }
     function clearAuthorFilter() {
+      if ($('viewer').open) finishDismissViewer();
       const wasAuthor = state.mode === 'author';
       state.authorKey = '';
       state.authorName = '';
       state.authorTotal = 0;
       updateAuthorFilter();
       if (wasAuthor) {
+        if (treeState.selected.size) {
+          startScopeBrowse({ skipRoute: true });
+          commitGalleryRoute({ forcePush: true });
+          return;
+        }
         state.mode = 'idle';
         state.results = [];
         state.hasMore = false;
         renderGallery(state.results, { append: false });
         $('query-info').textContent = '作者筛选已清除。';
       }
-      if ($('viewer').open) finishDismissViewer();
       commitGalleryRoute({ forcePush: true });
       if (!wasAuthor) reloadCurrentGallery();
     }
@@ -8031,7 +8037,7 @@
       const route = parseAppRoute();
       // A fresh page starts with no checked folders. Search/random deep links
       // keep their persisted scope because they cannot run without one.
-      if (route.kind !== 'search' && route.kind !== 'random') {
+      if (route.kind !== 'search' && route.kind !== 'random' && route.kind !== 'author') {
         treeState.selected.clear();
         renderTree();
         updateTreeSummary();
