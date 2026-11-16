@@ -8,6 +8,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+from urllib.parse import quote
 
 from PIL import Image
 
@@ -663,6 +664,47 @@ class ProvenanceApiTests(unittest.TestCase):
             [item["id"] for item in first_random.json()["results"]],
             [item["id"] for item in second_random.json()["results"]],
         )
+
+    def test_author_and_tag_galleries_honor_sort(self) -> None:
+        author = self.store.ensure_author("pixiv", "1", name="排序作者")
+        for point_id, name, digest in (("p1", "a.png", "a" * 64), ("p2", "b.png", "b" * 64)):
+            payload = dict(
+                self.payload,
+                path=str(self.root / name),
+                path_key=str(self.root / name).casefold(),
+                content_hash=digest,
+            )
+            self.engine.store.payloads[point_id] = payload
+            self.store.upsert_scan(
+                point_id, payload, ParsedSource(parse_filename(self.image.name))
+            )
+            self.store.set_fetch_result(
+                point_id,
+                {
+                    "platform": "pixiv",
+                    "source_id": point_id,
+                    "page": 0,
+                    "url": f"https://www.pixiv.net/artworks/{point_id}",
+                    "status": "ok",
+                    "tags": ["作者排序测试"],
+                },
+                author_key=author,
+            )
+        author_url = f"/api/authors/{quote(author, safe='')}/images"
+        by_name = self.client.get(author_url, params={"sort": "name_asc"})
+        self.assertEqual([item["id"] for item in by_name.json()["results"]], ["p1", "p2"])
+        by_name_desc = self.client.get(author_url, params={"sort": "name_desc"})
+        self.assertEqual([item["id"] for item in by_name_desc.json()["results"]], ["p2", "p1"])
+        random_one = self.client.get(author_url, params={"sort": "random", "seed": 7})
+        random_two = self.client.get(author_url, params={"sort": "random", "seed": 7})
+        self.assertEqual(random_one.json()["seed"], 7)
+        self.assertEqual(
+            [item["id"] for item in random_one.json()["results"]],
+            [item["id"] for item in random_two.json()["results"]],
+        )
+        tag_url = f"/api/tags/{quote('作者排序测试', safe='')}/images"
+        by_tag = self.client.get(tag_url, params={"sort": "name_desc"})
+        self.assertEqual([item["id"] for item in by_tag.json()["results"]], ["p2", "p1"])
 
     def test_text_label_is_a_model_search_input(self) -> None:
         before = len(self.engine.search_calls)

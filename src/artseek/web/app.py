@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -1967,6 +1968,30 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             result = tagged if result is None else result & tagged
         return list(result) if result is not None else None
 
+    def sort_gallery_ids(
+        point_ids: Sequence[str], sort: str, seed: int | None
+    ) -> tuple[list[str], str, int | None]:
+        scoped = list(point_ids)
+        order = "mtime_desc" if sort == "mtime" else sort
+        if order not in {"mtime_desc", "mtime_asc", "name_asc", "name_desc", "random"}:
+            order = "mtime_desc"
+        if order == "random":
+            seed = seed if seed is not None else random.SystemRandom().randrange(1 << 53)
+            random.Random(seed).shuffle(scoped)
+        elif order in {"name_asc", "name_desc"}:
+            names = app.state.provenance.point_file_names(scoped)
+            scoped.sort(
+                key=lambda item_id: (natural_key(names.get(item_id, item_id)), item_id),
+                reverse=order == "name_desc",
+            )
+        else:
+            mtimes = app.state.provenance.point_mtimes(scoped)
+            scoped.sort(
+                key=lambda item_id: (mtimes.get(item_id, 0), item_id),
+                reverse=order == "mtime_desc",
+            )
+        return scoped, order, seed if order == "random" else None
+
     def filter_only_search(
         *,
         query: str,
@@ -1997,26 +2022,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             if scope_ids is not None:
                 allowed = set(scope_ids)
                 scoped = [item_id for item_id in scoped if item_id in allowed]
-        order = (
-            sort
-            if sort in {"mtime_desc", "mtime_asc", "name_asc", "name_desc", "random"}
-            else "mtime_desc"
-        )
-        if order == "random":
-            seed = seed if seed is not None else random.SystemRandom().randrange(1 << 53)
-            random.Random(seed).shuffle(scoped)
-        elif order in {"name_asc", "name_desc"}:
-            names = app.state.provenance.point_file_names(scoped)
-            scoped.sort(
-                key=lambda item_id: (natural_key(names.get(item_id, item_id)), item_id),
-                reverse=order == "name_desc",
-            )
-        else:
-            mtimes = app.state.provenance.point_mtimes(scoped)
-            scoped.sort(
-                key=lambda item_id: (mtimes.get(item_id, 0), item_id),
-                reverse=order == "mtime_desc",
-            )
+        scoped, order, seed = sort_gallery_ids(scoped, sort, seed)
         page_ids = scoped[offset : offset + limit]
         payloads = app.state.engine.store.retrieve_payloads(page_ids)
         results = attach_provenance(
@@ -2746,12 +2752,15 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         author_key: str,
         limit: int = 40,
         offset: int = Query(default=0, ge=0, le=50_000),
+        sort: str = "mtime_desc",
+        seed: int | None = None,
     ) -> dict[str, Any]:
         store: ProvenanceStore = app.state.provenance
         summary = store.author_summary(author_key)
         if summary is None:
             raise HTTPException(404, "作者不存在")
         ids = store.point_ids_for_author(author_key)
+        ids, order, seed = sort_gallery_ids(ids, sort, seed)
         total = len(ids)
         page_size = max(1, min(int(limit), 200))
         page_ids = ids[offset : offset + page_size]
@@ -2767,6 +2776,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "author": summary,
             "offset": offset,
             "limit": page_size,
+            "sort": order,
+            "seed": seed,
             "total": total,
             "has_more": offset + len(page_ids) < total,
             "results": results,
@@ -2953,12 +2964,15 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         tag: str,
         limit: int = 40,
         offset: int = Query(default=0, ge=0, le=50_000),
+        sort: str = "mtime_desc",
+        seed: int | None = None,
     ) -> dict[str, Any]:
         store: ProvenanceStore = app.state.provenance
         clean = str(tag or "").strip()
         if not clean:
             raise HTTPException(400, "标签不能为空")
         ids = store.point_ids_for_tags([clean])
+        ids, order, seed = sort_gallery_ids(ids, sort, seed)
         total = len(ids)
         page_size = max(1, min(int(limit), 200))
         page_ids = ids[offset : offset + page_size]
@@ -2974,6 +2988,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "tag": clean,
             "offset": offset,
             "limit": page_size,
+            "sort": order,
+            "seed": seed,
             "total": total,
             "has_more": offset + len(page_ids) < total,
             "results": results,

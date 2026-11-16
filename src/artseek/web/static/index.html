@@ -539,20 +539,6 @@
     .collection-sort-temp input { width: 14px; height: 14px; accent-color: #c97a98; }
     .chip { display: inline-block; margin: 3px 5px 3px 0; padding: 5px 9px; border-radius: 999px; background: var(--rose-soft); color: #8a5268; }
     .chip.negative { background: #eeeef2; color: #706d77; text-decoration: line-through; }
-    .author-filter {
-      display: flex; align-items: center; gap: 6px; max-width: 100%;
-      padding: 4px 6px 4px 10px; border-radius: 999px;
-      background: var(--rose-soft); color: #8a5268; font-size: 12px;
-    }
-    .author-filter[hidden] { display: none; }
-    .author-filter-label {
-      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .author-filter button {
-      min-height: 0; padding: 3px 6px; border-radius: 999px;
-      background: transparent; color: #8a5268; font-size: 14px; line-height: 1;
-    }
-    .author-filter button:hover { transform: none; background: #efd6e0; }
     .provenance-pane { --notes-width: 400px; }
     .provenance-body {
       flex: 1; min-height: 0; overflow: auto; padding: 12px 14px 20px;
@@ -1534,14 +1520,6 @@
       <div class="results-column">
         <div class="results-head">
           <div id="query-info" class="query-info">勾选目录后检索，或点击目录名在右侧预览图片。新出现的文件夹默认不在查询范围内。</div>
-          <div id="author-filter" class="author-filter" hidden>
-            <span id="author-filter-label" class="author-filter-label"></span>
-            <button id="author-filter-clear" type="button" aria-label="清除作者筛选" title="清除作者筛选">×</button>
-          </div>
-          <div id="tag-filter" class="author-filter" hidden>
-            <span id="tag-filter-label" class="author-filter-label"></span>
-            <button id="tag-filter-clear" type="button" aria-label="清除标签筛选" title="清除标签筛选">×</button>
-          </div>
           <div id="collection-sort" class="collection-sort" hidden>
             <button class="collection-sort-toggle" id="collection-sort-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="collection-sort-menu" aria-label="收藏夹排序" title="收藏夹排序"></button>
             <button class="collection-sort-pin" id="collection-sort-pin" type="button" aria-label="保存为收藏夹排序" title="保存为收藏夹排序" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 4h12v17l-6-4-6 4z"/></svg></button>
@@ -1718,6 +1696,10 @@
     const SEARCH_SORT_LABELS = Object.fromEntries(
       SEARCH_SORT_OPTIONS.map((option) => [option.value, option.label])
     );
+    const SEARCH_RELEVANCE_OPTIONS = [{ value: 'search', label: '按搜索' }];
+    const SEARCH_RELEVANCE_LABELS = Object.fromEntries(
+      SEARCH_RELEVANCE_OPTIONS.map((option) => [option.value, option.label])
+    );
     const FOLDER_SORT_STORAGE_KEY = 'artseek.folderSort';
     const FOLDER_SELECTION_STORAGE_KEY = 'artseek.selectedFolders';
     function loadFolderSort() {
@@ -1734,6 +1716,8 @@
         ? '<circle cx="8" cy="12" r="5"/><path d="M8 9.2v3l2 1.2"/>'
         : mode.startsWith('name')
           ? '<path d="M4 17 7.5 8 11 17M5.4 13.6h4.2"/>'
+          : mode === 'search'
+            ? '<circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/>'
           : mode === 'manual'
             ? '<path d="M6 8h.01M6 12h.01M6 16h.01M10 8h.01M10 12h.01M10 16h.01"/>'
             : '<path d="M4 6h8M4 11h6M4 16h4"/>';
@@ -1755,6 +1739,7 @@
       provenanceTagAliasCache: new Map(),
       tempReturn: null,
       searchSort: 'mtime_desc', searchSeed: null,
+      authorSort: 'mtime', authorSeed: null, tagSort: 'mtime', tagSeed: null,
       colHeights: [],
       mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
       browseSort: loadFolderSort(), browseSeed: null, scopeTotal: 0,
@@ -2592,22 +2577,10 @@
       else await openProvenancePane();
     }
     function updateAuthorFilter() {
-      const bar = $('author-filter');
-      if (!state.authorKey) {
-        bar.hidden = true;
-        return;
-      }
-      bar.hidden = false;
-      $('author-filter-label').textContent = `作者：${state.authorName || state.authorKey}`;
+      // Author filters live in the advanced filter chips, not in a separate bar.
     }
     function updateTagFilter() {
-      const bar = $('tag-filter');
-      if (!state.tagName) {
-        bar.hidden = true;
-        return;
-      }
-      bar.hidden = false;
-      $('tag-filter-label').textContent = `标签：#${state.tagName}`;
+      // Tag filters live in the advanced filter chips, not in a separate bar.
     }
     function reloadCurrentGallery() {
       if (state.mode === 'search') return fetchResults({ reset: true, skipRoute: true });
@@ -2618,27 +2591,6 @@
       if (state.mode === 'author') return fetchAuthorImages({ reset: true });
       if (state.mode === 'tag') return fetchTagImages({ reset: true });
       return Promise.resolve();
-    }
-    function clearTagFilter() {
-      if ($('viewer').open) finishDismissViewer();
-      if (state.mode !== 'tag') {
-        state.tagName = '';
-        state.tagTotal = 0;
-        updateTagFilter();
-        return;
-      }
-      state.mode = 'idle';
-      state.tagName = '';
-      state.tagTotal = 0;
-      state.results = [];
-      state.hasMore = false;
-      updateTagFilter();
-      renderTree();
-      renderCollectionList();
-      renderGallery(state.results, { append: false });
-      $('query-info').textContent = '标签筛选已清除。';
-      $('load-more').hidden = true;
-      commitGalleryRoute({ forcePush: true });
     }
     function setAuthorFilter(key, name = '') {
       const next = key || '';
@@ -3775,8 +3727,6 @@
     $('viewer-notes').addEventListener('click', () => toggleNotesPane());
     $('viewer-provenance').addEventListener('click', () => toggleProvenancePane());
     $('provenance-close').addEventListener('click', () => closeProvenancePane());
-    $('author-filter-clear').addEventListener('click', () => clearAuthorFilter());
-    $('tag-filter-clear').addEventListener('click', () => clearTagFilter());
     $('provenance-tools').addEventListener('click', () => openProvenanceDialog());
     $('provenance-dialog-close').addEventListener('click', () => closeProvenanceDialog());
     $('provenance-dialog').addEventListener('close', () => {
@@ -4184,6 +4134,11 @@
           state.authorName = '';
           state.authorTotal = 0;
           updateAuthorFilter();
+        }
+        if (kind === 'text_tags' && state.tagName === text) {
+          state.tagName = '';
+          state.tagTotal = 0;
+          updateTagFilter();
         }
         updateFilterBadge();
         clearTimeout(state.filterApplyTimer);
@@ -4723,34 +4678,91 @@
     function browseSortActive() {
       return state.mode === 'scope' || (state.mode === 'browse' && Boolean(state.browseKey));
     }
-    function searchSortActive() {
+    function authorSortActive() {
+      return state.mode === 'author' && Boolean(state.authorKey);
+    }
+    function tagSortActive() {
+      return state.mode === 'tag' && Boolean(state.tagName);
+    }
+    function metadataSearchActive() {
+      if (state.mode !== 'search') return false;
       return Boolean(
-        state.mode === 'search'
-        && !$('query').value.trim()
-        && !$('filter-text-label').value.trim()
+        $('query').value.trim()
+        && !hasAdvancedFilters()
         && !librarySearchRefs().length
         && !state.references.some((ref) => ref.file)
       );
     }
+    function relevanceSearchActive() {
+      if (state.mode !== 'search') return false;
+      const query = $('query').value.trim();
+      const refs = librarySearchRefs();
+      const fileRefs = state.references.some((ref) => ref.file);
+      const filters = readAdvancedFilters();
+      const hasFilters = hasAdvancedFilters(filters);
+      const metadata = Boolean(query) && !hasFilters && !refs.length && !fileRefs;
+      const filterOnly = !query && !$('filter-text-label').value.trim() && !refs.length && !fileRefs;
+      return !metadata && !filterOnly && Boolean(
+        query || refs.length || fileRefs || filters.text_label
+      );
+    }
+    function searchSortActive() {
+      if (state.mode !== 'search' || relevanceSearchActive()) return false;
+      return Boolean(
+        $('query').value.trim()
+        || hasAdvancedFilters()
+        || librarySearchRefs().length
+        || state.references.some((ref) => ref.file)
+      );
+    }
     function effectiveSearchSort() {
+      if (relevanceSearchActive()) return 'search';
       return SEARCH_SORT_LABELS[state.searchSort] ? state.searchSort : 'mtime_desc';
     }
     function effectiveBrowseSort() {
       return FOLDER_SORT_LABELS[state.browseSort] ? state.browseSort : 'name';
     }
+    function effectiveAuthorSort() {
+      return FOLDER_SORT_LABELS[state.authorSort] ? state.authorSort : 'mtime';
+    }
+    function effectiveTagSort() {
+      return FOLDER_SORT_LABELS[state.tagSort] ? state.tagSort : 'mtime';
+    }
+    function sortContext() {
+      if (relevanceSearchActive()) {
+        return { kind: 'relevance', title: '搜索排序', options: SEARCH_RELEVANCE_OPTIONS, sort: 'search', temporary: false };
+      }
+      if (searchSortActive()) {
+        return { kind: 'search', title: '结果排序', options: SEARCH_SORT_OPTIONS, sort: effectiveSearchSort(), temporary: false };
+      }
+      if (authorSortActive()) {
+        return { kind: 'author', title: '作者排序', options: FOLDER_SORT_OPTIONS, sort: effectiveAuthorSort(), temporary: false };
+      }
+      if (tagSortActive()) {
+        return { kind: 'tag', title: '标签排序', options: FOLDER_SORT_OPTIONS, sort: effectiveTagSort(), temporary: false };
+      }
+      if (browseSortActive()) {
+        return { kind: 'browse', title: '图片排序', options: FOLDER_SORT_OPTIONS, sort: effectiveBrowseSort(), temporary: false };
+      }
+      if (state.mode === 'collection' && state.collectionId) {
+        return {
+          kind: 'collection', title: '排序方式', options: COLLECTION_SORT_OPTIONS,
+          sort: effectiveCollectionSort(), temporary: Boolean(state.collectionViewSort),
+        };
+      }
+      return null;
+    }
     function renderCollectionSortMenu() {
       const menu = $('collection-sort-menu');
-      const search = searchSortActive();
-      const browse = browseSortActive();
-      const options = search ? SEARCH_SORT_OPTIONS : (browse ? FOLDER_SORT_OPTIONS : COLLECTION_SORT_OPTIONS);
-      const sort = search ? effectiveSearchSort() : (browse ? effectiveBrowseSort() : effectiveCollectionSort());
-      menu.innerHTML = `<div class="collection-sort-title">${search ? '筛选排序' : (browse ? '图片排序' : '排序方式')}</div>${options.map((option) => `
-        <button class="collection-sort-option" type="button" role="menuitemradio" aria-checked="${option.value === sort}" data-sort-value="${option.value}">
+      const context = sortContext();
+      if (!context) return;
+      menu.innerHTML = `<div class="collection-sort-title">${context.title}</div>${context.options.map((option) => `
+        <button class="collection-sort-option" type="button" role="menuitemradio" aria-checked="${option.value === context.sort}" data-sort-value="${option.value}">
           ${collectionSortIcon(option.value)}
           <span>${option.label}</span>
-          <span class="collection-sort-check" aria-hidden="true">${option.value === sort ? '✓' : ''}</span>
+          <span class="collection-sort-check" aria-hidden="true">${option.value === context.sort ? '✓' : ''}</span>
         </button>`).join('')}
-        ${browse || search ? '' : `<label class="collection-sort-temp"><input id="collection-sort-temp" type="checkbox" ${state.collectionSortTemp ? 'checked' : ''}> 仅本次查看，不保存</label>`}`;
+        ${context.kind === 'collection' ? `<label class="collection-sort-temp"><input id="collection-sort-temp" type="checkbox" ${state.collectionSortTemp ? 'checked' : ''}> 仅本次查看，不保存</label>` : ''}`;
       menu.querySelectorAll('[data-sort-value]').forEach((button) => {
         button.addEventListener('click', () => {
           applyCollectionSort(button.dataset.sortValue, { temporary: state.collectionSortTemp });
@@ -4770,11 +4782,10 @@
     function syncCollectionSortMenuChecks() {
       const menu = $('collection-sort-menu');
       if (menu.hidden) return;
-      const search = searchSortActive();
-      const browse = browseSortActive();
-      const sort = search ? effectiveSearchSort() : (browse ? effectiveBrowseSort() : effectiveCollectionSort());
+      const context = sortContext();
+      if (!context) return;
       menu.querySelectorAll('[data-sort-value]').forEach((button) => {
-        const selected = button.dataset.sortValue === sort;
+        const selected = button.dataset.sortValue === context.sort;
         button.setAttribute('aria-checked', String(selected));
         const check = button.querySelector('.collection-sort-check');
         if (check) check.textContent = selected ? '✓' : '';
@@ -4792,28 +4803,54 @@
     }
     function renderCollectionSort() {
       const bar = $('collection-sort');
-      const search = searchSortActive();
-      const browse = browseSortActive();
-      const active = search || browse || (state.mode === 'collection' && Boolean(state.collectionId));
-      bar.hidden = !active;
-      if (!active) {
+      const context = sortContext();
+      if (!context) {
+        bar.hidden = true;
         closeCollectionSortMenu();
         return;
       }
-      const sort = search ? effectiveSearchSort() : (browse ? effectiveBrowseSort() : effectiveCollectionSort());
-      const temporary = !search && !browse && Boolean(state.collectionViewSort);
+      bar.hidden = false;
       const toggle = $('collection-sort-toggle');
-      toggle.innerHTML = collectionSortIcon(sort);
-      toggle.classList.toggle('is-temporary', temporary);
-      toggle.disabled = browse || search ? false : state.collectionSortBusy;
-      const label = (search ? SEARCH_SORT_LABELS : (browse ? FOLDER_SORT_LABELS : COLLECTION_SORT_LABELS))[sort] || sort;
-      const title = `${search ? '筛选排序' : (browse ? '图片排序' : '排序')}：${label}${temporary ? '（仅本次查看）' : ''}`;
+      toggle.innerHTML = collectionSortIcon(context.sort);
+      toggle.classList.toggle('is-temporary', context.temporary);
+      toggle.disabled = context.kind === 'collection' ? state.collectionSortBusy : false;
+      const labels = context.kind === 'relevance' ? SEARCH_RELEVANCE_LABELS
+        : context.kind === 'search' ? SEARCH_SORT_LABELS
+          : context.kind === 'collection' ? COLLECTION_SORT_LABELS : FOLDER_SORT_LABELS;
+      const label = labels[context.sort] || context.sort;
+      const title = `${context.title}：${label}${context.temporary ? '（仅本次查看）' : ''}`;
       toggle.setAttribute('aria-label', title);
       toggle.title = title;
-      $('collection-sort-pin').hidden = search || browse || sort === 'random' || !temporary || state.collectionSortBusy;
-      syncCollectionSortMenuChecks();
+      $('collection-sort-pin').hidden = context.kind !== 'collection' || context.sort === 'random' || !context.temporary || state.collectionSortBusy;
+      if (!$('collection-sort-menu').hidden) renderCollectionSortMenu();
+      else syncCollectionSortMenuChecks();
     }
     async function applyCollectionSort(sort, { temporary = false } = {}) {
+      if (relevanceSearchActive()) {
+        if (sort !== 'search') return;
+        state.searchSort = 'search';
+        closeCollectionSortMenu({ restoreFocus: true });
+        renderCollectionSort();
+        return;
+      }
+      if (authorSortActive()) {
+        if (!FOLDER_SORT_LABELS[sort]) return;
+        state.authorSort = sort;
+        state.authorSeed = sort === 'random' ? newRandomSeed() : null;
+        closeCollectionSortMenu({ restoreFocus: true });
+        renderCollectionSort();
+        await fetchAuthorImages({ reset: true });
+        return;
+      }
+      if (tagSortActive()) {
+        if (!FOLDER_SORT_LABELS[sort]) return;
+        state.tagSort = sort;
+        state.tagSeed = sort === 'random' ? newRandomSeed() : null;
+        closeCollectionSortMenu({ restoreFocus: true });
+        renderCollectionSort();
+        await fetchTagImages({ reset: true });
+        return;
+      }
       if (searchSortActive()) {
         if (!SEARCH_SORT_LABELS[sort]) return;
         state.searchSort = sort;
@@ -5882,16 +5919,22 @@
         $('load-more').hidden = false;
       }
       try {
+        const sort = effectiveAuthorSort();
+        if (sort === 'random' && state.authorSeed == null) state.authorSeed = newRandomSeed();
         const params = new URLSearchParams({
+          sort,
           limit: String(Number($('limit').value) || 40),
           offset: String(reset ? 0 : state.results.length),
         });
+        if (sort === 'random' && state.authorSeed != null) params.set('seed', String(state.authorSeed));
         const data = await parseResponse(await fetch(`/api/authors/${encodeURIComponent(state.authorKey)}/images?${params}`));
         if (seq !== state.searchSeq) return;
         const incoming = data.results || [];
         const author = data.author || {};
         state.authorName = author.name || state.authorName;
         state.authorTotal = Number(data.total || 0);
+        if (data.sort && FOLDER_SORT_LABELS[data.sort]) state.authorSort = data.sort;
+        if (state.authorSort === 'random' && data.seed != null) state.authorSeed = Number(data.seed);
         updateAuthorFilter();
         if (reset) state.searchSnapshotId = '';
         if (reset) {
@@ -5903,7 +5946,7 @@
         }
         state.hasMore = Boolean(data.has_more) && incoming.length > 0;
         $('load-more').hidden = !state.hasMore;
-        $('query-info').textContent = `作者「${state.authorName || state.authorKey}」· ${state.results.length} / ${state.authorTotal} 张图${state.hasMore ? ' · 下滑加载更多' : ''}`;
+        $('query-info').textContent = `作者「${state.authorName || state.authorKey}」· ${state.results.length} / ${state.authorTotal} 张图 · ${FOLDER_SORT_LABELS[state.authorSort] || state.authorSort}${state.hasMore ? ' · 下滑加载更多' : ''}`;
         if ($('viewer').open) {
           updateViewerNav();
           updateProvenanceButton();
@@ -5939,15 +5982,21 @@
         $('load-more').hidden = false;
       }
       try {
+        const sort = effectiveTagSort();
+        if (sort === 'random' && state.tagSeed == null) state.tagSeed = newRandomSeed();
         const params = new URLSearchParams({
+          sort,
           limit: String(Number($('limit').value) || 40),
           offset: String(reset ? 0 : state.results.length),
         });
+        if (sort === 'random' && state.tagSeed != null) params.set('seed', String(state.tagSeed));
         const data = await parseResponse(await fetch(`/api/tags/${encodeURIComponent(state.tagName)}/images?${params}`));
         if (seq !== state.searchSeq) return;
         const incoming = data.results || [];
         state.tagName = data.tag || state.tagName;
         state.tagTotal = Number(data.total || 0);
+        if (data.sort && FOLDER_SORT_LABELS[data.sort]) state.tagSort = data.sort;
+        if (state.tagSort === 'random' && data.seed != null) state.tagSeed = Number(data.seed);
         updateTagFilter();
         if (reset) {
           state.results = incoming;
@@ -5958,7 +6007,7 @@
         }
         state.hasMore = Boolean(data.has_more) && incoming.length > 0;
         $('load-more').hidden = !state.hasMore;
-        $('query-info').textContent = `标签「#${state.tagName}」· ${state.results.length} / ${state.tagTotal} 张图${state.hasMore ? ' · 下滑加载更多' : ''}`;
+        $('query-info').textContent = `标签「#${state.tagName}」· ${state.results.length} / ${state.tagTotal} 张图 · ${FOLDER_SORT_LABELS[state.tagSort] || state.tagSort}${state.hasMore ? ' · 下滑加载更多' : ''}`;
         if ($('viewer').open) {
           updateViewerNav();
           updateProvenanceButton();
@@ -6579,6 +6628,11 @@
         if (reset) $('query-info').textContent = '请先勾选要检索的文件夹。新添加的目录默认不在查询范围内。';
         return;
       }
+      const relevanceSearch = !filterOnly && !metadataSearch;
+      if (reset && !frozen) {
+        if (relevanceSearch) state.searchSort = 'search';
+        else if (state.searchSort === 'search') state.searchSort = 'mtime_desc';
+      }
       const keepSnapshot = !hasFilters && !metadataSearch;
       if (reset) {
         state.mode = 'search';
@@ -6589,6 +6643,7 @@
         state.collectionName = '';
         state.collectionTotal = null;
         state.searchSnapshotId = '';
+        if (!frozen && relevanceSearch) state.searchSort = 'search';
         renderTree();
         renderCollectionList();
         if (!skipRoute) commitGalleryRoute();
@@ -6655,8 +6710,8 @@
           text_label: advanced.text_label || '',
           tag_expression: advanced.tag_expression || '',
           text_tags: advanced.text_tags || [],
-          sort: state.searchSort,
-          seed: state.searchSort === 'random' ? state.searchSeed : null,
+          sort: effectiveSearchSort(),
+          seed: effectiveSearchSort() === 'random' ? state.searchSeed : null,
           exclude_ids: reset ? [] : state.results.map((item) => item.id),
           snapshot_id: keepSnapshot && !reset ? (state.searchSnapshotId || '') : '',
         };
@@ -9111,8 +9166,9 @@
           state.mode = 'author';
           state.tagName = '';
           state.tagTotal = 0;
-          updateAuthorFilter();
-          updateTagFilter();
+          setAdvancedFilters({ authors: [route.key] });
+          setFilterPanelOpen(true);
+          updateFilterBadge();
           await fetchAuthorImages({ reset: true });
         } else if (route.kind === 'tag' && route.tag) {
           state.authorKey = '';
@@ -9127,8 +9183,9 @@
           state.collectionId = '';
           state.collectionName = '';
           state.collectionTotal = null;
-          updateAuthorFilter();
-          updateTagFilter();
+          setAdvancedFilters({ text_tags: [route.tag] });
+          setFilterPanelOpen(true);
+          updateFilterBadge();
           renderTree();
           renderCollectionList();
           await fetchTagImages({ reset: true });
