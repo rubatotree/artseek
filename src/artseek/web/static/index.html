@@ -2319,7 +2319,7 @@
         link.addEventListener('click', (event) => {
           if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
           event.preventDefault();
-          applyTagFilter(link.dataset.tag || '');
+          addTagFilterChip(link.dataset.tag || '', 'text_tags');
         });
       });
       body.querySelector('#provenance-form')?.addEventListener('submit', (event) => {
@@ -2548,6 +2548,7 @@
       state.searchSnapshotId = '';
       state.searchRequest = null;
       updateAuthorFilter();
+      setFilterPanelOpen(true);
       if (!['search', 'browse', 'collection', 'random', 'scope', 'author'].includes(state.mode)) {
         state.mode = 'author';
         state.authorTotal = 0;
@@ -2558,6 +2559,15 @@
       commitGalleryRoute({ forcePush: true });
       if (state.mode === 'author') fetchAuthorImages({ reset: true });
       else reloadCurrentGallery();
+    }
+    function addTagFilterChip(tag, kind = 'text_tags') {
+      const text = String(tag || '').trim();
+      if (!text) return;
+      if ($('viewer').open) finishDismissViewer();
+      addFilterChip(kind, text);
+      updateFilterBadge();
+      setFilterPanelOpen(true);
+      scheduleFilterApply();
     }
     function clearAuthorFilter() {
       if ($('viewer').open) finishDismissViewer();
@@ -6219,7 +6229,7 @@
         ? ''
         : `<button class="card-favorite" type="button" data-card-action="favorite" draggable="false" aria-label="收藏：${escapeHtml(item.name)}" title="收藏到…" aria-haspopup="dialog" aria-expanded="false" aria-controls="card-collection-menu">♡</button>`;
       const hitsText = item.tag_hits && item.tag_hits.length
-        ? item.tag_hits.map((tag) => `<a class="card-tag" href="/tag/${encodeURIComponent(tag)}" title="筛选该标签（Ctrl+点击在新标签页打开）">${escapeHtml(tag.replaceAll('_', ' '))}</a>`).join(' · ')
+        ? item.tag_hits.map((tag) => `<a class="card-tag" href="/tag/${encodeURIComponent(tag)}" data-tag="${escapeHtml(tag)}" title="加入图片标签筛选（Ctrl+点击在新标签页打开）">${escapeHtml(tag.replaceAll('_', ' '))}</a>`).join(' · ')
         : '';
       if (listMode) {
         const meta = [
@@ -8202,6 +8212,11 @@
       if (!anchor || event.defaultPrevented || event.button !== 0) return;
       if (anchor.dataset.authorKey || anchor.classList.contains('provenance-tag')) return;
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      if (anchor.classList.contains('card-tag')) {
+        event.preventDefault();
+        addTagFilterChip(anchor.dataset.tag || '', 'image_tags');
+        return;
+      }
       if (anchor.target && anchor.target !== '_self') return;
       const href = anchor.getAttribute('href');
       if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('javascript:')) return;
