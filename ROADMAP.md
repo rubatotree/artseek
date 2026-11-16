@@ -345,12 +345,15 @@ independently disposable.
    and ≈ 390 MB of deepghs model cache. Remaining: full pytest after the numpy
    downgrade in `.venv`, model license list, GPU timing.
 2. Pending: extraction pipeline, sidecar stores, incremental `artseek refine`,
-   and `doctor` coverage.
-3. Pending: threshold calibration (`--calibrate`) that writes `ccip_threshold`
-   and gates the character UI while it is zero.
-4. Pending: character clustering and albums, variant grouping with collapse and
+   `doctor` coverage, and the 高级 → 参考索引 block (switches, coverage, run).
+3. Pending: threshold calibration (`--calibrate`) that writes `ccip_threshold`,
+   plus a web calibration action; the character UI stays hidden while it is zero.
+4. Pending: character clustering and albums (侧栏「角色」tab, `/character/{id}`,
+   viewer 同角色), variant grouping with collapse badge, in-group paging and
    manual split, cluster naming, per-cluster outfit branches.
-5. Pending: browse layer — framing/completeness filters, composition and palette
-   similarity, hand/eye reference pages, pose skeleton overlay.
+5. Pending: browse layer — framing/completeness/palette filters with result
+   chips, composition/palette/pose similarity from the viewer reference menu,
+   hand/eye reference pages, pose skeleton overlay, cutout export.
 6. Pending: `pull-models --with-refine`, README/ARCHITECTURE updates, timing and
-   sidecar-size records, full test suite and browser checks.
+   sidecar-size records, full test suite, and browser checks of the disabled,
+   uncalibrated and low-coverage states.

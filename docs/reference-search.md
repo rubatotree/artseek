@@ -114,22 +114,114 @@ halfbody_min_conf = 0.5
 
 `artseek doctor` 增加 refine 段：依赖是否可用、各模型是否已缓存、侧车覆盖率、是否已标定。`artseek pull-models --with-refine` 预取模型到本地缓存，保持"索引后可离线"。
 
+## 代码结构
+
+新包 `src/artseek/refine/`（与 `provenance/` 同构，主包保持扁平模块风格）：
+
+| 模块 | 职责 |
+|---|---|
+| `refine/extract.py` | 单图一次解码，产出全部特征与标量；`feature_version` 决定是否重算 |
+| `refine/store.py` | `artseek_refine` 集合读写 + `refine.sqlite3`（WAL、原子写、与 `incremental_state.py` 同套路） |
+| `refine/cluster.py` | 候选→复核→并查集；簇命名与手工拆组覆盖 |
+| `refine/query.py` | 同角色/同构图/同配色/同姿势的候选检索与复核 |
+| `refine/crops.py` | 手/眼/脸裁切与抠图缓存（写 `cache_dir/refine`，从不写原图） |
+| `refine/calibrate.py` | 阈值曲线与 ARI 报告，写回配置 |
+
+接入点：`config.py` 新增 `RefineConfig`；`cli.py` 新增 `refine` 子命令；`model_manager.py` 增加 `--with-refine`；`web/app.py` 新增路由与 `attach_refine()`（与 `attach_provenance()` 并列，由 `gallery_result()` 之后统一投影）；`image_io.py` 复用 `load_rgb`。
+
 ## CLI 与接口
 
 ```
 artseek refine DIR...            # 增量抽取
+artseek refine DIR... --only character,layout
 artseek refine DIR... --recluster
 artseek refine --calibrate --sample 400
 artseek refine --status
 ```
 
-- `GET /character/{cluster_id}`：角色相册页（与 `/author/{key}` 结构对称）。
-- `GET /api/character/{cluster_id}`、`GET /api/character/similar?point_id=&limit=`。
-- `GET /api/variants/{cluster_id}`；gallery 卡片通过 payload 注入的 `variant_id` 折叠。
-- `GET /api/layout/similar?point_id=`、`GET /api/palette/similar?point_id=`、`GET /api/palette/similar?colors=%23f2d5d5,...`
-- `GET /api/refine/crop?point_id=&kind=hand|eye|face&index=0`：从原图裁切并缓存，不写原图。
-- `GET /api/pose/skeleton?point_id=`：返回 18 点与原图尺寸，前端 canvas 叠加，不做图像合成。
-- 现有 gallery 接口新增筛选参数：`framing`、`completeness`、`persons`、`min_person_ratio`、`has_hands`。筛选只读侧车，不改主集合。
+只读查询：
+
+- `GET /character/{cluster_id}`、`GET /reference?kind=hands|eyes`：SPA 页面（与 `/author/{key}` 同构入路由表）。
+- `GET /api/refine/status`：开关、覆盖率、`calibrated`、模型就绪、任务状态。
+- `GET /api/characters?q=&limit=&offset=`；`GET /api/characters/{id}`（含服装分支）；`PUT /api/characters/{id}`（改名）。
+- `GET /api/characters/{id}/images?...`：分页，接受 `sort`、`framing`、`completeness`。
+- `GET /api/refine/similar?point_id=&channel=character|layout|palette|pose&limit=`。
+- `GET /api/refine/variants/{variant_id}`：组内有序成员。
+- `GET /api/refine/crops?kind=hand|eye&limit=&offset=` + `GET /refine/crop/{point_id}/{kind}/{index}.webp`。
+- `GET /api/refine/skeleton/{point_id}`：18 点、score、原图尺寸，前端 canvas 叠加。
+- `GET /api/refine/cutout/{point_id}`：按需生成透明 PNG 并缓存。
+
+写入与任务（与 provenance job 同构，索引进行中返回 409）：
+
+- `POST /api/refine/run`（`segments`、`recluster`、`force`）、`/pause`、`/resume`、`/stop`。
+- `POST /api/refine/calibrate`（`sample`）、`GET /api/refine/calibration`。
+- `PUT /api/refine/variants/{variant_id}/split`（`point_id`）：手工拆组，写侧车覆盖。
+
+现有 gallery 接口（`/api/search`、`/api/scope-images`、`/api/folder-images`、`/api/collections/{id}/images`、`/api/random-browse`、作者与标签页）新增筛选参数，全部只读侧车：`framing`、`completeness`、`persons`、`min_person_ratio`、`has_hands`、`character_id`、`colors`、`layout_of`、`pose_of`。
+
+卡片记录追加一个可缺省的 `refine` 块（refine 关闭时整块不出现，前端据此整体降级）：
+
+```json
+{"framing": "half", "persons": 1, "completeness": "polished",
+ "character": {"id": "c12", "name": "初音未来", "size": 37},
+ "variant": {"id": "v7", "index": 2, "count": 6},
+ "palette": ["#f2d5d5", "#8aa7c0"]}
+```
+
+## 前端界面
+
+沿用现有信息架构，不新增独立页面框架：侧栏 tab、结果头 chips、卡片角标、查看器按钮条四处承载绝大多数功能。
+
+### 侧栏：新增「角色」tab（范围 / 收藏夹 / 角色 / 高级）
+
+- 顶部搜索框按名称过滤角色簇；列表与收藏夹同款 2×6 分页网格，tile 显示封面（簇内美学/清晰度最高者）、名称、数量角标；底部工具与收藏夹一致：改名、合并建议、重算。
+- 未标定时 tab 内容替换为一句说明 + 「去标定」按钮，不显示任何分组，避免不可信结果。
+- 未开启 refine 时 tab 置灰，提示到 高级 → 参考索引 开启。
+
+### 高级 tab：新增「参考索引」块（在「来源元信息」块之后）
+
+- 六项开关：角色、构图、姿势、手/眼、配色、抠图（后两项标注「按需」）。
+- 覆盖率进度条：`已覆盖 8214 / 12030`，按特征分列；一键「开始/继续」「重算聚类」。
+- 标定状态：`未标定` / `阈值 0.181（ARI 0.94，样本 400）`，附「标定」按钮与进度。
+- 模型状态与现有「图文向量模型」块同构：是否已缓存、当前是否载入、卸载。
+
+### 搜索栏筛选面板：新增四个字段
+
+在现有「标题模糊词 / 文字标签 / 作者 / 来源 Tag」之后追加：
+
+- **取景**：多点复选框 `特写 / 半身 / 全身 / 多人`；
+- **完成度**：`完稿 / 草稿 / 线稿`；
+- **主色**：五色板选择器，点选若干色块后按 CIE76 复核，可清空；
+- **参考检索**：当已添加参考图时出现 `同构图 / 同配色 / 同姿势` 三个开关，等价于把参考图 ID 传给 `layout_of` / `colors` / `pose_of`。
+
+筛选计数徽标（`#filter-count`）把新增字段一并计入；所有参数进 `?q=…&framing=…&colors=…`，并由现有 `&s=` 快照冻结排序。
+
+### 结果头：筛选 chips
+
+与现有作者/标签 chips 同位置追加 `取景：半身 ×`、`完成度：完稿 ×`、`主色 3 色 ×`，可单独移除；角色页与手/眼参考页复用同一套 chips。
+
+### 卡片：三处角标
+
+- 右下角差值徽标 `+5`（与现有分数徽标错开）：点击展开组内抽屉，不进入原图；
+- 左上角角色 pill（半透明、单行截断）：点击进入 `/character/{id}`；
+- 多人图显示 `2 人` 小标记，不参与角色分组但可用于取景筛选。
+
+### 查看器：按钮条新增「参考」菜单
+
+`参考 ▾` 展开后为一组动作，按当前图可用性逐项禁用：
+
+- `同角色` → 角色簇或相似角色；`同构图`、`同配色`、`同姿势` → 对应通道的相似结果（沿用现有 gallery 替换而非新窗口）；
+- `看骨架`（切换 canvas 叠加，附不透明度滑杆）、`抠图`（生成/显示透明 PNG，可下载到笔记 `assets/`）、`手部/眼睛`（跳到该图的裁切）。
+- 组内翻页：属于差分组的图在标题旁显示 `组 3/6`，支持在组内前后翻；`拆组` 写入覆盖。
+- 配色条：按钮条右侧显示 5 个色块，点击单色块即按该色搜索。
+
+### 角色页 `/character/{id}`
+
+头部为名称（可内联改名）+ 数量 + `同角色` 来源；下方是服装分支 chips（`常服 12 / 礼服 8 / 其余 17`）；主体为与 gallery 完全一致的网格，差分组折叠为单卡。标题、深链、`history` 行为与 `/author/{key}` 对齐。
+
+### 手/眼参考页 `/reference?kind=hands|eyes`
+
+裁切卡片网格（`/refine/crop/...`，懒加载、分页 60），每卡显示原图缩略与框位置；点开进入原图并高亮对应框。顶部可叠加取景/完成度/角色筛选，作为「画手/画眼」的取图面板。
 
 ## 依赖与许可
 
@@ -147,12 +239,12 @@ artseek refine --status
 
 ## 里程碑
 
-1. **M0 依赖探针（spike）**：装上 imgutils，对 20 张样本跑通 CCIP/检测/DWPose/ISNetIS，记录维度、耗时、显存；numpy 降级后全量 pytest 通过；输出许可清单。验收：一页测量记录 + 许可表。
-2. **M1 抽取与侧车**：`refine` 包、`refine.sqlite3`、两个 Qdrant 侧车集合、`artseek refine` 增量、`doctor` 探测。验收：重复运行不重算、删侧车可重建、纯逻辑单测（归一化、掩码距离、并查集）通过。
-3. **M2 标定**：`--calibrate` 报告阈值曲线与 ARI，写入配置并按标定状态控制界面可见性。验收：在真实库上给出阈值与准确率数字。
-4. **M3 角色相册 + 差分组**：聚类引擎、角色页、`同角色`、折叠卡片、手动拆组、簇改名、角色页二级分组。验收：抽样 20 组人工复核，误并 ≤ 1 组。
-5. **M4 浏览层**：取景/完成度筛选、`同构图`、手/眼参考页、骨架叠加、配色板与`同配色`。验收：每个入口在真实库有结果且分页正常。
-6. **M5 收尾**：README、ARCHITECTURE、`pull-models --with-refine`、性能记录（单图耗时、侧车体积）、完整测试与浏览器手检。
+1. **M0 依赖探针（spike）**：装上 imgutils，对样本跑通 CCIP/检测/DWPose/ISNetIS，记录维度、耗时、磁盘；numpy 降级后全量 pytest 通过；输出许可清单。验收：测量记录 + 许可表。
+2. **M1 抽取与侧车**：`refine` 包、`refine.sqlite3`、单个 `artseek_refine` 集合、`artseek refine` 增量、`doctor` 探测；高级 tab 出现「参考索引」块（开关、覆盖率、开始/暂停）。验收：重复运行不重算、删侧车可重建、纯逻辑单测通过、界面能显示真实覆盖率。
+3. **M2 标定**：`--calibrate` 报告阈值曲线与 ARI，写入配置；高级 tab 显示标定状态与一键标定，未标定时角色入口隐藏。验收：真实库上给出阈值与准确率，未标定状态不泄漏任何分组。
+4. **M3 角色与差分**：聚类引擎、侧栏「角色」tab、`/character/{id}`、查看器 `同角色`、差分组折叠徽标与组内翻页、手动拆组、簇改名、服装分支。验收：抽样 20 组人工复核，误并 ≤ 1 组；角色页与作者页行为一致（深链、标题、分页）。
+5. **M4 浏览层**：取景/完成度/主色筛选与结果头 chips、`同构图`/`同配色`/`同姿势`、手/眼参考页、骨架叠加、抠图导出。验收：每个入口在真实库有结果且分页正常；筛选参数可随搜索链接与快照复原。
+6. **M5 收尾**：README、ARCHITECTURE、`pull-models --with-refine`、性能记录（单图耗时、侧车体积）、完整测试与浏览器手检（含未开启/未标定/覆盖率不足三种降级状态）。
 
 ## 风险
 
