@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-COLLECTIONS_VERSION = 2
+COLLECTIONS_VERSION = 3
 MAX_COLLECTION_HISTORY = 20
 HISTORY_DELETE_COLLECTION = "delete_collection"
 HISTORY_CREATE_COLLECTION = "create_collection"
@@ -35,7 +35,7 @@ SORT_MTIME_DESC = "mtime_desc"
 SORT_NAME_ASC = "name_asc"
 SORT_NAME_DESC = "name_desc"
 SORT_MANUAL = "manual"
-DEFAULT_COLLECTION_SORT = SORT_ADDED_DESC
+DEFAULT_COLLECTION_SORT = SORT_MANUAL
 COLLECTION_SORT_KEYS = frozenset(
     {
         SORT_ADDED_ASC,
@@ -90,10 +90,12 @@ class Collection:
         if not self.manual_order:
             return self.item_ids
         known = set(self.item_ids)
-        ordered = [point_id for point_id in self.manual_order if point_id in known]
-        if len(ordered) == len(self.item_ids):
-            return tuple(ordered)
-        seen = set(ordered)
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for point_id in self.manual_order:
+            if point_id in known and point_id not in seen:
+                ordered.append(point_id)
+                seen.add(point_id)
         ordered.extend(point_id for point_id in self.item_ids if point_id not in seen)
         return tuple(ordered)
 
@@ -459,9 +461,20 @@ class CollectionStore:
             current = document.collections[index]
             if point_id in current.item_ids:
                 return current, False
+            if current.manual_order:
+                next_manual = (
+                    point_id,
+                    *(item for item in current.manual_order if item != point_id),
+                )
+            elif current.sort == SORT_MANUAL:
+                next_manual = (point_id, *reversed(current.item_ids))
+            else:
+                next_manual = current.manual_order
             updated = replace(
                 current,
                 item_ids=(*current.item_ids, point_id),
+                sort=SORT_MANUAL,
+                manual_order=next_manual,
             )
             document.collections[index] = updated
             self._record_undo(
@@ -473,6 +486,10 @@ class CollectionStore:
                     index=len(updated.item_ids) - 1,
                     point_id=point_id,
                     item_name=item_name.strip()[:80],
+                    manual_order=current.manual_order,
+                    next_manual_order=next_manual,
+                    sort_mode=current.sort,
+                    next_sort_mode=SORT_MANUAL,
                 ),
             )
             self._save(document)
@@ -495,9 +512,11 @@ class CollectionStore:
             if point_id not in current.item_ids:
                 return current, False
             item_index = current.item_ids.index(point_id)
+            next_manual = tuple(item for item in current.manual_order if item != point_id)
             updated = replace(
                 current,
                 item_ids=tuple(item for item in current.item_ids if item != point_id),
+                manual_order=next_manual,
             )
             document.collections[index] = updated
             self._record_undo(
@@ -509,6 +528,10 @@ class CollectionStore:
                     index=item_index,
                     point_id=point_id,
                     item_name=item_name.strip()[:80],
+                    manual_order=current.manual_order,
+                    next_manual_order=next_manual,
+                    sort_mode=current.sort,
+                    next_sort_mode=current.sort,
                 ),
             )
             self._save(document)
@@ -549,12 +572,21 @@ class CollectionStore:
         if not isinstance(raw, dict) or not isinstance(raw.get("collections"), list):
             return _Document()
 
+        version = raw.get("version")
+        legacy_order = not isinstance(version, int) or version < COLLECTIONS_VERSION
         collections: list[Collection] = []
         seen_ids: set[str] = set()
         for value in raw["collections"]:
             collection = self._decode_collection(value, seen_ids)
             if collection is not None:
                 seen_ids.add(collection.id)
+                if legacy_order:
+                    manual_order = collection.manual_order or tuple(reversed(collection.item_ids))
+                    collection = replace(
+                        collection,
+                        sort=SORT_MANUAL,
+                        manual_order=manual_order,
+                    )
                 collections.append(collection)
         return _Document(
             collections=collections,
@@ -763,9 +795,19 @@ class CollectionStore:
         if entry.kind == HISTORY_DELETE_COLLECTION:
             return self._insert_collection(document, entry)
         if entry.kind == HISTORY_ADD_ITEM:
-            return self._remove_point(document, entry)
+            return self._remove_point(
+                document,
+                entry,
+                manual_order=entry.manual_order,
+                sort_mode=entry.sort_mode,
+            )
         if entry.kind == HISTORY_REMOVE_ITEM:
-            return self._insert_point(document, entry)
+            return self._insert_point(
+                document,
+                entry,
+                manual_order=entry.manual_order,
+                sort_mode=entry.sort_mode,
+            )
         return self._rename_collection(document, entry, entry.name)
 
     def _apply_redo(self, document: _Document, entry: HistoryEntry) -> Collection | None:
@@ -778,9 +820,19 @@ class CollectionStore:
         if entry.kind == HISTORY_DELETE_COLLECTION:
             return self._remove_collection(document, entry)
         if entry.kind == HISTORY_ADD_ITEM:
-            return self._insert_point(document, entry)
+            return self._insert_point(
+                document,
+                entry,
+                manual_order=entry.next_manual_order,
+                sort_mode=entry.next_sort_mode,
+            )
         if entry.kind == HISTORY_REMOVE_ITEM:
-            return self._remove_point(document, entry)
+            return self._remove_point(
+                document,
+                entry,
+                manual_order=entry.next_manual_order,
+                sort_mode=entry.next_sort_mode,
+            )
         return self._rename_collection(document, entry, entry.next_name)
 
     def _insert_collection(self, document: _Document, entry: HistoryEntry) -> Collection | None:
@@ -840,7 +892,14 @@ class CollectionStore:
         document.collections[index] = updated
         return updated
 
-    def _insert_point(self, document: _Document, entry: HistoryEntry) -> Collection | None:
+    def _insert_point(
+        self,
+        document: _Document,
+        entry: HistoryEntry,
+        *,
+        manual_order: tuple[str, ...] | None = None,
+        sort_mode: str = "",
+    ) -> Collection | None:
         index = self._index_of(document.collections, entry.collection_id)
         if index is None:
             return None
@@ -849,21 +908,37 @@ class CollectionStore:
             return current
         items = list(current.item_ids)
         items.insert(min(entry.index, len(items)), entry.point_id)
-        updated = replace(current, item_ids=tuple(items))
+        changes: dict[str, Any] = {"item_ids": tuple(items)}
+        if manual_order is not None:
+            changes["manual_order"] = manual_order
+        if sort_mode in COLLECTION_SORT_KEYS:
+            changes["sort"] = sort_mode
+        updated = replace(current, **changes)
         document.collections[index] = updated
         return updated
 
-    def _remove_point(self, document: _Document, entry: HistoryEntry) -> Collection | None:
+    def _remove_point(
+        self,
+        document: _Document,
+        entry: HistoryEntry,
+        *,
+        manual_order: tuple[str, ...] | None = None,
+        sort_mode: str = "",
+    ) -> Collection | None:
         index = self._index_of(document.collections, entry.collection_id)
         if index is None:
             return None
         current = document.collections[index]
         if entry.point_id not in current.item_ids:
             return current
-        updated = replace(
-            current,
-            item_ids=tuple(item for item in current.item_ids if item != entry.point_id),
-        )
+        changes: dict[str, Any] = {
+            "item_ids": tuple(item for item in current.item_ids if item != entry.point_id),
+        }
+        if manual_order is not None:
+            changes["manual_order"] = manual_order
+        if sort_mode in COLLECTION_SORT_KEYS:
+            changes["sort"] = sort_mode
+        updated = replace(current, **changes)
         document.collections[index] = updated
         return updated
 

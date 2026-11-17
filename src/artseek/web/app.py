@@ -1098,7 +1098,6 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         if (
             request.sort == SORT_MANUAL
             and current.sort != SORT_MANUAL
-            and not current.manual_order
             and current.item_ids
         ):
             # Entering manual mode keeps the order the user was looking at

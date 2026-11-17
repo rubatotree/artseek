@@ -59,10 +59,10 @@ class CollectionStoreTests(unittest.TestCase):
         for point_id in ("a", "b", "c"):
             self.store.add_item(first.id, point_id)
 
-        self.assertEqual(self.store.get(second.id).sort, "added_desc")
+        self.assertEqual(self.store.get(second.id).sort, "manual")
         sorted_collection = self.store.update(first.id, sort="mtime_desc")
         self.assertEqual(sorted_collection.sort, "mtime_desc")
-        self.assertEqual(self.store.get(second.id).sort, "added_desc")
+        self.assertEqual(self.store.get(second.id).sort, "manual")
         # A view preference is not a reversible content mutation.
         self.assertEqual(self.store.snapshot()[1]["undo_label"], "收藏到「灵感」")
         with self.assertRaises(ValueError):
@@ -71,7 +71,7 @@ class CollectionStoreTests(unittest.TestCase):
         moved, changed = self.store.reorder_item(first.id, "c", before_id="a")
         self.assertTrue(changed)
         self.assertEqual(moved.sort, "manual")
-        self.assertEqual(moved.ordered_item_ids(), ("c", "a", "b"))
+        self.assertEqual(moved.ordered_item_ids(), ("b", "c", "a"))
         self.assertEqual(
             self.store.snapshot()[1]["undo_label"],
             "调整「灵感」内的图片顺序",
@@ -86,13 +86,13 @@ class CollectionStoreTests(unittest.TestCase):
         )
         self.assertFalse(self.store.reorder_item(first.id, "c", before_id="a")[1])
 
-        # New members append to the manual permutation instead of resetting it.
+        # New members enter at the front of the manual permutation.
         self.store.add_item(first.id, "d")
         reloaded = CollectionStore(self.path).get(first.id)
-        self.assertEqual(reloaded.ordered_item_ids(), ("c", "a", "b", "d"))
+        self.assertEqual(reloaded.ordered_item_ids(), ("d", "b", "c", "a"))
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         self.assertEqual(raw["collections"][0]["sort"], "manual")
-        self.assertEqual(raw["collections"][0]["manual_order"], ["c", "a", "b"])
+        self.assertEqual(raw["collections"][0]["manual_order"], ["d", "b", "c", "a"])
 
         undone = self.store.undo()  # add d
         self.assertEqual(undone.kind, "add_item")
@@ -100,16 +100,53 @@ class CollectionStoreTests(unittest.TestCase):
         self.assertEqual(undone.kind, "reorder_items")
         restored = self.store.get(first.id)
         self.assertEqual(restored.sort, "mtime_desc")
-        self.assertEqual(restored.manual_order, ())
-        self.assertEqual(restored.ordered_item_ids(), ("a", "b", "c"))
+        self.assertEqual(restored.manual_order, ("c", "b", "a"))
+        self.assertEqual(restored.ordered_item_ids(), ("c", "b", "a"))
         redone = self.store.redo()
         self.assertEqual(redone.kind, "reorder_items")
-        self.assertEqual(self.store.get(first.id).ordered_item_ids(), ("c", "a", "b"))
+        self.assertEqual(self.store.get(first.id).ordered_item_ids(), ("b", "c", "a"))
 
         self.store.update(second.id, sort="name_asc")
         self.assertIsNotNone(self.store.delete(second.id))
         self.assertEqual(self.store.undo().kind, "delete_collection")
         self.assertEqual(self.store.get(second.id).sort, "name_asc")
+
+    def test_legacy_collections_migrate_to_manual_newest_first(self) -> None:
+        self.path.write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "collections": [
+                        {
+                            "id": "one",
+                            "name": "旧顺序",
+                            "item_ids": ["a", "b", "c"],
+                            "sort": "added_asc",
+                        },
+                        {
+                            "id": "two",
+                            "name": "自定义",
+                            "item_ids": ["x", "y"],
+                            "sort": "mtime_desc",
+                            "manual_order": ["y", "x"],
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        loaded = {item.id: item for item in self.store.list()}
+        self.assertEqual(loaded["one"].sort, "manual")
+        self.assertEqual(loaded["one"].ordered_item_ids(), ("c", "b", "a"))
+        self.assertEqual(loaded["two"].sort, "manual")
+        self.assertEqual(loaded["two"].ordered_item_ids(), ("y", "x"))
+
+        self.store.add_item("one", "d")
+        updated = self.store.get("one")
+        self.assertEqual(updated.ordered_item_ids(), ("d", "c", "b", "a"))
+        self.assertEqual(updated.item_ids, ("a", "b", "c", "d"))
 
     def test_corrupt_and_duplicate_on_disk_data_is_safe_to_load(self) -> None:
         self.path.write_text("not json", encoding="utf-8")
