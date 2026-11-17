@@ -52,6 +52,10 @@
     }
     .search-column, .results-column { min-width: 0; }
     .fold-toggle { display: none; }
+    @media (min-width: 901px) {
+      .search-layout.is-sidebar-collapsed { grid-template-columns: minmax(0, 1fr); }
+      .search-layout.is-sidebar-collapsed .tree-panel { display: none; }
+    }
     .tree-panel {
       position: sticky; top: 12px; z-index: 9;
       max-height: calc(100dvh - 24px);
@@ -521,6 +525,11 @@
     .collection-sort-toggle:hover, .collection-sort-pin:hover {
       transform: none; border-color: #dfbdc9; background: var(--rose-soft); color: #8a5268;
     }
+    .sidebar-toggle svg {
+      width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-linecap: round;
+      stroke-linejoin: round; stroke-width: 1.9;
+    }
+    .sidebar-toggle[aria-expanded="false"] svg { transform: scaleX(-1); }
     .collection-sort-toggle.is-temporary {
       border-color: #b6cbe0; background: var(--blue-soft); color: #496a8a;
     }
@@ -1271,6 +1280,7 @@
       #search svg { width: 20px; height: 20px; }
       .filter-toggle { width: 44px; min-width: 44px; height: 44px; }
       .tree-panel { order: -4; }
+      .sidebar-toggle { display: none; }
       .results-column { order: 0; }
       .search-panel.loading { opacity: .55; pointer-events: none; }
       .fold-toggle { display: flex; }
@@ -1715,6 +1725,9 @@
       </section>
       <div class="results-column">
         <div class="results-head">
+          <button class="collection-sort-toggle sidebar-toggle" id="sidebar-toggle" type="button" aria-label="收起左侧菜单" title="收起左侧菜单" aria-expanded="true" aria-controls="tree-panel">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 5h16v14H4zM9 5v14M15 10l-2 2 2 2"/></svg>
+          </button>
           <div id="query-info" class="query-info"></div>
           <div id="collection-sort" class="collection-sort" hidden>
             <button class="collection-sort-toggle" id="collection-sort-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="collection-sort-menu" aria-label="收藏夹排序" title="收藏夹排序"></button>
@@ -1849,6 +1862,7 @@
     const CARD_ASPECT_MIN = 0.6;
     const CARD_ASPECT_MAX = 3;
     const GALLERY_VIEW_STORAGE_KEY = 'artseek.galleryView';
+    const SIDEBAR_COLLAPSED_STORAGE_KEY = 'artseek.sidebarCollapsed';
     const GALLERY_VIEWS = [
       { value: 'natural', label: '原比例瀑布流' },
       { value: 'square', label: '正方形瀑布流' },
@@ -1866,6 +1880,13 @@
         // Storage can be unavailable in private contexts; keep the default.
       }
       return 'natural';
+    }
+    function loadSidebarCollapsed() {
+      try {
+        return localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1';
+      } catch {
+        return false;
+      }
     }
     function galleryViewIcon(value) {
       const mode = String(value || 'natural');
@@ -1970,6 +1991,7 @@
       collectionHistory: { canUndo: false, canRedo: false, undoLabel: '', redoLabel: '' },
       collectionViewSort: '', collectionSortTemp: false, collectionSortBusy: false,
       galleryView: loadGalleryView(),
+      sidebarCollapsed: loadSidebarCollapsed(),
       cardOrderDrag: null,
       cardActionGesture: null, cardActionClickUntil: 0,
       galleryDragItem: null,
@@ -5273,6 +5295,30 @@
       renderGalleryView();
       renderGallery(state.results, { append: false });
     }
+    function applySidebarCollapsed(collapsed, { persist = true, rerender = true } = {}) {
+      state.sidebarCollapsed = Boolean(collapsed);
+      const layout = document.querySelector('.search-layout');
+      layout?.classList.toggle('is-sidebar-collapsed', state.sidebarCollapsed);
+      const toggle = $('sidebar-toggle');
+      toggle?.setAttribute('aria-expanded', String(!state.sidebarCollapsed));
+      if (toggle) {
+        const label = state.sidebarCollapsed ? '展开左侧菜单' : '收起左侧菜单';
+        toggle.setAttribute('aria-label', label);
+        toggle.title = label;
+      }
+      if (persist) {
+        try {
+          localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, state.sidebarCollapsed ? '1' : '0');
+        } catch {
+          // Keep the in-memory choice when storage is unavailable.
+        }
+      }
+      if (rerender && state.results.length && !$('viewer').open) {
+        const scrollY = window.scrollY;
+        renderGallery(state.results, { append: false });
+        requestAnimationFrame(() => window.scrollTo({ top: scrollY, behavior: 'auto' }));
+      }
+    }
     function renderCollectionEditMode() {
       const mode = state.collectionEditMode;
       const list = $('collection-list');
@@ -5841,6 +5887,7 @@
         if (session === state.cardMenuSession) setCollectionStatus(`无法读取收藏夹：${error.message}`);
       });
     }
+    $('sidebar-toggle').addEventListener('click', () => applySidebarCollapsed(!state.sidebarCollapsed));
     $('gallery-view-toggle').addEventListener('click', () => cycleGalleryView());
     $('collection-sort-toggle').addEventListener('click', () => toggleCollectionSortMenu());
     $('collection-sort-pin').addEventListener('click', () => {
@@ -9680,6 +9727,7 @@
       if (!['browse', 'collection'].includes(state.mode)) return;
       exitTemporaryBrowse();
     });
+    applySidebarCollapsed(state.sidebarCollapsed, { persist: false, rerender: false });
     bootApp().catch((error) => {
       $('query-info').textContent = `页面未能还原：${error.message}`;
     });
