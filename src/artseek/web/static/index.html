@@ -170,7 +170,7 @@
     }
     #tab-scope[hidden], #tab-advanced[hidden], #tab-collections[hidden] { display: none; }
     .collections-panel { display: grid; gap: 10px; }
-    .collections-intro, .collection-status { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .collection-status { color: var(--muted); font-size: 12px; line-height: 1.45; }
     .collection-footer-actions { display: flex; align-items: center; gap: 4px; }
     .collection-footer-actions button { flex: 0 0 32px; width: 32px; height: 32px; min-height: 32px; padding: 0; font-size: 17px; line-height: 1; }
     .collection-footer-actions button:nth-child(3) { margin-left: auto; }
@@ -1575,7 +1575,6 @@
         <div id="tree" class="tree"></div>
         </div>
         <div id="tab-collections" class="collections-panel" role="tabpanel" aria-labelledby="tab-btn-collections" hidden>
-          <div class="collections-intro">点击收藏夹浏览图片。使用底部工具后，直接点击卡片完成对应操作；图片加入、移出收藏后可用撤销恢复。</div>
           <label class="collection-search" for="collection-search">在收藏夹内搜索
             <input id="collection-search" type="search" placeholder="名称、路径、标签或描述" autocomplete="off" spellcheck="false">
           </label>
@@ -1594,7 +1593,7 @@
           <div class="storage-block">
             <div class="storage-title">来源元信息</div>
             <button class="secondary" id="provenance-tools" type="button" title="扫描并补全来源元信息">来源扫描与补全</button>
-            <p class="model-hint">搜索框支持 author:pixiv:1554775、author:作者名、tag:标签。批量抓取按额度限速，可暂停与继续。</p>
+            <p class="model-hint">支持 author: 与 tag: 过滤。</p>
           </div>
           <label><input id="use-llm" type="checkbox" checked> 本地大模型理解条件</label>
           <label><input id="strict-tags" type="checkbox"> 细节标签至少命中一项</label>
@@ -1605,7 +1604,7 @@
               <label><input id="model-loaded" type="checkbox"> 图文向量模型</label>
               <span id="model-state" class="model-state">未载入</span>
             </div>
-            <p id="model-hint" class="model-hint">启动时不占用显存；检索时自动载入，闲置后卸载。</p>
+            <p id="model-hint" class="model-hint"></p>
             <label title="0 表示保持载入，直到手动卸载">自动卸载 <input id="auto-unload" type="number" min="0" max="1440" step="1" value="10"> 分钟</label>
           </div>
           <div class="storage-block">
@@ -1641,7 +1640,7 @@
             <div class="storage-actions">
               <button class="secondary" id="storage-save" type="button">保存路径</button>
             </div>
-            <p id="storage-hint" class="storage-hint">「保存路径」只改指向，不复制文件。向量库保存后需重启才切换；「迁移」会复制当前库到输入目录并立即切换。原图目录不会被写入。</p>
+            <p id="storage-hint" class="storage-hint"></p>
           </div>
         </div>
         </div>
@@ -1652,7 +1651,7 @@
         <form id="search-form" autocomplete="off">
         <div class="search-row">
           <div class="search-input-wrap">
-            <input id="query" type="text" name="artseek-query" placeholder="搜索画面、标签、作者或作品链接" aria-label="搜索画面、标签、作者或作品链接" title="优先匹配来源/自动/手动 tag、标题和作者；带参考图或高级筛选时用向量检索" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" inputmode="search" enterkeyhint="search">
+            <input id="query" type="text" name="artseek-query" placeholder="搜索画面、标签、作者或作品链接" aria-label="搜索画面、标签、作者或作品链接" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" inputmode="search" enterkeyhint="search">
             <div id="ref-drop-zone" class="ref-drop-zone ref-inline" aria-label="搜索参考图">
               <div id="ref-strip" class="ref-strip"></div>
               <label class="ref-add" id="ref-add" for="upload" tabindex="0" title="选择参考图片">
@@ -1716,7 +1715,7 @@
       </section>
       <div class="results-column">
         <div class="results-head">
-          <div id="query-info" class="query-info">勾选目录后检索，或点击目录名在右侧预览图片。新出现的文件夹默认不在查询范围内。</div>
+          <div id="query-info" class="query-info"></div>
           <div id="collection-sort" class="collection-sort" hidden>
             <button class="collection-sort-toggle" id="collection-sort-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="collection-sort-menu" aria-label="收藏夹排序" title="收藏夹排序"></button>
             <button class="collection-sort-pin" id="collection-sort-pin" type="button" aria-label="保存为收藏夹排序" title="保存为收藏夹排序" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 4h12v17l-6-4-6 4z"/></svg></button>
@@ -1752,7 +1751,7 @@
         <button id="notes-delete-all" class="danger" type="button" title="删除该图片的全部笔记文件夹" hidden>删除全部</button>
         <button class="notes-close-pane" id="notes-close-pane" type="button">返回图片</button>
       </div>
-      <div class="notes-empty" id="notes-empty">还没有笔记。可新建一篇，或直接粘贴图片；会保存在笔记库里，与向量点和图片内容同时关联。删掉原图后笔记仍会留在笔记库中。</div>
+      <div class="notes-empty" id="notes-empty">还没有笔记。</div>
       <div class="notes-editor" id="notes-editor" hidden></div>
       <div class="notes-foot" id="notes-foot"></div>
     </aside>
@@ -2112,7 +2111,7 @@
       $('cache-dir').value = data.cache_dir || '';
       $('index-dir').value = data.index_dir || '';
       if (data.qdrant_restart_required) {
-        $('storage-hint').textContent = '向量库路径已保存，重启 ArtSeek 后才会切换。笔记库与缓存立即生效，不会写入原图目录。';
+        $('storage-hint').textContent = '向量库路径已保存，重启后切换。';
       }
     }
     async function loadStoragePaths() {
@@ -2136,8 +2135,8 @@
       }));
       applyStoragePaths(data);
       $('storage-hint').textContent = data.qdrant_restart_required
-        ? '向量库路径已保存，重启 ArtSeek 后才会切换。笔记库与缓存已立即生效。'
-        : '存储路径已保存。笔记库与缓存立即生效，不会写入原图目录。';
+        ? '向量库路径已保存，重启后切换。'
+        : '存储路径已保存。';
       return data;
     }
     async function migrateStoragePath(kind) {
@@ -2148,7 +2147,7 @@
         $('storage-hint').textContent = `请填写${label}的目标路径`;
         return;
       }
-      if (!window.confirm(`将当前${label}复制到：\n${destination}\n\n原目录会保留，不会改动原图。确定迁移？`)) {
+      if (!window.confirm(`将当前${label}复制到：\n${destination}\n\n确定迁移？`)) {
         return;
       }
       setStorageBusy(true);
@@ -2161,8 +2160,8 @@
         }));
         applyStoragePaths(data);
         $('storage-hint').textContent = data.copied
-          ? `${label}已复制并切换。原目录仍在，不会改动原图。`
-          : `当前${label}为空，已切换到新路径。`;
+          ? `${label}已复制并切换。`
+          : `已切换到新的${label}。`;
         return data;
       } catch (error) {
         $('storage-hint').textContent = `${label}未能迁移：${error.message}`;
@@ -2629,7 +2628,6 @@
             <button type="button" data-prov-action="ascii2d">ascii2d</button>
             <button type="button" data-prov-action="copy-path">复制原图路径</button>
           </div>
-          <div class="provenance-hint">点击 SauceNAO / ascii2d 会上传当前图片并打开结果页；找到作品或推文 URL 后粘贴到下面即可解析。</div>
         </div>
         <form class="provenance-form" id="provenance-form">
           <strong>编辑来源</strong>
@@ -2732,7 +2730,7 @@
       const pointId = currentImageId();
       if (!pointId) return;
       if (!url) {
-        $('provenance-body').innerHTML = '<p class="provenance-hint">请先在 SauceNAO 或 ascii2d 找到作品页，再把 URL 粘贴到下方。</p>';
+        $('provenance-body').innerHTML = '<p class="provenance-hint">未找到作品链接。</p>';
         await loadProvenance(pointId);
         return;
       }
@@ -2941,7 +2939,7 @@
         ${job.error ? `<div class="provenance-hint">错误：${escapeHtml(job.error)}</div>` : ''}
         <div class="provenance-actions">${controls.join('')}</div>
         <div>${budgets}</div>
-        <div class="provenance-hint">本地扫描只读文件名和嵌入元信息；「补全 Pixiv/X」按上面的每日额度慢速请求。SauceNAO 与 ascii2d 不自动调用，需在图片查看器里手动查找并粘贴 URL。</div>`;
+      `;
       body.querySelectorAll('[data-prov-job]').forEach((button) => {
         button.addEventListener('click', () => runProvenanceJobAction(button.dataset.provJob));
       });
@@ -3877,18 +3875,6 @@
       if (notes.open) await dismissNotes();
       else await openNotesPane();
     }
-    function modelHint(data) {
-      if (data.loading) return '正在载入图文向量模型…';
-      if (!data.loaded) return '启动时不占用显存；检索时自动载入。';
-      if (!data.auto_unload_minutes) return '已载入 · 自动卸载已关闭，将保持占用显存。';
-      const sec = data.idle_remaining_seconds;
-      if (typeof sec === 'number') {
-        if (sec >= 60) return `已载入 · 约 ${Math.ceil(sec / 60)} 分钟无检索后卸载`;
-        if (sec > 0) return `已载入 · 约 ${Math.ceil(sec)} 秒后自动卸载`;
-        return '已载入 · 即将自动卸载';
-      }
-      return `已载入 · ${data.auto_unload_minutes} 分钟无检索后卸载`;
-    }
     function applyModelStatus(data) {
       modelUi.loaded = Boolean(data.loaded);
       modelUi.applying = true;
@@ -3896,7 +3882,7 @@
       if (document.activeElement !== box) box.checked = Boolean(data.loaded);
       box.disabled = Boolean(data.loading);
       $('model-state').textContent = data.loading ? '载入中' : (data.loaded ? '已载入' : '未载入');
-      $('model-hint').textContent = data.message || modelHint(data);
+      $('model-hint').textContent = data.message || '';
       const minutes = Number(data.auto_unload_minutes);
       if (Number.isFinite(minutes) && document.activeElement !== $('auto-unload')) {
         $('auto-unload').value = String(minutes);
@@ -3938,7 +3924,7 @@
       const want = $('model-loaded').checked;
       $('model-loaded').disabled = true;
       $('model-state').textContent = want ? '载入中' : '卸载中';
-      $('model-hint').textContent = want ? '正在载入图文向量模型…' : '正在卸载并释放显存…';
+      $('model-hint').textContent = '';
       try {
         const data = await parseResponse(await fetch('/api/model', {
           method: 'POST',
@@ -4372,7 +4358,7 @@
         startScopeBrowse();
       } else {
         resetGalleryToIdle();
-        $('query-info').textContent = '勾选左侧目录后，这里会显示所有已勾选目录中的图片。';
+        $('query-info').textContent = '';
       }
     }
     function chipValues(containerId) {
@@ -5695,7 +5681,7 @@
           <span class="collection-picker-tile-count">${count} 张</span>
         </button>`;
       }).join('');
-      const pickerContent = entries || '<div class="viewer-collection-menu-title">还没有收藏夹，可直接新建。</div>';
+      const pickerContent = entries || '<div class="viewer-collection-menu-title">还没有收藏夹。</div>';
       const titleId = `${namespace}-collection-menu-title`;
       const pickerId = `${namespace}-picker-create`;
       const page = collectionPage(namespace);
@@ -5983,7 +5969,7 @@
       const list = $('collection-list');
       renderCollectionEditMode();
       if (!state.collections.length) {
-        list.innerHTML = '<div class="collection-empty">还没有收藏夹。新建一个，把图片整理成自己的灵感板。</div>';
+        list.innerHTML = '<div class="collection-empty">还没有收藏夹。</div>';
         return;
       }
       const page = collectionPage('sidebar');
@@ -6366,7 +6352,7 @@
         $('load-more').hidden = !state.hasMore;
         $('query-info').textContent = compactInfo()
           ? `${state.results.length} / ${state.authorTotal} 张图 · ${FOLDER_SORT_LABELS[state.authorSort] || state.authorSort}`
-          : `作者「${state.authorName || state.authorKey}」· ${state.results.length} / ${state.authorTotal} 张图 · ${FOLDER_SORT_LABELS[state.authorSort] || state.authorSort}${state.hasMore ? ' · 下滑加载更多' : ''}`;
+          : `作者「${state.authorName || state.authorKey}」· ${state.results.length} / ${state.authorTotal} 张图 · ${FOLDER_SORT_LABELS[state.authorSort] || state.authorSort}`;
         if ($('viewer').open) {
           updateViewerNav();
           updateProvenanceButton();
@@ -6429,7 +6415,7 @@
         $('load-more').hidden = !state.hasMore;
         $('query-info').textContent = compactInfo()
           ? `${state.results.length} / ${state.tagTotal} 张图 · ${FOLDER_SORT_LABELS[state.tagSort] || state.tagSort}`
-          : `标签「#${state.tagName}」· ${state.results.length} / ${state.tagTotal} 张图 · ${FOLDER_SORT_LABELS[state.tagSort] || state.tagSort}${state.hasMore ? ' · 下滑加载更多' : ''}`;
+          : `标签「#${state.tagName}」· ${state.results.length} / ${state.tagTotal} 张图 · ${FOLDER_SORT_LABELS[state.tagSort] || state.tagSort}`;
         if ($('viewer').open) {
           updateViewerNav();
           updateProvenanceButton();
@@ -6521,14 +6507,12 @@
     function renderCollectionInfo(shown) {
       const query = $('collection-search').value.trim();
       const queryHint = query ? ` · 搜索「${query}」` : '';
-      const more = state.hasMore ? ' · 下滑加载更多' : '';
       const count = state.collectionTotal === null ? `已显示 ${shown} 张图` : `${shown} / ${state.collectionTotal} 张图`;
       const sort = effectiveCollectionSort();
       const sortHint = ` · ${COLLECTION_SORT_LABELS[sort] || sort}${state.collectionViewSort ? '（临时）' : ''}`;
-      const manualHint = sort === 'manual' ? ' · 拖动卡片上手柄微调' : '';
       $('query-info').textContent = compactInfo()
-        ? `${count}${sortHint}${more}`
-        : `收藏夹「${state.collectionName}」· ${count}${sortHint}${queryHint}${more}${manualHint}`;
+        ? `${count}${sortHint}`
+        : `收藏夹「${state.collectionName}」· ${count}${sortHint}${queryHint}`;
       $('gallery').classList.toggle('is-ordering', sort === 'manual');
       renderCollectionSort();
     }
@@ -6681,8 +6665,7 @@
         $('query-info').textContent = '选定范围内没有符合时间条件的已索引图片。';
         return;
       }
-      const more = state.hasMore ? ' · 下滑继续随机翻阅' : '';
-      $('query-info').textContent = `随机浏览当前范围 · ${shown} / ${state.randomTotal} 张图${more}`;
+      $('query-info').textContent = `随机浏览当前范围 · ${shown} / ${state.randomTotal} 张图`;
     }
 
     function rememberTemporaryReturn() {
@@ -6891,8 +6874,7 @@
       if (compactInfo()) {
         $('query-info').textContent = `${shown} / ${state.scopeTotal} 张图 · ${sort}`;
       } else {
-        const more = state.hasMore ? ' · 下滑加载更多' : '';
-        $('query-info').textContent = `已勾选 ${treeState.selected.size} 个目录 · ${shown} / ${state.scopeTotal} 张图 · ${sort}${more}`;
+        $('query-info').textContent = `已勾选 ${treeState.selected.size} 个目录 · ${shown} / ${state.scopeTotal} 张图 · ${sort}`;
       }
       renderCollectionSort();
     }
@@ -6919,7 +6901,7 @@
       renderGallery(state.results, { append: false });
       renderCollectionSort();
       renderGalleryView();
-      $('query-info').textContent = '勾选左侧目录后，这里会显示所有已勾选目录中的图片。';
+      $('query-info').textContent = '';
       $('load-more').hidden = true;
     }
 
@@ -7014,8 +6996,7 @@
       if (compactInfo()) {
         $('query-info').textContent = `${shown} / ${total} 张图 · ${sortLabel}`;
       } else {
-        const more = state.hasMore ? ' · 下滑加载更多' : '';
-        $('query-info').textContent = `浏览「${data.folder_name || state.browseName}」· ${shown} / ${total} 张图 · ${sortLabel}${more}`;
+        $('query-info').textContent = `浏览「${data.folder_name || state.browseName}」· ${shown} / ${total} 张图 · ${sortLabel}`;
       }
     }
 
@@ -7057,7 +7038,7 @@
         return;
       }
       if (!frozen && !treeState.selected.size) {
-        if (reset) $('query-info').textContent = '请先勾选要检索的文件夹。新添加的目录默认不在查询范围内。';
+        if (reset) $('query-info').textContent = '未选择目录。';
         return;
       }
       const relevanceSearch = !filterOnly && !metadataSearch;
@@ -7298,12 +7279,11 @@
         ? '本地元信息匹配'
         : (onlyFilters ? '筛选' : (plan.used_llm ? '本地大模型已解析' : '内置插画词典已解析'));
       const warning = data.llm_warning ? ` · Ollama 未就绪，已自动回退` : '';
-      const more = state.hasMore ? ' · 下滑加载更多' : '';
       const resultTotal = Number.isFinite(Number(data.total)) ? Number(data.total) : total;
       if (compactInfo()) {
-        $('query-info').textContent = `${label} · ${resultTotal} 个结果${more}`;
+        $('query-info').textContent = `${label} · ${resultTotal} 个结果`;
       } else {
-        $('query-info').innerHTML = `${label}${warning} · ${resultTotal} 个结果${more}　${positive}${negative}${filterChips.join('')}`;
+        $('query-info').innerHTML = `${label}${warning} · ${resultTotal} 个结果　${positive}${negative}${filterChips.join('')}`;
       }
     }
 
@@ -7427,7 +7407,7 @@
             ? '选定范围内没有符合时间条件的已索引图片。'
             : state.mode === 'collection'
               ? ($('collection-search').value.trim() ? '这个收藏夹中没有匹配搜索的图片。' : '这个收藏夹里还没有可用图片。')
-              : '没有找到符合条件的图片。可以减少排除条件，或重新建立含详细描述的索引。';
+              : '没有找到符合条件的图片。';
         $('gallery').innerHTML = `<div class="empty">${empty}</div>`;
         delete $('gallery').dataset.cols;
         state.colHeights = [];
@@ -8652,7 +8632,7 @@
       const timeHint = range.after || range.before ? ' · 已限制时间' : '';
       const summary = folderCount
         ? `已选 ${folderCount} 个目录 · ${selectedImages} 张图在查询范围内${timeHint}`
-        : `尚未勾选目录 · 共 ${treeState.imageCount} 张图，新目录默认不选`;
+        : `尚未勾选目录 · 共 ${treeState.imageCount} 张图`;
       $('tree-summary').textContent = summary;
       const meta = $('scope-toggle-meta');
       if (meta) meta.textContent = folderCount ? `${folderCount} 目录 · ${selectedImages} 图` : '未勾选';
@@ -8861,10 +8841,10 @@
           state.results = [];
           state.hasMore = false;
           $('gallery').replaceChildren();
-          $('query-info').textContent = `已移出「${name}」。点击其他目录名可继续预览。`;
+          $('query-info').textContent = `已移出「${name}」。`;
           renderTree();
         }
-        showIndexStatus(`已移出「${name}」，原图仍在磁盘上。`);
+        showIndexStatus(`已移出「${name}」。`);
       } catch (error) {
         showIndexStatus(`移出失败：${error.message}`);
       }
