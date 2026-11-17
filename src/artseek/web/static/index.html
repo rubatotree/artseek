@@ -692,9 +692,9 @@
       box-shadow: none; backdrop-filter: none;
     }
     .gallery.view-list .card-remove {
-      position: static; min-height: 32px; padding: 7px 10px; opacity: 1;
+      position: static; width: 32px; height: 32px; min-height: 0; padding: 0; opacity: 1;
       border-color: #c8d9e8; background: var(--blue-soft); color: #496a8a;
-      backdrop-filter: none;
+      box-shadow: none; backdrop-filter: none;
     }
     .gallery.view-list .card-favorite:hover,
     .gallery.view-list .card-remove:hover { transform: none; background: #f3d7e2; color: #8a5268; }
@@ -734,49 +734,96 @@
       position: absolute; top: 9px; right: 9px; padding: 5px 8px; border-radius: 999px;
       background: rgba(31,27,35,.62); color: #fff; font-size: 12px; backdrop-filter: blur(8px);
     }
+    .card-action-gradient {
+      position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; height: 88px;
+      background: linear-gradient(to top, rgba(15, 11, 17, .82), rgba(15, 11, 17, .26) 55%, transparent);
+      opacity: 0; pointer-events: none; transition: opacity .16s ease;
+    }
+    .card-summary {
+      position: absolute; left: 10px; right: 58px; bottom: 10px; z-index: 3;
+      min-width: 0; opacity: 0; visibility: hidden; transform: translateY(3px);
+      pointer-events: none; text-shadow: 0 1px 3px rgba(0, 0, 0, .55);
+      transition: opacity .16s ease, transform .16s ease, visibility .16s ease;
+    }
+    .card-summary-title {
+      overflow: hidden; color: #fff; font-size: 12px; font-weight: 650; line-height: 1.35;
+      white-space: nowrap; text-overflow: ellipsis;
+    }
+    .card-summary-author {
+      margin-top: 1px; overflow: hidden; color: rgba(255, 255, 255, .72);
+      font-size: 10px; line-height: 1.3; white-space: nowrap; text-overflow: ellipsis;
+    }
     .card-favorite {
       position: absolute; right: 8px; bottom: 8px; z-index: 3;
-      display: grid; place-items: center; width: 34px; height: 34px; min-height: 0; padding: 0;
-      border: 1px solid rgba(255, 255, 255, .32); border-radius: 999px;
-      background: rgba(36, 31, 40, .42); color: #fff; font-size: 19px; line-height: 1;
-      box-shadow: 0 3px 12px rgba(31, 27, 35, .2); backdrop-filter: blur(8px);
+      display: grid; place-items: center; width: 36px; height: 36px; min-height: 0; padding: 0;
+      border: 1px solid rgba(255, 255, 255, .34); border-radius: 999px;
+      background: rgba(28, 23, 32, .5); color: #fff; line-height: 1;
+      box-shadow: 0 4px 14px rgba(20, 15, 24, .26); backdrop-filter: blur(10px);
       opacity: 0; pointer-events: none; touch-action: none;
       transition: opacity .15s ease, background .15s ease, transform .15s ease;
+    }
+    .card-favorite svg {
+      width: 18px; height: 18px; fill: none; stroke: currentColor;
+      stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+      transition: fill .15s ease;
     }
     .card-favorite:focus-visible,
     .card.is-action-active .card-favorite,
     .card.is-action-dragging .card-favorite { opacity: 1; pointer-events: auto; }
     .card-favorite:focus-visible,
-    .card.is-action-active .card-favorite { transform: none; background: rgba(138, 82, 104, .84); }
-    .card-favorite:active { transform: scale(.95); }
+    .card.is-action-active .card-favorite { transform: none; background: rgba(138, 82, 104, .86); }
+    .card-favorite:hover svg { fill: rgba(255, 255, 255, .2); }
+    .card-favorite:active { transform: scale(.94); }
     .card-remove {
-      position: absolute; left: 8px; bottom: 8px; z-index: 3; min-height: 30px;
-      padding: 6px 10px; border: 1px solid rgba(255, 255, 255, .4); border-radius: 999px;
-      background: rgba(36, 31, 40, .46); color: #fff; font-size: 11px;
-      backdrop-filter: blur(8px); opacity: 0; pointer-events: none;
+      position: absolute; top: 8px; right: 8px; z-index: 4;
+      display: grid; place-items: center; width: 28px; height: 28px; min-height: 0; padding: 0;
+      border: 1px solid rgba(255, 255, 255, .38); border-radius: 999px;
+      background: rgba(30, 25, 34, .58); color: #fff; line-height: 1;
+      box-shadow: 0 3px 12px rgba(20, 15, 24, .22); backdrop-filter: blur(9px);
+      opacity: 0; pointer-events: none; transition: opacity .15s ease, background .15s ease, transform .15s ease;
+    }
+    .card-remove svg {
+      width: 13px; height: 13px; fill: none; stroke: currentColor;
+      stroke-width: 2; stroke-linecap: round;
     }
     .card-remove:focus-visible,
     .card.is-action-active .card-remove,
     .card.is-action-dragging .card-remove { opacity: 1; pointer-events: auto; }
-    .card-remove:hover { background: rgba(36, 31, 40, .66); }
+    .card-remove:hover { background: rgba(176, 72, 92, .94); }
     .card-favorite.is-action-hover,
     .card-remove.is-action-hover {
       outline: 3px solid rgba(255, 255, 255, .92); outline-offset: 2px;
-      transform: scale(1.14); background: rgba(138, 82, 104, .92);
+      transform: scale(1.12); background: rgba(138, 82, 104, .92);
     }
     .card-remove.is-action-hover { background: rgba(176, 72, 92, .94); }
+    .card:focus-within .card-summary,
+    .card:focus-within .card-action-gradient,
+    .card.is-action-active .card-summary,
+    .card.is-action-active .card-action-gradient,
+    .card.is-action-dragging .card-summary,
+    .card.is-action-dragging .card-action-gradient {
+      opacity: 1; visibility: visible; transform: none;
+    }
     @media (hover: hover) and (pointer: fine) {
       .card:hover .card-favorite, .card:hover .card-remove {
         opacity: 1; pointer-events: auto;
       }
-      .card:hover .card-favorite { transform: none; background: rgba(138, 82, 104, .84); }
+      .card:hover .card-favorite { transform: none; background: rgba(138, 82, 104, .86); }
+      .card:hover .card-summary,
+      .card:hover .card-action-gradient { opacity: 1; visibility: visible; transform: none; }
     }
     .card-hits {
       position: absolute; left: 8px; bottom: 8px; z-index: 2;
       max-width: calc(100% - 58px); overflow: hidden; padding: 5px 8px;
       border-radius: 999px; background: rgba(31, 27, 35, .55); color: #f8eef2;
       font-size: 10.5px; line-height: 1.2; white-space: nowrap; text-overflow: ellipsis;
-      backdrop-filter: blur(8px); pointer-events: none;
+      backdrop-filter: blur(8px); pointer-events: none; transition: opacity .15s ease;
+    }
+    .card:focus-within .card-hits,
+    .card.is-action-active .card-hits,
+    .card.is-action-dragging .card-hits { opacity: 0; }
+    @media (hover: hover) and (pointer: fine) {
+      .card:hover .card-hits { opacity: 0; }
     }
     .card-tag { color: inherit; text-decoration: none; pointer-events: auto; }
     .card-tag:hover { text-decoration: underline; }
@@ -784,9 +831,16 @@
     @media (hover: none), (pointer: coarse) {
       .card-favorite {
         width: 44px; height: 44px;
-        border-color: rgba(255, 255, 255, .36); background: rgba(36, 31, 40, .52);
+        border-color: rgba(255, 255, 255, .38); background: rgba(28, 23, 32, .58);
       }
-      .card-remove { min-height: 40px; padding: 9px 12px; }
+      .card-favorite svg { width: 20px; height: 20px; }
+      .card-remove {
+        width: 34px; height: 34px; min-height: 0; padding: 0;
+        border-color: rgba(255, 255, 255, .42); background: rgba(30, 25, 34, .64);
+      }
+      .card-summary { right: 66px; }
+      .card-summary-title { font-size: 12.5px; }
+      .card-summary-author { font-size: 10.5px; }
     }
     .empty { padding: 90px 20px; text-align: center; color: var(--muted); }
     .load-more {
@@ -1880,6 +1934,8 @@
       return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${base}${arrow}</svg>`;
     }
     const CARD_ORDER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01"/></svg>';
+    const CARD_HEART_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10Z"/></svg>';
+    const CARD_CLOSE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m7 7 10 10M17 7 7 17"/></svg>';
     const routeCtl = { applying: false, seq: 0, dismissAll: false, restoreViewer: false };
     const state = {
       references: [], refSeq: 0, current: null, currentRefKey: null, viewerSource: 'gallery',
@@ -7258,6 +7314,19 @@
       if (state.galleryView === 'list') return 76;
       return columnWidth / cardLayoutAspect(item);
     }
+    function cardSummaryHTML(item) {
+      const fromSource = viewerTitleModelFromItem(item);
+      const cached = item && item.id ? state.viewerTitleCache.get(item.id) : null;
+      const model = (fromSource && fromSource.title) ? fromSource : (cached || fromSource || {});
+      const fallback = String((item && (item.name || item.path)) || '')
+        .replace(/\.[^./\\]+$/, '') || '无题';
+      const title = String(model.title || fallback);
+      const author = String(model.authorName || '作者未标注');
+      return `<div class="card-summary" aria-hidden="true">
+        <div class="card-summary-title" title="${escapeHtml(title)}">${escapeHtml(title)}</div>
+        <div class="card-summary-author" title="${escapeHtml(author)}">${escapeHtml(author)}</div>
+      </div>`;
+    }
     function shortestColumnIndex() {
       let best = 0;
       for (let index = 1; index < state.colHeights.length; index += 1) {
@@ -7300,11 +7369,13 @@
         ? `<button class="card-order-handle" type="button" data-card-action="order" draggable="false" aria-label="调整「${escapeHtml(item.name)}」的顺序" aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight" title="拖动调整顺序，或 Alt+←/→">${CARD_ORDER_ICON}</button>`
         : '';
       const removeAction = inCollection
-        ? `<button class="card-remove" type="button" data-card-action="remove" aria-label="拖到此处松开以移除：${escapeHtml(item.name)}" title="拖到此处松开以移除">移除</button>`
+        ? `<button class="card-remove" type="button" data-card-action="remove" aria-label="从收藏夹移除：${escapeHtml(item.name)}" title="从收藏夹移除（也可把图片拖到这里）">${CARD_CLOSE_ICON}</button>`
         : '';
       const favoriteAction = view === 'compact'
         ? ''
-        : `<button class="card-favorite" type="button" data-card-action="favorite" draggable="false" aria-label="收藏：${escapeHtml(item.name)}" title="收藏到…" aria-haspopup="dialog" aria-expanded="false" aria-controls="card-collection-menu">♡</button>`;
+        : `<button class="card-favorite" type="button" data-card-action="favorite" draggable="false" aria-label="收藏：${escapeHtml(item.name)}" title="收藏到…" aria-haspopup="dialog" aria-expanded="false" aria-controls="card-collection-menu">${CARD_HEART_ICON}</button>`;
+      const cardSummary = view === 'compact' ? '' : cardSummaryHTML(item);
+      const cardOverlay = `<div class="card-action-gradient" aria-hidden="true"></div>${cardSummary}`;
       const hitsText = item.tag_hits && item.tag_hits.length
         ? item.tag_hits.map((tag) => `<a class="card-tag" href="/tag/${encodeURIComponent(tag)}" data-tag="${escapeHtml(tag)}" title="加入图片标签筛选（Ctrl+点击在新标签页打开）">${escapeHtml(tag.replaceAll('_', ' '))}</a>`).join(' · ')
         : '';
@@ -7325,7 +7396,7 @@
       }
       const hits = hitsText ? `<div class="card-hits">命中：${hitsText}</div>` : '';
       return `<article class="card" data-index="${index}"${cardAccess}>
-          <div class="image-wrap"${ratio}${imageAccess}${galleryDrag}>${orderHandle}<img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">${score}${hits}${removeAction}${favoriteAction}</div>
+          <div class="image-wrap"${ratio}${imageAccess}${galleryDrag}>${orderHandle}<img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">${score}${cardOverlay}${hits}${removeAction}${favoriteAction}</div>
         </article>`;
     }
     function renderGallery(results, { append } = { append: false }) {
@@ -7385,7 +7456,7 @@
               hideCardActionReveal();
               void removeFromActiveCollection(item);
             } else {
-              setCollectionStatus('拖动图片到「移除」上松开即可移出收藏夹。');
+              setCollectionStatus('拖动图片到右上角 × 上松开即可移出收藏夹。');
             }
             return;
           }
