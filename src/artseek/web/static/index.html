@@ -713,20 +713,21 @@
       background: #f1edf2; cursor: zoom-in;
       -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
     }
-    .image-wrap[data-gallery-drag] { cursor: grab; }
-    .image-wrap[data-gallery-drag]:active { cursor: grabbing; }
+    /* Dragging is an action on the handle; the image keeps its normal
+       open/zoom cursor and must not look draggable. */
     .card.is-dragging { opacity: .55; }
     .card-order-handle {
       position: absolute; top: 5px; left: 5px; z-index: 4; display: grid; place-items: center;
       width: 30px; height: 30px; min-height: 0; padding: 0; border: 0;
       background: transparent; color: #fff; cursor: grab; touch-action: none;
       filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .94)) drop-shadow(0 0 1px rgba(0, 0, 0, .78));
-      opacity: 0; transition: opacity .15s ease, color .15s ease, filter .15s ease;
+      opacity: 0; pointer-events: none;
+      transition: opacity .15s ease, color .15s ease, filter .15s ease;
     }
     .card:hover .card-order-handle,
     .card.is-action-active .card-order-handle,
     .card.is-action-dragging .card-order-handle,
-    .card-order-handle:focus-visible { opacity: 1; }
+    .card-order-handle:focus-visible { opacity: 1; pointer-events: auto; }
     .card-order-handle:hover { transform: none; color: #ffd7e6; filter: drop-shadow(0 2px 5px rgba(0, 0, 0, .88)); }
     .card-order-handle svg {
       width: 16px; height: 16px; fill: none; stroke: currentColor;
