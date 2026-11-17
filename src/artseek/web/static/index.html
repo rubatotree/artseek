@@ -1068,7 +1068,7 @@
       position: absolute; left: 50%; top: 50%;
       display: block; width: auto; height: auto;
       max-width: none; max-height: none;
-      transform-origin: 0 0;
+      transform-origin: 0 0; visibility: hidden;
       will-change: transform; -webkit-user-drag: none;
     }
     .viewer-stage img[data-slot="prev"],
@@ -7966,7 +7966,6 @@
         view.x = 0; view.y = 0;
         view.targetX = 0; view.targetY = 0;
       }
-      image.style.visibility = 'visible';
       applyViewTransform();
     }
     function galleryImageSrc(item) {
@@ -8033,11 +8032,9 @@
         image.style.visibility = image.complete && image.naturalWidth ? 'visible' : 'hidden';
         return;
       }
+      image.style.visibility = 'hidden';
       if (placeholder && neighbor.thumb && shown !== neighbor.thumb) {
         image.src = neighbor.thumb;
-        image.style.visibility = image.complete && image.naturalWidth ? 'visible' : 'hidden';
-      } else if (!shown) {
-        image.style.visibility = 'hidden';
       }
       const probe = preloadSrc(neighbor.src);
       const assignFull = () => {
@@ -8047,6 +8044,7 @@
           applyViewTransform();
           return;
         }
+        image.style.visibility = 'hidden';
         image.src = neighbor.src;
       };
       const showFull = () => {
