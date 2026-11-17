@@ -579,6 +579,11 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         del author_key
         return spa_page()
 
+    @app.get("/tag/{tag:path}", response_class=HTMLResponse)
+    def spa_tag(tag: str) -> HTMLResponse:
+        del tag
+        return spa_page()
+
     @app.get("/i/{point_id}", response_class=HTMLResponse)
     @app.get("/i/{point_id}/notes", response_class=HTMLResponse)
     def spa_image(point_id: str) -> HTMLResponse:

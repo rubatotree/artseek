@@ -1972,7 +1972,7 @@
       results: [], offset: 0, hasMore: false, loadingMore: false, searchSeq: 0,
       searchSnapshotId: '', searchRequest: null, filterApplyTimer: 0,
       filterTagExpression: '',
-      viewerReturnRoute: '',
+      viewerReturnRoute: '', viewerScrollPosition: null, viewerScrollRoute: '',
       provenanceTagAliasCache: new Map(),
       tempReturn: null,
       searchSort: 'mtime_desc', searchSeed: null,
@@ -3990,6 +3990,7 @@
       state.currentRefKey = null;
       state.viewerSource = 'gallery';
       syncRefSelection();
+      restoreViewerScroll();
     });
     $('viewer-notes').addEventListener('click', () => toggleNotesPane());
     $('viewer-provenance').addEventListener('click', () => toggleProvenancePane());
@@ -8150,6 +8151,8 @@
       const alreadyOpen = $('viewer').open;
       if (!alreadyOpen) {
         state.viewerReturnRoute = appRouteHref(currentGalleryRoute());
+        state.viewerScrollPosition = { x: window.scrollX, y: window.scrollY };
+        state.viewerScrollRoute = state.viewerReturnRoute;
         setViewerUiHidden(false);
         document.documentElement.classList.add('viewer-open');
       }
@@ -8168,6 +8171,8 @@
       const alreadyOpen = $('viewer').open;
       if (!alreadyOpen) {
         state.viewerReturnRoute = appRouteHref(currentGalleryRoute());
+        state.viewerScrollPosition = { x: window.scrollX, y: window.scrollY };
+        state.viewerScrollRoute = state.viewerReturnRoute;
         document.documentElement.classList.add('viewer-open');
       }
       applyReferenceViewerState(ref);
@@ -9381,6 +9386,21 @@
         const data = await parseResponse(await fetch(`/api/images/${encodeURIComponent(imageId)}/notes`));
         return itemFromPayload(data.image.id, data.image);
       }
+    }
+    function restoreViewerScroll() {
+      const saved = state.viewerScrollPosition;
+      state.viewerScrollPosition = null;
+      if (!saved) return;
+      const expectedRoute = state.viewerScrollRoute;
+      state.viewerScrollRoute = '';
+      const attempt = () => {
+        if ($('viewer').open) return;
+        if (expectedRoute && appRouteHref(parseAppRoute()) !== expectedRoute) return;
+        if (window.scrollX === saved.x && window.scrollY === saved.y) return;
+        window.scrollTo({ left: saved.x, top: saved.y, behavior: 'auto' });
+      };
+      requestAnimationFrame(attempt);
+      setTimeout(attempt, 120);
     }
     function finishDismissViewer() {
       routeCtl.dismissAll = false;

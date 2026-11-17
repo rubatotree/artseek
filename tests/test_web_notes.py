@@ -326,6 +326,8 @@ class NotesApiTests(unittest.TestCase):
             "/folder",
             "/random",
             "/c/col-1",
+            "/author/pixiv%3A1",
+            "/tag/test_tag",
             "/i/img-1",
             "/i/img-1/notes",
             "/i/img-1/notes/20260903T010203.md",
