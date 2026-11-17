@@ -2377,13 +2377,10 @@
         author.className = 'viewer-title-author';
         author.href = `/author/${encodeURIComponent(model.authorKey)}`;
         author.dataset.authorKey = model.authorKey;
+        author.target = '_blank';
+        author.rel = 'noopener';
         author.textContent = model.authorName;
-        author.title = '查看该作者（Ctrl+点击在新标签页打开）';
-        author.addEventListener('click', (event) => {
-          if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
-          event.preventDefault();
-          setAuthorFilter(model.authorKey, model.authorName);
-        });
+        author.title = '在新标签页打开作者';
         host.append(author);
         const icons = platformIconLinks(model.authorMembers || []);
         if (icons) {
@@ -2583,7 +2580,7 @@
         .map((tag) => {
           const aliases = Array.isArray(tagAliasMap[tag]) ? tagAliasMap[tag] : [];
           const title = aliases.length ? aliases.join(' · ') : String(tag);
-          return `<a class="provenance-tag ${extraClass}" href="/tag/${encodeURIComponent(tag)}" data-tag="${escapeHtml(tag)}" title="${escapeHtml(title)}">${escapeHtml(tag)}</a>`;
+          return `<a class="provenance-tag ${extraClass}" href="/tag/${encodeURIComponent(tag)}" data-tag="${escapeHtml(tag)}" target="_blank" rel="noopener" title="${escapeHtml(title)}">${escapeHtml(tag)}</a>`;
         })
         .join('');
       const sourceTags = tagLinks(record.tags || []);
@@ -2591,7 +2588,7 @@
       const autoTags = tagLinks(record.auto_tags || [], 'auto');
       const authorName = author ? (author.name || author.handle || author.key) : '';
       const authorButton = author
-        ? `<a class="provenance-author" href="/author/${encodeURIComponent(author.key)}" data-author-key="${escapeHtml(author.key)}" data-author-name="${escapeHtml(authorName)}" title="查看该作者（Ctrl+点击在新标签页打开）">${escapeHtml(authorName)}</a>`
+        ? `<a class="provenance-author" href="/author/${encodeURIComponent(author.key)}" data-author-key="${escapeHtml(author.key)}" data-author-name="${escapeHtml(authorName)}" target="_blank" rel="noopener" title="在新标签页打开作者">${escapeHtml(authorName)}</a>`
         : '<span>未知作者</span>';
       const url = record.url || '';
       const status = provenanceStatusLabel(record.status);
@@ -2662,19 +2659,6 @@
       body.querySelector('[data-prov-action="copy-path"]')?.addEventListener('click', async () => {
         try { await navigator.clipboard.writeText(data.path || ''); }
         catch (_) { /* clipboard may be unavailable */ }
-      });
-      body.querySelector('.provenance-author')?.addEventListener('click', (event) => {
-        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
-        event.preventDefault();
-        const button = event.currentTarget;
-        setAuthorFilter(button.dataset.authorKey || '', button.dataset.authorName || '');
-      });
-      body.querySelectorAll('.provenance-tag').forEach((link) => {
-        link.addEventListener('click', (event) => {
-          if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
-          event.preventDefault();
-          addTagFilterChip(link.dataset.tag || '', 'text_tags');
-        });
       });
       body.querySelector('#provenance-form')?.addEventListener('submit', (event) => {
         event.preventDefault();
@@ -2822,77 +2806,6 @@
       if (state.mode === 'author') return fetchAuthorImages({ reset: true });
       if (state.mode === 'tag') return fetchTagImages({ reset: true });
       return Promise.resolve();
-    }
-    function setAuthorFilter(key, name = '') {
-      const next = key || '';
-      if (!next) {
-        clearAuthorFilter();
-        return;
-      }
-      state.authorKey = next;
-      state.authorName = name || '';
-      if (state.mode === 'tag') {
-        state.tagName = '';
-        state.tagTotal = 0;
-        updateTagFilter();
-      }
-      state.searchSnapshotId = '';
-      state.searchRequest = null;
-      addFilterChip('author', next);
-      updateAuthorFilter();
-      setFilterPanelOpen(true);
-      if (!['search', 'browse', 'collection', 'random', 'scope', 'author'].includes(state.mode)) {
-        state.mode = 'author';
-        state.authorTotal = 0;
-        state.results = [];
-        renderGallery(state.results, { append: false });
-      }
-      if ($('viewer').open) finishDismissViewer();
-      commitGalleryRoute({ forcePush: true });
-      if (state.mode === 'search') {
-        fetchResults({ reset: true });
-      } else if (state.mode === 'author') {
-        fetchAuthorImages({ reset: true });
-      } else {
-        reloadCurrentGallery();
-      }
-    }
-    function addTagFilterChip(tag, kind = 'text_tags') {
-      const text = String(tag || '').trim();
-      if (!text) return;
-      if ($('viewer').open) finishDismissViewer();
-      addFilterChip(kind, text);
-      updateFilterBadge();
-      setFilterPanelOpen(true);
-      scheduleFilterApply();
-    }
-    function clearAuthorFilter() {
-      if ($('viewer').open) finishDismissViewer();
-      const wasAuthor = state.mode === 'author';
-      const previousAuthor = state.authorKey;
-      state.authorKey = '';
-      state.authorName = '';
-      state.authorTotal = 0;
-      if (previousAuthor) removeFilterChipByValue('author', previousAuthor);
-      updateAuthorFilter();
-      if (wasAuthor) {
-        if (treeState.selected.size) {
-          startScopeBrowse({ skipRoute: true });
-          commitGalleryRoute({ forcePush: true });
-          return;
-        }
-        state.mode = 'idle';
-        state.results = [];
-        state.hasMore = false;
-        renderGallery(state.results, { append: false });
-        $('query-info').textContent = '作者筛选已清除。';
-      }
-      commitGalleryRoute({ forcePush: true });
-      if (state.mode === 'search') {
-        applyFilterChanges();
-      } else if (!wasAuthor) {
-        reloadCurrentGallery();
-      }
     }
     function formatBudgetTime(seconds) {
       if (!seconds) return '';
