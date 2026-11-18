@@ -262,7 +262,7 @@
       color: var(--ink); background: #fff; font: inherit; font-size: 12px;
     }
     .search-panel {
-      position: static; z-index: auto;
+      position: relative; z-index: 20;
       padding: 16px; border: 1px solid rgba(255,255,255,.9); border-radius: 22px;
       background: var(--panel); backdrop-filter: blur(18px); box-shadow: var(--shadow);
       transition: box-shadow .15s ease, outline-color .15s ease, background .15s ease;
@@ -513,6 +513,15 @@
     .results-head {
       position: relative; display: flex; align-items: center; gap: 8px;
       min-height: 32px; margin: 18px 2px 8px;
+    }
+    .floating-controls { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+    @media (min-width: 901px) {
+      .floating-controls {
+        position: fixed; top: 12px; right: 14px; z-index: 48;
+        padding: 4px; border: 1px solid rgba(255,255,255,.92); border-radius: 14px;
+        background: rgba(255,255,255,.84); box-shadow: 0 7px 22px rgba(58,47,64,.1);
+        backdrop-filter: blur(14px);
+      }
     }
     .query-info { flex: 1 1 auto; min-width: 0; min-height: 24px; color: var(--muted); font-size: 13px; }
     .collection-sort { position: relative; flex: 0 0 auto; display: flex; gap: 4px; }
@@ -1281,6 +1290,7 @@
       .filter-toggle { width: 44px; min-width: 44px; height: 44px; }
       .tree-panel { order: -4; }
       .sidebar-toggle { display: none; }
+      .floating-controls { margin-left: auto; }
       .results-column { order: 0; }
       .search-panel.loading { opacity: .55; pointer-events: none; }
       .fold-toggle { display: flex; }
@@ -1725,17 +1735,19 @@
       </section>
       <div class="results-column">
         <div class="results-head">
-          <button class="collection-sort-toggle sidebar-toggle" id="sidebar-toggle" type="button" aria-label="收起左侧菜单" title="收起左侧菜单" aria-expanded="true" aria-controls="tree-panel">
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 5h16v14H4zM9 5v14M15 10l-2 2 2 2"/></svg>
-          </button>
           <div id="query-info" class="query-info"></div>
-          <div id="collection-sort" class="collection-sort" hidden>
-            <button class="collection-sort-toggle" id="collection-sort-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="collection-sort-menu" aria-label="收藏夹排序" title="收藏夹排序"></button>
-            <button class="collection-sort-pin" id="collection-sort-pin" type="button" aria-label="保存为收藏夹排序" title="保存为收藏夹排序" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 4h12v17l-6-4-6 4z"/></svg></button>
-            <div id="collection-sort-menu" class="collection-sort-menu" role="dialog" aria-label="收藏夹排序" hidden></div>
-          </div>
-          <div id="gallery-view" class="collection-sort gallery-view" hidden>
-            <button class="collection-sort-toggle" id="gallery-view-toggle" type="button" aria-label="查看形式" title="查看形式"></button>
+          <div class="floating-controls" id="floating-controls">
+            <button class="collection-sort-toggle sidebar-toggle" id="sidebar-toggle" type="button" aria-label="收起左侧菜单" title="收起左侧菜单" aria-expanded="true" aria-controls="tree-panel">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 5h16v14H4zM9 5v14M15 10l-2 2 2 2"/></svg>
+            </button>
+            <div id="collection-sort" class="collection-sort" hidden>
+              <button class="collection-sort-toggle" id="collection-sort-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="collection-sort-menu" aria-label="收藏夹排序" title="收藏夹排序"></button>
+              <button class="collection-sort-pin" id="collection-sort-pin" type="button" aria-label="保存为收藏夹排序" title="保存为收藏夹排序" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 4h12v17l-6-4-6 4z"/></svg></button>
+              <div id="collection-sort-menu" class="collection-sort-menu" role="dialog" aria-label="收藏夹排序" hidden></div>
+            </div>
+            <div id="gallery-view" class="collection-sort gallery-view" hidden>
+              <button class="collection-sort-toggle" id="gallery-view-toggle" type="button" aria-label="查看形式" title="查看形式"></button>
+            </div>
           </div>
         </div>
         <main id="gallery" class="gallery"></main>
@@ -2217,6 +2229,13 @@
     };
     function isNotesEditorEvent(target) {
       return Boolean(target && target.closest && target.closest('#notes-pane'));
+    }
+    function isTextEntryEvent(target) {
+      return Boolean(
+        target
+        && target.closest
+        && target.closest('input, textarea, select, [contenteditable="true"]')
+      );
     }
     function noteLinkBase() {
       return notes.hash ? `/api/note-files/${notes.hash}/` : '';
@@ -5165,6 +5184,7 @@
       else syncCollectionSortMenuChecks();
     }
     async function applyCollectionSort(sort, { temporary = false } = {}) {
+      window.scrollTo({ top: 0, behavior: 'auto' });
       if (relevanceSearchActive()) {
         if (sort !== 'search') return;
         state.searchSort = 'search';
@@ -5284,9 +5304,37 @@
       toggle.setAttribute('aria-label', title);
       toggle.title = title;
     }
+    function captureGalleryCenterAnchor() {
+      const cards = [...$('gallery').querySelectorAll('.card[data-point-id]')];
+      if (!cards.length) return null;
+      const center = window.innerHeight / 2;
+      let best = null;
+      for (const card of cards) {
+        const rect = card.getBoundingClientRect();
+        if (rect.height <= 0) continue;
+        const cardCenter = rect.top + rect.height / 2;
+        const distance = Math.abs(cardCenter - center);
+        if (!best || distance < best.distance) {
+          best = { id: card.dataset.pointId, offset: cardCenter - center, distance };
+        }
+      }
+      return best ? { id: best.id, offset: best.offset } : null;
+    }
+    function restoreGalleryCenterAnchor(anchor) {
+      if (!anchor || !anchor.id) return;
+      const card = [...$('gallery').querySelectorAll('.card[data-point-id]')]
+        .find((item) => item.dataset.pointId === anchor.id);
+      if (!card) return;
+      const rect = card.getBoundingClientRect();
+      const nextCenter = rect.top + rect.height / 2;
+      const targetCenter = window.innerHeight / 2 + anchor.offset;
+      const delta = nextCenter - targetCenter;
+      if (Math.abs(delta) > 1) window.scrollBy({ top: delta, behavior: 'auto' });
+    }
     function applyGalleryView(value) {
       if (!GALLERY_VIEW_LABELS[value]) return;
       if (state.galleryView === value) return;
+      const anchor = captureGalleryCenterAnchor();
       state.galleryView = value;
       try {
         localStorage.setItem(GALLERY_VIEW_STORAGE_KEY, value);
@@ -5295,8 +5343,11 @@
       }
       renderGalleryView();
       renderGallery(state.results, { append: false });
+      restoreGalleryCenterAnchor(anchor);
+      requestAnimationFrame(() => restoreGalleryCenterAnchor(anchor));
     }
     function applySidebarCollapsed(collapsed, { persist = true, rerender = true } = {}) {
+      const anchor = rerender ? captureGalleryCenterAnchor() : null;
       state.sidebarCollapsed = Boolean(collapsed);
       const layout = document.querySelector('.search-layout');
       layout?.classList.toggle('is-sidebar-collapsed', state.sidebarCollapsed);
@@ -5315,9 +5366,9 @@
         }
       }
       if (rerender && state.results.length && !$('viewer').open) {
-        const scrollY = window.scrollY;
         renderGallery(state.results, { append: false });
-        requestAnimationFrame(() => window.scrollTo({ top: scrollY, behavior: 'auto' }));
+        restoreGalleryCenterAnchor(anchor);
+        requestAnimationFrame(() => restoreGalleryCenterAnchor(anchor));
       }
     }
     function renderCollectionEditMode() {
@@ -7339,7 +7390,7 @@
           item.width > 0 && item.height > 0 ? `${item.width} × ${item.height}` : '',
           Number.isFinite(item.score) ? `匹配 ${item.score.toFixed(0)}` : '',
         ].filter(Boolean).join(' · ');
-        return `<article class="card card-list" data-index="${index}"${cardAccess}>
+        return `<article class="card card-list" data-index="${index}" data-point-id="${escapeHtml(item.id)}"${cardAccess}>
           <div class="image-wrap"${imageAccess}${galleryDrag}>${orderHandle}<img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false"></div>
           <div class="list-body">
             <div class="list-name">${escapeHtml(item.name)}</div>
@@ -7350,7 +7401,7 @@
         </article>`;
       }
       const hits = hitsText ? `<div class="card-hits">命中：${hitsText}</div>` : '';
-      return `<article class="card" data-index="${index}"${cardAccess}>
+      return `<article class="card" data-index="${index}" data-point-id="${escapeHtml(item.id)}"${cardAccess}>
           <div class="image-wrap"${ratio}${imageAccess}${galleryDrag}>${orderHandle}<img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">${score}${cardOverlay}${hits}${removeAction}${favoriteAction}</div>
         </article>`;
     }
@@ -8999,7 +9050,7 @@
         return;
       }
       if (!$('viewer').open) return;
-      if (isNotesEditorEvent(event.target)) return;
+      if (isNotesEditorEvent(event.target) || isTextEntryEvent(event.target)) return;
       if (event.key === 'ArrowLeft') { event.preventDefault(); stepViewer(-1, { animate: false }); }
       else if (event.key === 'ArrowRight') { event.preventDefault(); stepViewer(1, { animate: false }); }
       else if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomBy(1.25); }
@@ -9737,7 +9788,10 @@
       if (!['browse', 'collection'].includes(state.mode) || event.defaultPrevented) return;
       const target = event.target instanceof Element ? event.target : null;
       if (!target) return;
-      if (target.closest('a, button, input, label, select, textarea, [role="button"], [contenteditable="true"], #gallery, #tree-panel, #viewer, dialog, .modal-bar')) return;
+      const interactiveSelector = 'a, button, input, label, select, textarea, [role="button"], [contenteditable="true"], #gallery, #tree-panel, #viewer, dialog, .modal-bar';
+      const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+      const interactive = path.some((node) => node instanceof Element && node.matches(interactiveSelector));
+      if (interactive || target.closest(interactiveSelector)) return;
       exitTemporaryBrowse();
     });
     document.addEventListener('keydown', (event) => {

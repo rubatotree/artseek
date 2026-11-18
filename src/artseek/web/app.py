@@ -2401,7 +2401,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         if app.state.provenance_job.running:
             return
         try:
-            start_scan_job(deep=False, only_new=False)
+            start_scan_job(deep=False, only_new=True)
         except Exception:
             pass
 

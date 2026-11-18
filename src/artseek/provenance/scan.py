@@ -81,6 +81,8 @@ def scan_payloads(
                 )
             ):
                 summary["skipped"] += 1
+                if progress is not None and (index == 1 or index % 50 == 0):
+                    progress(index, int(summary["total"]), str(payload.get("path") or ""))
                 continue
         summary["scanned"] += 1
         if digest:
