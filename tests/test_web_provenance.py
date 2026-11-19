@@ -952,6 +952,15 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(
             [item["id"] for item in added["authors"][0]["images"]], ["p1", "p2"]
         )
+        cover = self.client.post(
+            f"/api/authors/{alice}/cover", json={"point_id": "p2"}
+        )
+        self.assertEqual(cover.status_code, 200)
+        self.assertEqual(cover.json()["author"]["cover_point_id"], "p2")
+        with_cover = self.client.post(
+            "/api/artists/gallery", json={"q": "Alice"}
+        ).json()
+        self.assertEqual(with_cover["authors"][0]["cover"]["id"], "p2")
         manual_page = self.client.post(
             f"/api/artists/{alice}/images",
             json={
@@ -1007,6 +1016,35 @@ class ProvenanceApiTests(unittest.TestCase):
             f"/api/authors/{alice}/merge", json={"source": "none"}
         )
         self.assertEqual(rejected.status_code, 400)
+
+    def test_collections_mix_artists_and_images(self) -> None:
+        alice = self.store.ensure_author("pixiv", "1", name="Alice")
+        self._add_artist_image("p1", "a.png", mtime_ns=1_000, author_key=alice, source_id="1001")
+        collection_id = self.client.post(
+            "/api/collections", json={"name": "混排"}
+        ).json()["collection"]["id"]
+        self.client.post(
+            f"/api/collections/{collection_id}/items", json={"image_id": "p1"}
+        )
+        added = self.client.post(
+            f"/api/collections/{collection_id}/items",
+            json={"image_id": f"artist:{alice}"},
+        )
+        self.assertEqual(added.status_code, 200)
+        data = self.client.get(
+            f"/api/collections/{collection_id}/images", params={"sort": "manual"}
+        ).json()
+        self.assertEqual(data["total"], 2)
+        kinds = [item.get("kind") for item in data["results"]]
+        self.assertIn("artist", kinds)
+        self.assertIn(None, kinds)
+        artist = next(item for item in data["results"] if item.get("kind") == "artist")
+        self.assertEqual(artist["artist_key"], alice)
+        self.assertEqual(artist["cover"]["id"], "p1")
+        removed = self.client.delete(
+            f"/api/collections/{collection_id}/items/{quote(f'artist:{alice}', safe='')}"
+        )
+        self.assertTrue(removed.json()["removed"])
 
     def test_unassigned_author_pages_and_suggestions(self) -> None:
         self._add_artist_image("p1", "a.png", mtime_ns=1_000, author_key=None, source_id="1001")

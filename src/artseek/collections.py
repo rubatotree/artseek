@@ -48,6 +48,19 @@ COLLECTION_SORT_KEYS = frozenset(
     }
 )
 PAYLOAD_SORT_KEYS = frozenset({SORT_MTIME_ASC, SORT_MTIME_DESC, SORT_NAME_ASC, SORT_NAME_DESC})
+ARTIST_ITEM_PREFIX = "artist:"
+
+
+def is_artist_item(item_id: str) -> bool:
+    return str(item_id or "").startswith(ARTIST_ITEM_PREFIX)
+
+
+def artist_item_key(item_id: str) -> str:
+    return str(item_id or "")[len(ARTIST_ITEM_PREFIX):]
+
+
+def artist_item_id(artist_key: str) -> str:
+    return f"{ARTIST_ITEM_PREFIX}{artist_key}"
 _PATH_LOCKS: dict[str, threading.RLock] = {}
 _PATH_LOCKS_GUARD = threading.Lock()
 

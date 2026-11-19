@@ -32,6 +32,7 @@ IDENTITY_TWITTER = "x_id"
 IDENTITY_HANDLE = "handle"
 IDENTITY_NAME = "name"
 IDENTITY_LINK = "link"
+IDENTITY_COVER = "cover"
 IDENTITY_XIAOHONGSHU = "xhs_uid"
 UNASSIGNED_AUTHOR_KEY = "none"
 _STATUSES = frozenset(
@@ -133,6 +134,7 @@ def _identity_kind_platform(kind: str) -> str:
         IDENTITY_HANDLE: "twitter",
         IDENTITY_NAME: "manual",
         IDENTITY_LINK: "link",
+        IDENTITY_COVER: "cover",
         IDENTITY_XIAOHONGSHU: "xiaohongshu",
     }.get(kind, "other")
 
@@ -1927,6 +1929,57 @@ class ProvenanceStore:
             connection.commit()
         return base
 
+    def set_artist_cover(self, artist_key: str, point_id: str) -> str:
+        """Mark one of the artist's images as their explicit representative."""
+        if self._is_unassigned_key(artist_key):
+            raise ValueError("无画师不能设置代表图")
+        with self._read() as connection:
+            base = self._canonical_locked(connection, artist_key)
+            if not base.isdigit():
+                raise ValueError("作者不存在")
+            row = connection.execute(
+                "SELECT author_key FROM image_source WHERE point_id = ?",
+                (point_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("图片不在来源记录中")
+            owner = self._canonical_locked(connection, str(row["author_key"] or ""))
+            if owner != base:
+                raise ValueError("该图片不属于这个画师")
+            connection.execute(
+                "DELETE FROM artist_identity WHERE artist_id = ? AND kind = ?",
+                (int(base), IDENTITY_COVER),
+            )
+            connection.execute(
+                "INSERT INTO artist_identity"
+                "(kind, identity, display, profile_url, source, artist_id, updated_at) "
+                "VALUES (?, ?, ?, NULL, 'manual', ?, ?)",
+                (IDENTITY_COVER, point_id, point_id, int(base), _now()),
+            )
+            connection.execute(
+                "UPDATE artist SET updated_at = ? WHERE id = ?", (_now(), int(base))
+            )
+            connection.commit()
+        return base
+
+    def artist_cover_ids(self, keys: Sequence[str]) -> dict[str, str]:
+        clean = list(dict.fromkeys(str(key) for key in keys if key))
+        numeric = sorted({key for key in clean if key.isdigit()})
+        result: dict[str, str] = {}
+        if not numeric:
+            return result
+        with self._read() as connection:
+            for start in range(0, len(numeric), 400):
+                batch = numeric[start : start + 400]
+                placeholders = ",".join("?" for _ in batch)
+                for row in connection.execute(
+                    "SELECT artist_id, identity FROM artist_identity "
+                    f"WHERE kind = ? AND artist_id IN ({placeholders})",
+                    [IDENTITY_COVER, *batch],
+                ).fetchall():
+                    result[str(row["artist_id"])] = str(row["identity"])
+        return result
+
     def set_author_name(self, artist_key: str, name: str) -> str:
         """Set the display name for an artist without merging other artists."""
         if self._is_unassigned_key(artist_key):
@@ -2157,6 +2210,32 @@ class ProvenanceStore:
                         result[key] = list(unassigned)
         return result
 
+    def author_latest_mtimes(self, keys: Sequence[str]) -> dict[str, int]:
+        clean = list(dict.fromkeys(str(key) for key in keys if key))
+        numeric = sorted({key for key in clean if key.isdigit()})
+        result: dict[str, int] = {}
+        with self._read() as connection:
+            for start in range(0, len(numeric), 400):
+                batch = numeric[start : start + 400]
+                placeholders = ",".join("?" for _ in batch)
+                for row in connection.execute(
+                    "SELECT author_key, MAX(COALESCE(mtime_ns, 0)) AS latest "
+                    "FROM image_source "
+                    f"WHERE author_key IN ({placeholders}) GROUP BY author_key",
+                    batch,
+                ).fetchall():
+                    result[str(row["author_key"])] = int(row["latest"] or 0)
+            if any(self._is_unassigned_key(key) for key in clean):
+                row = connection.execute(
+                    "SELECT MAX(COALESCE(mtime_ns, 0)) FROM image_source "
+                    "WHERE author_key IS NULL OR author_key = ''"
+                ).fetchone()
+                unassigned = int(row[0] or 0) if row is not None else 0
+                for key in clean:
+                    if self._is_unassigned_key(key):
+                        result[key] = unassigned
+        return result
+
     def point_ids_without_author(self, platform: str | None = None) -> list[str]:
         with self._read() as connection:
             if platform:
@@ -2314,6 +2393,7 @@ class ProvenanceStore:
                 "xiaohongshu_ids": [],
                 "xiaohongshu_names": [],
                 "links": [],
+                "cover_point_id": None,
             }
         with self._read() as connection:
             artist_id = self._canonical_locked(connection, key)
@@ -2332,6 +2412,14 @@ class ProvenanceStore:
         summary = self._author_view(row, identities)
         summary["members"] = self._member_views(row, identities)
         summary["image_count"] = int(row["image_count"] or 0)
+        summary["cover_point_id"] = next(
+            (
+                identity["identity"]
+                for identity in summary["identities"]
+                if identity["kind"] == IDENTITY_COVER
+            ),
+            None,
+        )
         return summary
 
     def unassigned_count(self) -> int:

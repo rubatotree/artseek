@@ -28,6 +28,8 @@ from ..collections import (
     Collection,
     CollectionStore,
     HistoryAction,
+    artist_item_key,
+    is_artist_item,
 )
 from ..config import (
     DEFAULT_WEB_SEARCH_LIMIT,
@@ -296,6 +298,10 @@ class ArtistIdentityRemoveRequest(BaseModel):
 
 class ArtistNameRequest(BaseModel):
     name: str = ""
+
+
+class ArtistCoverRequest(BaseModel):
+    point_id: str = ""
 
 
 class ArtistMergeRequest(BaseModel):
@@ -780,6 +786,174 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             return int(payload.get("mtime_ns") or 0)
         return str(payload.get("name") or "").casefold()
 
+    def artist_collection_result(
+        key: str,
+        summary: dict[str, Any],
+        latest_mtime: int,
+        cover: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        return {
+            "id": f"artist:{key}",
+            "kind": "artist",
+            "artist_key": key,
+            "name": summary.get("name") or summary.get("handle") or key,
+            "handle": summary.get("handle") or "",
+            "members": summary.get("members") or [],
+            "image_count": int(summary.get("image_count") or 0),
+            "latest_mtime": int(latest_mtime or 0),
+            "width": int((cover or {}).get("width") or 0),
+            "height": int((cover or {}).get("height") or 0),
+            "cover": cover,
+        }
+
+    def mixed_collection_page(
+        collection: Collection,
+        method: str,
+        start: int,
+        page_size: int,
+        needle: str,
+        allowed_author_key: str | None,
+        seed: int | None,
+    ) -> tuple[list[dict[str, Any]], int, bool]:
+        """Materialize collections that mix image IDs and artist IDs."""
+        store: ProvenanceStore = app.state.provenance
+        item_ids = list(collection.item_ids)
+        image_ids = [item_id for item_id in item_ids if not is_artist_item(item_id)]
+        artist_keys = [
+            artist_item_key(item_id) for item_id in item_ids if is_artist_item(item_id)
+        ]
+        image_payloads: dict[str, dict[str, Any]] = {}
+        for batch_start in range(0, len(image_ids), 256):
+            batch = image_ids[batch_start : batch_start + 256]
+            image_payloads.update(retrieve_collection_payloads(batch))
+        summaries = {
+            key: summary
+            for key in artist_keys
+            if (summary := store.author_summary(key)) is not None
+        }
+        latest = store.author_latest_mtimes(list(summaries))
+        image_ids_by_artist = store.point_ids_for_authors(list(summaries))
+        explicit_covers = store.artist_cover_ids(list(summaries))
+        cover_ids = [
+            explicit_covers.get(key) or ids[0]
+            for key, ids in image_ids_by_artist.items()
+            if explicit_covers.get(key) or ids
+        ]
+        cover_payloads = retrieve_collection_payloads(list(dict.fromkeys(cover_ids)))
+        allowed_image_ids = (
+            set(store.point_ids_for_author(allowed_author_key))
+            if allowed_author_key
+            else None
+        )
+        entries: list[tuple[int | str, str, dict[str, Any] | None]] = []
+        for item_id in item_ids:
+            if is_artist_item(item_id):
+                key = artist_item_key(item_id)
+                summary = summaries.get(key)
+                if summary is None:
+                    continue
+                if allowed_author_key and key != allowed_author_key:
+                    continue
+                searchable = "\n".join(
+                    [
+                        str(summary.get("name") or ""),
+                        str(summary.get("handle") or ""),
+                        key,
+                        *(
+                            str(member.get("handle") or member.get("platform_id") or "")
+                            for member in summary.get("members") or []
+                        ),
+                    ]
+                ).casefold()
+                if needle and needle not in searchable:
+                    continue
+                cover_id = explicit_covers.get(key) or next(
+                    (
+                        point_id
+                        for point_id in image_ids_by_artist.get(key, [])
+                        if point_id in cover_payloads
+                    ),
+                    "",
+                )
+                cover_payload = cover_payloads.get(cover_id) if cover_id else None
+                cover = (
+                    {
+                        "id": cover_id,
+                        "name": cover_payload.get("name"),
+                        "width": cover_payload.get("width"),
+                        "height": cover_payload.get("height"),
+                    }
+                    if isinstance(cover_payload, dict)
+                    else None
+                )
+                result = artist_collection_result(
+                    key, summary, latest.get(key, 0), cover
+                )
+                sort_key: int | str = (
+                    result["latest_mtime"]
+                    if method.startswith("mtime")
+                    else str(result["name"]).casefold()
+                )
+                entries.append((sort_key, item_id, result))
+            else:
+                payload = image_payloads.get(item_id)
+                if not isinstance(payload, dict):
+                    continue
+                if allowed_image_ids is not None and item_id not in allowed_image_ids:
+                    continue
+                if needle:
+                    tags = payload.get("tags") or []
+                    searchable = "\n".join(
+                        [
+                            str(payload.get("name") or ""),
+                            str(payload.get("path") or ""),
+                            str(payload.get("caption") or ""),
+                            *(str(tag) for tag in tags),
+                        ]
+                    ).casefold()
+                    if needle not in searchable:
+                        continue
+                entries.append((collection_sort_key(payload, method), item_id, None))
+        if method == "random":
+            seed = seed if seed is not None else random.SystemRandom().randrange(1 << 53)
+            random.Random(seed).shuffle(entries)
+        elif method == "manual":
+            rank = {
+                item_id: index
+                for index, item_id in enumerate(collection.ordered_item_ids())
+            }
+            entries.sort(key=lambda entry: rank.get(entry[1], len(rank)))
+        elif method == SORT_ADDED_DESC:
+            entries.reverse()
+        elif method in PAYLOAD_SORT_KEYS:
+            entries.sort(
+                key=lambda entry: entry[0],
+                reverse=method.endswith("_desc"),
+            )
+        page_entries = entries[start : start + page_size]
+        page_image_ids = [
+            item_id for _key, item_id, result in page_entries if result is None
+        ]
+        image_results = {
+            str(item["id"]): item
+            for item in attach_provenance(
+                [
+                    gallery_result(item_id, image_payloads[item_id])
+                    for item_id in page_image_ids
+                    if isinstance(image_payloads.get(item_id), dict)
+                ]
+            )
+        }
+        page = [
+            result if result is not None else image_results.get(item_id)
+            for _key, item_id, result in page_entries
+        ]
+        return (
+            [item for item in page if isinstance(item, dict)],
+            len(entries),
+            start + len(page_entries) < len(entries),
+        )
+
     def collection_sort_cursor(collection: Collection, sort: str) -> CollectionSortCursor:
         """Return the LRU cursor holding a full payload-sorted ID ordering."""
         membership_token = hash(collection.item_ids)
@@ -837,6 +1011,17 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
 
     def collection_ordered_live_ids(collection: Collection, sort: str) -> list[str]:
         """Return every live item ID in the order a view would display."""
+        if any(is_artist_item(item_id) for item_id in collection.item_ids):
+            results, _total, _has_more = mixed_collection_page(
+                collection,
+                sort,
+                0,
+                MAX_CACHED_COLLECTION_IDS,
+                "",
+                None,
+                None,
+            )
+            return [str(item["id"]) for item in results]
         if sort not in PAYLOAD_SORT_KEYS:
             return collection_source_ids(collection, sort)
         cursor = collection_sort_cursor(collection, sort)
@@ -1124,8 +1309,13 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         _, history = app.state.collections.snapshot()
         return history
 
-    def image_display_name(point_id: str) -> str:
-        payload = app.state.engine.store.get(point_id)
+    def collection_item_name(item_id: str) -> str:
+        if is_artist_item(item_id):
+            summary = app.state.provenance.author_summary(artist_item_key(item_id))
+            if summary is not None:
+                return str(summary.get("name") or summary.get("handle") or artist_item_key(item_id))
+            return ""
+        payload = app.state.engine.store.get(item_id)
         if not isinstance(payload, dict):
             return ""
         return str(payload.get("name") or "")
@@ -1209,12 +1399,15 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     @app.post("/api/collections/{collection_id}/items")
     def add_collection_item(collection_id: str, request: CollectionItemRequest) -> dict[str, Any]:
         require_collection(collection_id)
-        if not app.state.engine.store.get(request.image_id):
+        if is_artist_item(request.image_id):
+            if app.state.provenance.author_summary(artist_item_key(request.image_id)) is None:
+                raise HTTPException(404, "画师不存在，无法收藏")
+        elif not app.state.engine.store.get(request.image_id):
             raise HTTPException(404, "图片不在索引中，无法收藏")
         collection, added = app.state.collections.add_item(
             collection_id,
             request.image_id,
-            item_name=image_display_name(request.image_id),
+            item_name=collection_item_name(request.image_id),
         )
         if collection is None:
             raise HTTPException(404, "收藏夹不存在")
@@ -1231,7 +1424,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         collection, removed = app.state.collections.remove_item(
             collection_id,
             point_id,
-            item_name=image_display_name(point_id),
+            item_name=collection_item_name(point_id),
         )
         if collection is None:
             raise HTTPException(404, "收藏夹不存在")
@@ -1307,6 +1500,32 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 *(str(tag) for tag in tags),
             ]
             return needle in "\n".join(searchable).casefold()
+
+        if any(is_artist_item(item_id) for item_id in collection.item_ids):
+            if method == "random" and seed is None:
+                seed = random.SystemRandom().randrange(1 << 53)
+            mixed_results, mixed_total, mixed_has_more = mixed_collection_page(
+                collection,
+                method,
+                start,
+                page_size,
+                needle,
+                author_key,
+                seed,
+            )
+            return {
+                "collection": collection_summary(collection),
+                "query": query.strip(),
+                "sort": method,
+                "seed": seed if method == "random" else None,
+                "saved_sort": collection.sort,
+                "offset": start,
+                "limit": page_size,
+                "total": mixed_total,
+                "total_exact": True,
+                "has_more": mixed_has_more,
+                "results": mixed_results,
+            }
 
         if method == "random":
             filtered: list[tuple[str, dict[str, Any]]] = []
@@ -3122,7 +3341,9 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         if image_sort == "random" and base_seed is None:
             base_seed = random.SystemRandom().randrange(1 << 53)
         entries = [dict(item) for item in page["authors"]]
-        id_map = store.point_ids_for_authors([str(item["key"]) for item in entries])
+        entry_keys = [str(item["key"]) for item in entries]
+        id_map = store.point_ids_for_authors(entry_keys)
+        explicit_covers = store.artist_cover_ids(entry_keys)
         rank = (
             {point_id: index for index, point_id in enumerate(order_ids)}
             if order_ids is not None
@@ -3149,6 +3370,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             totals[key] = len(ids)
             seeds[key] = used_seed
             all_ids.extend(previews[key])
+            if explicit_covers.get(key):
+                all_ids.append(explicit_covers[key])
         payloads = retrieve_collection_payloads(list(dict.fromkeys(all_ids)))
         result_rows = attach_provenance(
             [
@@ -3166,6 +3389,18 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             entry["images_offset"] = len(images)
             entry["images_total"] = totals[key]
             entry["image_seed"] = seeds[key]
+            cover_id = explicit_covers.get(key) or (previews[key][0] if previews[key] else "")
+            cover_payload = payloads.get(cover_id) if cover_id else None
+            entry["cover"] = (
+                {
+                    "id": cover_id,
+                    "name": cover_payload.get("name"),
+                    "width": cover_payload.get("width"),
+                    "height": cover_payload.get("height"),
+                }
+                if isinstance(cover_payload, dict)
+                else None
+            )
             members = entry.get("members") or []
             entry["pixiv_ids"] = [
                 str(member.get("platform_id") or "")
@@ -3280,6 +3515,21 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         store: ProvenanceStore = app.state.provenance
         try:
             store.remove_identity(author_key, request.kind, request.value)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        invalidate_author_cache()
+        summary = store.author_summary(author_key)
+        if summary is None:
+            raise HTTPException(404, "作者不存在")
+        return {"author": summary}
+
+    @app.post("/api/authors/{author_key}/cover")
+    def set_artist_cover(
+        author_key: str, request: ArtistCoverRequest
+    ) -> dict[str, Any]:
+        store: ProvenanceStore = app.state.provenance
+        try:
+            store.set_artist_cover(author_key, request.point_id)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         invalidate_author_cache()

@@ -248,6 +248,18 @@
     }
     .collection-page-button:disabled { opacity: .42; cursor: default; transform: none; }
     .collection-page-indicator { min-width: 0; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; text-align: center; }
+    .library-view-switch {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
+      margin-bottom: 12px; padding: 3px; border-radius: 12px; background: #f1ebf2;
+    }
+    .library-view-switch button {
+      min-height: 30px; padding: 5px 8px; border-radius: 9px;
+      background: transparent; color: #6d6272; font-size: 12px;
+    }
+    .library-view-switch button:hover { transform: none; background: rgba(255,255,255,.55); }
+    .library-view-switch button[aria-pressed="true"] {
+      background: #fff; color: #8a5268; box-shadow: 0 2px 7px rgba(69,51,76,.1);
+    }
     .time-filter { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
     .time-filter-label { margin-bottom: 8px; font-size: 14px; font-weight: 700; }
     .time-preset {
@@ -784,10 +796,9 @@
     .gallery.view-list .card-remove:hover { transform: none; color: #8a5268; }
     .artist-mode-bar {
       display: flex; align-items: center; gap: 8px;
-      flex: 1 1 auto; min-width: 0;
+      flex: 0 0 auto; min-width: 0;
     }
     .artist-mode-bar[hidden] { display: none; }
-    .artist-sort .collection-sort-menu { left: 0; right: auto; }
     .artist-search {
       flex: 0 1 240px; min-width: 0; margin-left: auto;
     }
@@ -795,11 +806,6 @@
       width: 100%; min-height: 32px; padding: 5px 10px; border-radius: 10px;
       font-size: 12px; line-height: 1.2;
     }
-    .artist-dropdown-toggle {
-      display: flex; align-items: center; gap: 7px; margin-top: 2px; padding: 8px;
-      border-top: 1px solid var(--line); color: var(--muted); font-size: 12px;
-    }
-    .artist-dropdown-toggle input { width: 14px; height: 14px; accent-color: #c97a98; }
     .gallery.view-artists { display: block; padding-bottom: 48px; }
     .artist-list { display: grid; gap: 14px; }
     .artist-row {
@@ -829,8 +835,15 @@
     .artist-settings {
       flex: 0 0 auto; display: inline-grid; place-items: center;
       width: 30px; height: 30px; min-height: 0; padding: 0; border-radius: 9px;
-      background: #f6f1f5; color: #665866; margin-left: auto;
+      background: #f6f1f5; color: #665866;
     }
+    .artist-head .artist-self-favorite {
+      position: static; flex: 0 0 auto; width: 30px; height: 30px;
+      margin-left: auto; opacity: 1; pointer-events: auto;
+      color: #8a5268; filter: none;
+    }
+    .artist-head .artist-self-favorite svg { width: 17px; height: 17px; }
+    .artist-head .artist-settings { margin-left: 0; }
     .artist-settings svg {
       width: 16px; height: 16px; fill: none; stroke: currentColor;
       stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8;
@@ -878,6 +891,43 @@
       color: var(--muted); font-size: 11px;
     }
     .artist-empty { padding: 24px 8px; color: var(--muted); font-size: 13px; text-align: center; }
+    .artist-card {
+      position: relative; overflow: hidden; border: 1px solid #eee9ef; border-radius: 16px;
+      background: #fff; box-shadow: 0 7px 22px rgba(58, 47, 64, .055);
+      cursor: pointer; outline: 1px solid transparent;
+      transition: outline-color .15s ease, box-shadow .15s ease;
+    }
+    .artist-card:hover { outline-color: #ddb2c2; box-shadow: 0 9px 24px rgba(69,51,76,.13); }
+    .artist-card-cover {
+      position: relative; overflow: hidden; background: #f1edf2;
+    }
+    .artist-card-cover img { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .artist-card-label {
+      display: grid; gap: 3px; padding: 9px 10px 10px; min-width: 0;
+    }
+    .artist-card-name {
+      min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      color: var(--ink); font-size: 13px; font-weight: 700;
+    }
+    .artist-card-meta {
+      display: flex; align-items: center; gap: 5px; min-width: 0;
+      color: var(--muted); font-size: 11px;
+    }
+    .artist-card-meta .artist-sub { flex: 1; }
+    .artist-card .artist-settings { position: absolute; top: 7px; right: 7px; z-index: 4; margin: 0; background: rgba(255,255,255,.9); }
+    .artist-card .card-favorite { top: 7px; left: 7px; right: auto; bottom: auto; opacity: 0; }
+    .artist-card:hover .card-favorite { opacity: 1; pointer-events: auto; }
+    .artist-card .card-order-handle, .artist-card .card-remove { z-index: 5; }
+    .artist-card.card-list { display: grid; grid-template-columns: 84px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 6px; cursor: pointer; }
+    .artist-card.card-list .artist-card-cover { width: 84px; height: 84px; border-radius: 11px; }
+    .artist-card.card-list .artist-card-label { padding: 0; }
+    .artist-card.card-list .artist-settings { position: static; margin-left: 0; background: #f6f1f5; }
+    .artist-card.card-list .card-favorite { position: static; opacity: 1; pointer-events: auto; color: #8a5268; }
+    @media (max-width: 720px) {
+      .artist-card .artist-settings { width: 28px; height: 28px; }
+      .artist-card.card-list { grid-template-columns: 68px minmax(0, 1fr) auto; }
+      .artist-card.card-list .artist-card-cover { width: 68px; height: 68px; }
+    }
     .artist-dialog {
       position: fixed; inset: 0; margin: auto;
       inline-size: min(460px, calc(100vw - 24px));
@@ -1799,6 +1849,10 @@
           <button class="side-tab" id="tab-btn-advanced" type="button" role="tab" aria-selected="false" aria-controls="tab-advanced" tabindex="-1">高级</button>
         </div>
         <div id="tab-scope" role="tabpanel" aria-labelledby="tab-btn-scope">
+        <div class="library-view-switch" role="group" aria-label="浏览视图">
+          <button type="button" data-library-view="images" aria-pressed="false">图集视图</button>
+          <button type="button" data-library-view="artists" aria-pressed="false">画师视图</button>
+        </div>
         <div class="time-filter">
           <div class="time-filter-label">时间范围</div>
           <select id="time-preset" class="time-preset" aria-label="时间范围">
@@ -1974,10 +2028,6 @@
         <div class="results-head">
           <div id="query-info" class="query-info"></div>
           <div id="artist-mode-bar" class="artist-mode-bar" hidden>
-            <div id="artist-sort" class="collection-sort artist-sort">
-              <button class="collection-sort-toggle" id="artist-sort-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="artist-sort-menu" aria-label="画师排序" title="画师排序"></button>
-              <div id="artist-sort-menu" class="collection-sort-menu" role="dialog" aria-label="画师排序" hidden></div>
-            </div>
             <div class="artist-search">
               <input id="artist-search" type="text" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" inputmode="search" enterkeyhint="search" placeholder="搜索画师名、UID 或社交账号" aria-label="搜索画师">
             </div>
@@ -2141,7 +2191,6 @@
       { value: 'square', label: '正方形瀑布流' },
       { value: 'compact', label: '缩小的正方形瀑布流' },
       { value: 'list', label: '列表' },
-      { value: 'artists', label: '画师模式' },
     ];
     const GALLERY_VIEW_LABELS = Object.fromEntries(
       GALLERY_VIEWS.map((option) => [option.value, option.label])
@@ -2160,6 +2209,19 @@
         return localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1';
       } catch {
         return false;
+      }
+    }
+    const LIBRARY_VIEW_STORAGE_KEY = 'artseek.libraryView';
+    const LIBRARY_VIEWS = [
+      { value: 'images', label: '图集视图' },
+      { value: 'artists', label: '画师视图' },
+    ];
+    function loadLibraryView() {
+      try {
+        const value = localStorage.getItem(LIBRARY_VIEW_STORAGE_KEY);
+        return LIBRARY_VIEWS.some((option) => option.value === value) ? value : 'images';
+      } catch (_) {
+        return 'images';
       }
     }
     const ARTIST_SORT_STORAGE_KEY = 'artseek.artistSort';
@@ -2287,6 +2349,7 @@
       collectionHistory: { canUndo: false, canRedo: false, undoLabel: '', redoLabel: '' },
       collectionViewSort: '', collectionSortTemp: false, collectionSortBusy: false,
       galleryView: loadGalleryView(),
+      libraryView: loadLibraryView(),
       sidebarCollapsed: loadSidebarCollapsed(),
       artistView: {
         authors: [], offset: 0, total: 0, hasMore: false, loading: false, seq: 0,
@@ -2968,6 +3031,7 @@
           ${autoTags ? `<div class="provenance-row"><span>自动标签</span><div class="provenance-tags">${autoTags}</div></div>` : ''}
           <div class="provenance-actions">
             <button type="button" data-prov-action="refresh">重新抓取</button>
+            ${author && author.key ? `<button type="button" data-prov-action="set-cover" ${author.cover_point_id === currentImageId() ? 'disabled' : ''}>${author.cover_point_id === currentImageId() ? '当前画师代表图' : '设为画师代表图'}</button>` : ''}
             ${postButton}
             <button type="button" data-prov-action="saucenao">SauceNAO</button>
             <button type="button" data-prov-action="ascii2d">ascii2d</button>
@@ -2978,21 +3042,20 @@
           <strong>编辑来源</strong>
           <input id="prov-url" placeholder="Pixiv/X/小红书作品 URL，或任意来源 URL" value="${escapeHtml(url)}">
           <input id="prov-title" placeholder="标题" value="${escapeHtml(record.title || '')}">
-          <div class="provenance-author-picker">
-            <label for="prov-author-query">标注作者</label>
-            <div class="provenance-author-search">
-              <input id="prov-author-query" placeholder="搜索作者名、UID、Pixiv ID 或 X handle" value="${escapeHtml(author ? (author.name || author.handle || author.key || '') : '')}" autocomplete="off">
-              <div id="prov-author-results" class="provenance-author-results" hidden></div>
-            </div>
-            <input id="prov-author-key" type="hidden" value="${escapeHtml(author && author.key ? author.key : '')}">
-            <div class="provenance-hint">可从列表选择，也可直接填写确认过的 UID、Pixiv ID 或 X handle。</div>
-          </div>
           <div class="provenance-row">
             <input id="prov-author-name" placeholder="作者名" value="${escapeHtml(author ? (author.name || '') : '')}" style="flex:1">
           </div>
           <div class="provenance-row">
             <input id="prov-pixiv-id" placeholder="Pixiv ID（可留空）" value="${escapeHtml(pixivIds[0] || '')}" style="flex:1">
             <input id="prov-x-handle" placeholder="X handle（可留空）" value="${escapeHtml(xHandles[0] || '')}" style="flex:1">
+          </div>
+          <div class="provenance-author-picker">
+            <label for="prov-author-query">标注作者</label>
+            <div class="provenance-author-search">
+              <input id="prov-author-query" placeholder="UID / Pixiv ID / X handle" value="${escapeHtml(author ? (author.name || author.handle || author.key || '') : '')}" autocomplete="off">
+              <div id="prov-author-results" class="provenance-author-results" hidden></div>
+            </div>
+            <input id="prov-author-key" type="hidden" value="${escapeHtml(author && author.key ? author.key : '')}">
           </div>
           <input id="prov-tags" placeholder="手动标签，用逗号分隔" value="${escapeHtml((record.manual_tags || []).join(', '))}">
           <div class="provenance-actions">
@@ -3011,6 +3074,21 @@
         else loadProvenanceTagAliases(link, tag);
       });
       body.querySelector('[data-prov-action="refresh"]')?.addEventListener('click', () => resolveProvenanceUrl(url, { silent: true }));
+      body.querySelector('[data-prov-action="set-cover"]')?.addEventListener('click', async () => {
+        const pointId = currentImageId();
+        if (!pointId || !author || !author.key) return;
+        try {
+          await parseResponse(await fetch(`/api/authors/${encodeURIComponent(author.key)}/cover`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ point_id: pointId }),
+          }));
+          await loadProvenance(pointId);
+          if (artistViewActive()) await fetchArtistGallery({ reset: true });
+        } catch (error) {
+          $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">设置代表图失败：${escapeHtml(error.message)}</p>`);
+        }
+      });
       body.querySelector('[data-prov-action="open-post"]')?.addEventListener('click', () => {
         if (url) window.open(url, '_blank', 'noopener');
       });
@@ -5327,7 +5405,7 @@
         setActive(false);
         const imageId = event.dataTransfer.getData(GALLERY_ITEM_MIME);
         const item = state.results.find((entry) => entry.id === imageId) || state.galleryDragItem;
-        if (item) addGalleryReferenceWithStatus(item);
+        if (item && item.kind !== 'artist') addGalleryReferenceWithStatus(item);
         state.galleryDragItem = null;
       });
     }
@@ -5561,7 +5639,15 @@
       return FOLDER_SORT_LABELS[state.tagSort] ? state.tagSort : 'mtime';
     }
     function sortContext() {
-      if (artistViewActive()) return null;
+      if (artistViewActive()) {
+        return {
+          kind: 'artists',
+          title: '画师排序',
+          options: ARTIST_SORT_OPTIONS,
+          sort: state.artistView.sort,
+          temporary: false,
+        };
+      }
       if (relevanceSearchActive()) {
         return { kind: 'relevance', title: '搜索排序', options: SEARCH_RELEVANCE_OPTIONS, sort: 'search', temporary: false };
       }
@@ -5595,11 +5681,21 @@
           <span>${option.label}</span>
           <span class="collection-sort-check" aria-hidden="true">${option.value === context.sort ? '✓' : ''}</span>
         </button>`).join('')}
-        ${context.kind === 'collection' ? `<label class="collection-sort-temp"><input id="collection-sort-temp" type="checkbox" ${state.collectionSortTemp ? 'checked' : ''}> 仅本次查看，不保存</label>` : ''}`;
+        ${context.kind === 'collection' ? `<label class="collection-sort-temp"><input id="collection-sort-temp" type="checkbox" ${state.collectionSortTemp ? 'checked' : ''}> 仅本次查看，不保存</label>` : ''}
+        ${context.kind === 'artists' ? `<label class="collection-sort-temp"><input id="artist-show-unassigned" type="checkbox" ${state.artistView.includeUnassigned ? 'checked' : ''}> 显示无画师</label>` : ''}`;
       menu.querySelectorAll('[data-sort-value]').forEach((button) => {
         button.addEventListener('click', () => {
+          if (context.kind === 'artists') {
+            applyArtistSort(button.dataset.sortValue);
+            return;
+          }
           applyCollectionSort(button.dataset.sortValue, { temporary: state.collectionSortTemp });
         });
+      });
+      menu.querySelector('#artist-show-unassigned')?.addEventListener('change', (event) => {
+        state.artistView.includeUnassigned = event.currentTarget.checked;
+        renderCollectionSort();
+        void fetchArtistGallery({ reset: true });
       });
       menu.querySelector('#collection-sort-temp')?.addEventListener('change', async (event) => {
         state.collectionSortTemp = event.currentTarget.checked;
@@ -5625,6 +5721,8 @@
       });
       const temp = menu.querySelector('#collection-sort-temp');
       if (temp) temp.checked = state.collectionSortTemp;
+      const unassigned = menu.querySelector('#artist-show-unassigned');
+      if (unassigned) unassigned.checked = state.artistView.includeUnassigned;
     }
     function openCollectionSortMenu() {
       renderCollectionSortMenu();
@@ -5649,7 +5747,8 @@
       toggle.disabled = context.kind === 'collection' ? state.collectionSortBusy : false;
       const labels = context.kind === 'relevance' ? SEARCH_RELEVANCE_LABELS
         : context.kind === 'search' ? SEARCH_SORT_LABELS
-          : context.kind === 'collection' ? COLLECTION_SORT_LABELS : FOLDER_SORT_LABELS;
+          : context.kind === 'collection' ? COLLECTION_SORT_LABELS
+            : context.kind === 'artists' ? ARTIST_SORT_LABELS : FOLDER_SORT_LABELS;
       const label = labels[context.sort] || context.sort;
       const title = `${context.title}：${label}${context.temporary ? '（仅本次查看）' : ''}`;
       toggle.setAttribute('aria-label', title);
@@ -5660,6 +5759,10 @@
     }
     async function applyCollectionSort(sort, { temporary = false } = {}) {
       window.scrollTo({ top: 0, behavior: 'auto' });
+      if (artistViewActive()) {
+        applyArtistSort(sort);
+        return;
+      }
       if (relevanceSearchActive()) {
         if (sort !== 'search') return;
         state.searchSort = 'search';
@@ -5761,9 +5864,7 @@
       else closeCollectionSortMenu({ restoreFocus: true });
     }
     function galleryViewChoices() {
-      return state.mode === 'author'
-        ? GALLERY_VIEWS.filter((option) => option.value !== 'artists')
-        : GALLERY_VIEWS;
+      return GALLERY_VIEWS;
     }
     function cycleGalleryView() {
       const options = galleryViewChoices();
@@ -5831,7 +5932,6 @@
       if (!GALLERY_VIEW_LABELS[value]) return;
       if (state.galleryView === value) return;
       const scrollY = window.scrollY;
-      const wasArtists = state.galleryView === 'artists';
       state.galleryView = value;
       try {
         localStorage.setItem(GALLERY_VIEW_STORAGE_KEY, value);
@@ -5839,16 +5939,12 @@
         // Keep the in-memory choice when storage is unavailable.
       }
       renderGalleryView();
-      if (value === 'artists') {
-        state.artistView.scrollTarget = scrollY;
-        void fetchArtistGallery({ reset: true });
+      if (artistViewActive()) {
+        renderArtistGallery({ append: false });
         restoreGalleryScroll(scrollY);
         return;
       }
-      if (wasArtists) {
-        disconnectArtistObservers();
-        $('gallery').classList.remove('view-artists');
-      }
+      $('gallery').classList.remove('view-artists');
       renderGallery(state.results, { append: false });
       restoreGalleryScroll(scrollY);
     }
@@ -6204,7 +6300,7 @@
       const page = collectionPage(namespace);
       const totalPages = collectionPageCount();
       menu.innerHTML = `<div id="${titleId}" class="viewer-collection-menu-title">收藏「${escapeHtml(item.name)}」· 第 ${page + 1} / ${totalPages} 页</div>
-        <button class="collection-menu-reference" type="button" data-${namespace}-menu-reference>添加至参考图</button>
+        ${item.kind === 'artist' ? '' : `<button class="collection-menu-reference" type="button" data-${namespace}-menu-reference>添加至参考图</button>`}
         <div class="viewer-collection-menu-list" aria-label="收藏夹第 ${page + 1} 页">${pickerContent}</div>
         <div class="collection-picker-footer">
           ${collectionPaginationMarkup(namespace, { picker: true })}
@@ -6446,14 +6542,10 @@
       });
     }
     $('sidebar-toggle').addEventListener('click', () => applySidebarCollapsed(!state.sidebarCollapsed));
-    $('gallery-view-toggle').addEventListener('click', () => cycleGalleryView());
-    $('artist-sort-toggle').addEventListener('click', () => toggleArtistSortMenu());
-    $('artist-sort-menu').addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        closeArtistSortMenu({ restoreFocus: true });
-      }
+    document.querySelectorAll('[data-library-view]').forEach((button) => {
+      button.addEventListener('click', () => applyLibraryView(button.dataset.libraryView));
     });
+    $('gallery-view-toggle').addEventListener('click', () => cycleGalleryView());
     let artistSearchTimer = 0;
     function scheduleArtistSearch(value) {
       state.artistView.query = String(value || '').trim();
@@ -6512,10 +6604,6 @@
       const sortMenu = $('collection-sort-menu');
       if (!sortMenu.hidden && !$('collection-sort').contains(event.target)) {
         closeCollectionSortMenu({ restoreFocus: false });
-      }
-      const artistMenu = $('artist-sort-menu');
-      if (artistMenu && !artistMenu.hidden && !$('artist-sort').contains(event.target)) {
-        closeArtistSortMenu({ restoreFocus: false });
       }
     });
     function renderCollectionList() {
@@ -7104,7 +7192,7 @@
     }
 
     function loadMoreResults() {
-      if (state.galleryView === 'artists') return fetchArtistGallery({ reset: false });
+      if (state.libraryView === 'artists') return fetchArtistGallery({ reset: false });
       if (state.mode === 'browse') return fetchFolderImages({ reset: false });
       if (state.mode === 'random') return fetchRandomBrowse({ reset: false });
       if (state.mode === 'collection') return fetchCollectionImages({ reset: false });
@@ -7116,7 +7204,34 @@
     }
 
     function artistViewActive() {
-      return state.galleryView === 'artists' && state.mode !== 'idle';
+      return state.libraryView === 'artists' && state.mode !== 'idle';
+    }
+    function renderLibraryViewSwitch() {
+      document.querySelectorAll('[data-library-view]').forEach((button) => {
+        const active = button.dataset.libraryView === state.libraryView;
+        button.setAttribute('aria-pressed', String(active));
+        button.disabled = state.mode === 'author' && button.dataset.libraryView === 'artists';
+      });
+    }
+    function applyLibraryView(value) {
+      if (!LIBRARY_VIEWS.some((option) => option.value === value)) return;
+      if (state.libraryView === value) return;
+      if (state.mode === 'author' && value === 'artists') return;
+      const scrollY = window.scrollY;
+      state.libraryView = value;
+      try { localStorage.setItem(LIBRARY_VIEW_STORAGE_KEY, value); }
+      catch (_) { /* keep in-memory */ }
+      renderLibraryViewSwitch();
+      renderGalleryView();
+      if (value === 'artists') {
+        state.artistView.scrollTarget = scrollY;
+        void fetchArtistGallery({ reset: true });
+        restoreGalleryScroll(scrollY);
+        return;
+      }
+      disconnectArtistObservers();
+      renderGallery(state.results, { append: false });
+      restoreGalleryScroll(scrollY);
     }
     function normalizeArtistImageSort(value) {
       const text = String(value || '');
@@ -7210,80 +7325,22 @@
       if (state.mode === 'author' && state.authorKey === 'none') return true;
       return (artistScopePayload().author_keys || []).includes('none');
     }
-    function artistSortIcon(value) {
-      const mode = String(value || 'latest_desc');
-      const arrow = mode.endsWith('_desc')
-        ? '<path d="M19 7v10m-2.4-2.4L19 17l2.4-2.4"/>'
-        : '<path d="M19 17V7m-2.4 2.4L19 7l2.4 2.4"/>';
-      return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM4 19c0-2.5 2.2-4 5-4s5 1.5 5 4"/><path d="M16 11a2.4 2.4 0 1 0 0-4.8"/>${arrow}</svg>`;
-    }
     function renderArtistBar() {
       const active = artistViewActive();
-      $('query-info').hidden = active;
       $('artist-mode-bar').hidden = !active;
-      if (!active) {
-        closeArtistSortMenu();
-        return;
-      }
-      const view = state.artistView;
-      const toggle = $('artist-sort-toggle');
-      toggle.innerHTML = artistSortIcon(view.sort);
-      const label = ARTIST_SORT_LABELS[view.sort] || view.sort;
-      const title = `画师排序：${label}（点击更改）`;
-      toggle.setAttribute('aria-label', title);
-      toggle.title = title;
+      renderLibraryViewSwitch();
+      if (!active) return;
       const search = $('artist-search');
-      if (search.value !== view.query) search.value = view.query;
-      if (!$('artist-sort-menu').hidden) renderArtistSortMenu();
+      if (search.value !== state.artistView.query) search.value = state.artistView.query;
       renderCollectionSort();
-    }
-    function renderArtistSortMenu() {
-      const view = state.artistView;
-      const menu = $('artist-sort-menu');
-      menu.innerHTML = `<div class="collection-sort-title">画师排序</div>${ARTIST_SORT_OPTIONS.map((option) => `
-        <button class="collection-sort-option" type="button" role="menuitemradio" aria-checked="${option.value === view.sort}" data-artist-sort="${option.value}">
-          ${artistSortIcon(option.value)}
-          <span>${option.label}</span>
-          <span class="collection-sort-check" aria-hidden="true">${option.value === view.sort ? '✓' : ''}</span>
-        </button>`).join('')}
-        <label class="artist-dropdown-toggle"><input id="artist-show-unassigned" type="checkbox" ${view.includeUnassigned ? 'checked' : ''}> 显示无画师</label>`;
-      menu.querySelectorAll('[data-artist-sort]').forEach((button) => {
-        button.addEventListener('click', () => {
-          applyArtistSort(button.dataset.artistSort);
-        });
-      });
-      menu.querySelector('#artist-show-unassigned')?.addEventListener('change', (event) => {
-        state.artistView.includeUnassigned = event.currentTarget.checked;
-        closeArtistSortMenu({ restoreFocus: true });
-        void fetchArtistGallery({ reset: true });
-      });
-    }
-    function openArtistSortMenu() {
-      renderArtistSortMenu();
-      $('artist-sort-menu').hidden = false;
-      $('artist-sort-toggle').setAttribute('aria-expanded', 'true');
-      requestAnimationFrame(() => {
-        $('artist-sort-menu').querySelector('[aria-checked="true"]')?.focus();
-      });
-    }
-    function closeArtistSortMenu({ restoreFocus = false } = {}) {
-      const menu = $('artist-sort-menu');
-      if (!menu || menu.hidden) return;
-      menu.hidden = true;
-      $('artist-sort-toggle').setAttribute('aria-expanded', 'false');
-      if (restoreFocus) $('artist-sort-toggle').focus();
-    }
-    function toggleArtistSortMenu() {
-      if ($('artist-sort-menu').hidden) openArtistSortMenu();
-      else closeArtistSortMenu({ restoreFocus: true });
     }
     function applyArtistSort(value) {
       if (!ARTIST_SORT_LABELS[value]) return;
       state.artistView.sort = value;
       try { localStorage.setItem(ARTIST_SORT_STORAGE_KEY, value); }
       catch (_) { /* keep the in-memory choice */ }
-      closeArtistSortMenu({ restoreFocus: true });
-      renderArtistBar();
+      closeCollectionSortMenu({ restoreFocus: true });
+      renderCollectionSort();
       window.scrollTo({ top: 0, behavior: 'auto' });
       void fetchArtistGallery({ reset: true });
     }
@@ -7354,6 +7411,10 @@
         renderArtistGallery({ append: !reset });
         $('load-more').hidden = !view.hasMore;
         $('load-more').textContent = '正在载入更多画师…';
+        const sortLabel = ARTIST_SORT_LABELS[view.sort] || view.sort;
+        $('query-info').textContent = compactInfo()
+          ? `${view.total} 位画师 · ${sortLabel}`
+          : `画师 · ${view.total} 位 · ${sortLabel}`;
         if (reset && view.scrollTarget != null) {
           const target = view.scrollTarget;
           view.scrollTarget = null;
@@ -7426,6 +7487,17 @@
       socials.innerHTML = platformIconLinks(author.members || []);
       if (socials.childNodes.length) head.append(socials);
       if (key !== 'none') {
+        const favorite = document.createElement('button');
+        favorite.type = 'button';
+        favorite.className = 'card-favorite artist-self-favorite';
+        favorite.dataset.artistFavoriteSelf = '1';
+        favorite.dataset.artistKey = key;
+        favorite.setAttribute('aria-label', `收藏画师：${name}`);
+        favorite.setAttribute('aria-haspopup', 'dialog');
+        favorite.setAttribute('aria-expanded', 'false');
+        favorite.setAttribute('aria-controls', 'card-collection-menu');
+        favorite.innerHTML = CARD_HEART_ICON;
+        head.append(favorite);
         const settings = document.createElement('button');
         settings.type = 'button';
         settings.className = 'artist-settings';
@@ -7520,7 +7592,97 @@
       loading.remove();
       row.loading = false;
     }
+    function navigateToAuthorPage(key) {
+      if (!key) return;
+      closeCardCollectionMenu({ restoreFocus: false });
+      const route = { kind: 'author', key: String(key) };
+      commitRoute(route, { replace: false, overlay: 0 });
+      void applyAppRoute(route);
+    }
+    function artistPageItem(author) {
+      const key = String(author.key || '');
+      return {
+        id: `artist:${key}`,
+        kind: 'artist',
+        artist_key: key,
+        name: author.name || author.handle || key,
+        handle: author.handle || '',
+        members: author.members || [],
+        image_count: author.image_count || 0,
+        cover: author.cover || null,
+      };
+    }
+    function artistCardElement(author) {
+      const key = String(author.key || '');
+      const name = String(author.name || author.handle || key || '未命名画师');
+      const cover = author.cover || (author.images || [])[0] || null;
+      const coverItem = cover
+        ? { width: Number(cover.width || 0), height: Number(cover.height || 0) }
+        : { width: 1, height: 1 };
+      const aspect = state.galleryView === 'square' || state.galleryView === 'compact'
+        ? 1
+        : cardDisplayAspect(coverItem);
+      const card = document.createElement('article');
+      card.className = 'artist-card';
+      card.dataset.artistCard = '1';
+      card.dataset.artistKey = key;
+      card.tabIndex = 0;
+      card.setAttribute('role', 'button');
+      card.setAttribute('aria-label', `打开画师：${name}`);
+      card.innerHTML = `<div class="artist-card-cover" style="aspect-ratio: ${aspect}">${cover ? `<img loading="lazy" decoding="async" draggable="false" alt="${escapeHtml(name)}" src="/thumb/${cover.id}">` : ''}</div>
+        <div class="artist-card-label">
+          <div class="artist-card-name">${escapeHtml(name)}</div>
+          <div class="artist-card-meta">
+            <span class="artist-sub">${author.handle ? `@${escapeHtml(author.handle)}` : `UID ${escapeHtml(key)}`} · ${Number(author.image_count || 0)} 张</span>
+            <span class="artist-socials">${platformIconLinks(author.members || [])}</span>
+          </div>
+        </div>
+        <button class="card-favorite" type="button" data-artist-favorite-self data-artist-key="${escapeHtml(key)}" draggable="false" aria-label="收藏画师：${escapeHtml(name)}" aria-haspopup="dialog" aria-expanded="false" aria-controls="card-collection-menu">${CARD_HEART_ICON}</button>
+        ${key !== 'none' ? `<button class="artist-settings" type="button" data-artist-settings="${escapeHtml(key)}" aria-label="画师设置：${escapeHtml(name)}" title="画师设置"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></svg></button>` : ''}`;
+      card._layoutItem = coverItem;
+      return card;
+    }
+    function renderArtistCardGrid({ append } = { append: false }) {
+      const gallery = $('gallery');
+      gallery.classList.remove('view-artists', 'view-list');
+      gallery.classList.toggle('view-square', state.galleryView === 'square');
+      gallery.classList.toggle('view-compact', state.galleryView === 'compact');
+      if (!append) {
+        disconnectArtistObservers();
+        gallery.replaceChildren();
+        delete gallery.dataset.cols;
+        state.colHeights = [];
+      }
+      if (!state.artistView.authors.length) {
+        gallery.innerHTML = state.artistView.loading
+          ? '<div class="artist-empty">正在载入画师…</div>'
+          : '<div class="artist-empty">筛选范围内没有可展示的画师。若想查看未标注作者的图片，请在排序菜单中开启“显示无画师”。</div>';
+        state.colHeights = [];
+        settleGalleryScroll();
+        return;
+      }
+      ensureGalleryColumns();
+      const existing = new Set(
+        [...gallery.querySelectorAll('.artist-card')].map((card) => card.dataset.artistKey),
+      );
+      for (const author of state.artistView.authors) {
+        const key = String(author.key || '');
+        if (existing.has(key)) continue;
+        const card = artistCardElement(author);
+        galleryColumnAppend(card);
+      }
+      bindArtistGalleryEvents();
+      if (append) settleGalleryScroll();
+    }
+    function galleryColumnAppend(card) {
+      const item = card._layoutItem || { width: 1, height: 1 };
+      placeCard(card, item, 54);
+    }
     function renderArtistGallery({ append } = { append: false }) {
+      if (state.galleryView !== 'list') {
+        renderArtistCardGrid({ append });
+        return;
+      }
       const gallery = $('gallery');
       gallery.classList.remove('view-square', 'view-compact', 'view-list');
       gallery.classList.add('view-artists');
@@ -7567,6 +7729,20 @@
           void openArtistDialog(settings.dataset.artistSettings);
           return;
         }
+        const selfFavorite = event.target.closest('[data-artist-favorite-self]');
+        if (selfFavorite) {
+          event.preventDefault();
+          event.stopPropagation();
+          const key = selfFavorite.dataset.artistKey;
+          const author = state.artistView.authors.find((entry) => String(entry.key) === key);
+          if (author) openCardCollectionMenu(artistPageItem(author), selfFavorite);
+          return;
+        }
+        const card = event.target.closest('[data-artist-card]');
+        if (card) {
+          navigateToAuthorPage(card.dataset.artistKey);
+          return;
+        }
         const thumb = event.target.closest('[data-artist-thumb]');
         if (!thumb) return;
         const key = thumb.dataset.artistKey;
@@ -7583,9 +7759,16 @@
         openViewer(item, { playlist: row.images, rowKey: key });
       });
       gallery.addEventListener('keydown', (event) => {
-        const thumb = event.target.closest?.('[data-artist-thumb]');
-        if (!thumb || event.target.closest('[data-artist-favorite]')) return;
         if (event.key !== 'Enter' && event.key !== ' ') return;
+        if (event.target.closest('[data-artist-favorite], [data-artist-favorite-self], [data-artist-settings]')) return;
+        const card = event.target.closest?.('[data-artist-card]');
+        if (card) {
+          event.preventDefault();
+          navigateToAuthorPage(card.dataset.artistKey);
+          return;
+        }
+        const thumb = event.target.closest?.('[data-artist-thumb]');
+        if (!thumb) return;
         event.preventDefault();
         const key = thumb.dataset.artistKey;
         const row = state.artistRows.get(key);
@@ -8593,15 +8776,50 @@
       gallery.dataset.cols = String(count);
       state.colHeights = Array(count).fill(0);
     }
-    function placeCard(element, item) {
+    function placeCard(element, item, extraHeight = 0) {
       const cols = [...$('gallery').querySelectorAll('.gallery-col')];
       if (!cols.length) return;
       const index = shortestColumnIndex();
       cols[index].appendChild(element);
       const width = cols[index].clientWidth || (($('gallery').clientWidth - 14 * (cols.length - 1)) / cols.length);
-      state.colHeights[index] += estimateCardHeight(item, width);
+      state.colHeights[index] += estimateCardHeight(item, width) + extraHeight;
+    }
+    function artistCollectionCardHTML(item, index) {
+      const view = state.galleryView;
+      const listMode = view === 'list';
+      const inCollection = state.mode === 'collection';
+      const manualOrder = inCollection && effectiveCollectionSort() === 'manual';
+      const cover = item.cover || null;
+      const coverItem = cover ? { width: cover.width || 0, height: cover.height || 0 } : { width: 1, height: 1 };
+      const ratio = listMode ? '' : ` style="aspect-ratio: ${view === 'square' || view === 'compact' ? 1 : cardDisplayAspect(coverItem)}"`;
+      const orderHandle = manualOrder
+        ? `<button class="card-order-handle" type="button" data-card-action="order" draggable="false" aria-label="调整「${escapeHtml(item.name)}」的顺序" aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight">${CARD_ORDER_ICON}</button>`
+        : '';
+      const removeAction = inCollection
+        ? `<button class="card-remove" type="button" data-card-action="remove" aria-label="从收藏夹移除：${escapeHtml(item.name)}">${CARD_CLOSE_ICON}</button>`
+        : '';
+      const image = cover ? `<img src="/thumb/${cover.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">` : '';
+      const meta = `${item.handle ? `@${escapeHtml(item.handle)}` : `UID ${escapeHtml(item.artist_key)}`} · ${Number(item.image_count || 0)} 张`;
+      if (listMode) {
+        return `<article class="card card-list artist-collection-card" data-index="${index}" data-point-id="${escapeHtml(item.id)}" data-artist-collection tabindex="0" role="button" aria-label="打开画师：${escapeHtml(item.name)}">
+          <div class="image-wrap" draggable="true" data-gallery-drag>${cover ? `<img src="/thumb/${cover.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">` : ''}</div>
+          <div class="list-body">
+            <div class="list-title">${escapeHtml(item.name)}</div>
+            <div class="list-sub"><span class="list-author">${escapeHtml(item.name)}</span><span class="list-sep">·</span><span class="list-tags">${meta}</span></div>
+          </div>
+          <div class="card-list-actions">${orderHandle}${removeAction}</div>
+        </article>`;
+      }
+      return `<article class="card artist-collection-card" data-index="${index}" data-point-id="${escapeHtml(item.id)}" data-artist-collection tabindex="0" role="button" aria-label="打开画师：${escapeHtml(item.name)}">
+        <div class="image-wrap"${ratio} draggable="true" data-gallery-drag>${orderHandle}${removeAction}${image}</div>
+        <div class="artist-card-label">
+          <div class="artist-card-name">${escapeHtml(item.name)}</div>
+          <div class="artist-card-meta"><span class="artist-sub">${meta}</span></div>
+        </div>
+      </article>`;
     }
     function cardHTML(item, index) {
+      if (item.kind === 'artist') return artistCollectionCardHTML(item, index);
       const view = state.galleryView;
       const listMode = view === 'list';
       const inCollection = state.mode === 'collection';
@@ -8691,7 +8909,7 @@
         </article>`;
     }
     function renderGallery(results, { append } = { append: false }) {
-      if (state.galleryView === 'artists') {
+      if (state.libraryView === 'artists') {
         renderCollectionSort();
         renderGalleryView();
         queueArtistRefresh();
@@ -8728,7 +8946,7 @@
       results.forEach((item, index) => {
         const wrap = document.createElement('div');
         wrap.innerHTML = cardHTML(item, start + index);
-        placeCard(wrap.firstElementChild, item);
+        placeCard(wrap.firstElementChild, item, item.kind === 'artist' ? 54 : 0);
       });
       bindGalleryCards();
       settleGalleryScroll();
@@ -8760,6 +8978,11 @@
             }
             return;
           }
+          if (item.kind === 'artist') {
+            hideCardActionReveal();
+            navigateToAuthorPage(item.artist_key);
+            return;
+          }
           if (handleCardBottomTap(event, card)) return;
           hideCardActionReveal();
           openViewer(item);
@@ -8772,7 +8995,8 @@
           const item = state.results[Number(card.dataset.index)];
           if (!item) return;
           event.preventDefault();
-          openViewer(item);
+          if (item.kind === 'artist') navigateToAuthorPage(item.artist_key);
+          else openViewer(item);
         });
         card.addEventListener('pointerdown', (event) => startCardActionPress(event, card));
         card.addEventListener('contextmenu', (event) => {
@@ -9120,7 +9344,8 @@
     }
 
     function viewerList() {
-      return state.viewerPlaylist || state.results;
+      if (state.viewerPlaylist) return state.viewerPlaylist;
+      return state.results.filter((item) => item.kind !== 'artist');
     }
     function viewerHasMore() {
       if (state.viewerRowKey) {
@@ -10993,12 +11218,18 @@
           state.mode = 'author';
           state.tagName = '';
           state.tagTotal = 0;
-          if (state.galleryView === 'artists') {
+          if (state.libraryView === 'artists') {
+            state.libraryView = 'images';
+            try { localStorage.setItem(LIBRARY_VIEW_STORAGE_KEY, 'images'); }
+            catch (_) { /* keep the in-memory choice */ }
+          }
+          if (state.galleryView !== 'natural') {
             state.galleryView = 'natural';
             try { localStorage.setItem(GALLERY_VIEW_STORAGE_KEY, 'natural'); }
             catch (_) { /* keep the in-memory choice */ }
-            renderGalleryView();
           }
+          renderLibraryViewSwitch();
+          renderGalleryView();
           setAdvancedFilters({ authors: [route.key] });
           setFilterPanelOpen(true);
           updateFilterBadge();
@@ -11066,6 +11297,7 @@
       }
     }
     async function bootApp() {
+      renderLibraryViewSwitch();
       await Promise.all([
         loadLibraryTree(),
         loadCollections().catch((error) => setCollectionStatus(`收藏夹不可用：${error.message}`)),
