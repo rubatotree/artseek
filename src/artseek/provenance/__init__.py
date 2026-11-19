@@ -27,7 +27,13 @@ from .parser import (
     parsed_sources,
 )
 from .scan import parse_payload_path, scan_payloads
-from .store import ProvenanceStore, manual_author_key
+from .store import (
+    UNASSIGNED_AUTHOR_KEY,
+    ProvenanceStore,
+    normalize_pixiv_user_id,
+    normalize_social_link,
+    normalize_twitter_handle,
+)
 
 __all__ = [
     "PIXIV_DAILY_LIMIT",
@@ -36,6 +42,7 @@ __all__ = [
     "TWITTER_DAILY_LIMIT",
     "TWITTER_DOMAIN",
     "TWITTER_MIN_INTERVAL",
+    "UNASSIGNED_AUTHOR_KEY",
     "BudgetExhausted",
     "BudgetSnapshot",
     "FetchError",
@@ -51,7 +58,9 @@ __all__ = [
     "RateLimiter",
     "SourceRef",
     "extract_embedded_refs",
-    "manual_author_key",
+    "normalize_pixiv_user_id",
+    "normalize_social_link",
+    "normalize_twitter_handle",
     "parse_filename",
     "parse_payload_path",
     "parse_source_text",

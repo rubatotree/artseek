@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from artseek.provenance.parser import ParsedSource, SourceRef, parse_filename
-from artseek.provenance.store import ProvenanceStore, manual_author_key
+from artseek.provenance.store import ProvenanceStore
 
 
 def _parsed(value: str) -> ParsedSource:
@@ -167,7 +167,10 @@ class ProvenanceStoreTests(unittest.TestCase):
         canonical = self.store.link_authors(twitter, pixiv, evidence="pixiv_social")
         self.assertEqual(canonical, pixiv)
         self.assertEqual(self.store.canonical_author_key(twitter), pixiv)
-        self.assertEqual(self.store.author_members(pixiv), sorted([pixiv, twitter]))
+        self.assertEqual(
+            self.store.author_members(pixiv),
+            ["handle:yoneyamai", "pixiv_id:1554775"],
+        )
         groups = self.store.author_groups([pixiv])
         self.assertEqual(len(groups[pixiv]), 2)
         self.assertEqual(groups[pixiv], groups[twitter])
@@ -257,11 +260,104 @@ class ProvenanceStoreTests(unittest.TestCase):
         self.assertEqual(by_name[0]["key"], key)
         self.assertGreaterEqual(by_name[0]["score"], 0.85)
 
-    def test_manual_author_key_without_handle(self) -> None:
-        key = manual_author_key("某画师")
-        self.assertTrue(key.startswith("manual:"))
-        self.assertEqual(key, manual_author_key("  某画师 "))
-        self.assertEqual(manual_author_key("x", "@Handle"), "twitter:handle")
+    def test_conflicting_identity_merges_artists_and_keeps_images(self) -> None:
+        pixiv = self.store.ensure_author("pixiv", "100", name="Pixiv Name")
+        twitter = self.store.ensure_author(
+            "twitter", "200", name="X Name", handle="shared_handle"
+        )
+        self.assertNotEqual(pixiv, twitter)
+        self.store.upsert_scan("p1", self.payload, _parsed("12345678_p0.png"))
+        self.store.set_fetch_result(
+            "p1",
+            {
+                "platform": "pixiv",
+                "source_id": "12345678",
+                "page": 0,
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "status": "ok",
+            },
+            author_key=pixiv,
+        )
+        self.assertEqual(self.store.author_summary(pixiv)["image_count"], 1)
+        merged = self.store.ensure_author("pixiv", "100", handle="shared_handle")
+        self.assertEqual(merged, pixiv)
+        self.assertEqual(self.store.canonical_author_key(twitter), pixiv)
+        summary = self.store.author_summary(pixiv)
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary["image_count"], 1)
+        self.assertEqual(summary["pixiv_ids"], ["100"])
+        self.assertEqual(summary["x_handles"], ["shared_handle"])
+        self.assertEqual(self.store.point_ids_for_author(twitter), ["p1"])
+
+    def test_upgrade_merges_legacy_shared_handle_and_keeps_legacy_keys(self) -> None:
+        path = Path(self._temporary.name) / "legacy.sqlite3"
+        connection = sqlite3.connect(path)
+        connection.executescript(
+            """
+            CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE image_source (
+                point_id TEXT PRIMARY KEY,
+                content_hash TEXT,
+                author_key TEXT,
+                platform TEXT NOT NULL DEFAULT 'pixiv',
+                status TEXT NOT NULL DEFAULT 'ok',
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE author (
+                key TEXT PRIMARY KEY,
+                platform TEXT NOT NULL,
+                platform_id TEXT NOT NULL,
+                name TEXT,
+                handle TEXT,
+                profile_url TEXT,
+                avatar_url TEXT,
+                social_json TEXT,
+                profile_fetched INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL,
+                UNIQUE(platform, platform_id)
+            );
+            CREATE TABLE author_alias (
+                alias_key TEXT PRIMARY KEY,
+                canonical_key TEXT NOT NULL,
+                evidence TEXT,
+                confidence REAL NOT NULL DEFAULT 0.5,
+                updated_at INTEGER NOT NULL
+            );
+            INSERT INTO meta VALUES ('schema_version', '4');
+            INSERT INTO author VALUES
+                ('pixiv:100', 'pixiv', '100', 'Pixiv Name', 'shared', NULL, NULL, '{}', 1, 1),
+                ('twitter:shared', 'twitter', 'shared', 'X Name', 'shared', NULL, NULL, '{}', 0, 1);
+            INSERT INTO image_source (
+                point_id, content_hash, author_key, platform, status, updated_at
+            )
+            VALUES ('p1', 'a', 'pixiv:100', 'pixiv', 'ok', 1),
+                   ('p2', 'b', 'twitter:shared', 'twitter', 'ok', 2);
+            """
+        )
+        connection.commit()
+        connection.close()
+        upgraded = ProvenanceStore(path)
+        pixiv_key = upgraded.canonical_author_key("pixiv:100")
+        self.assertEqual(upgraded.canonical_author_key("twitter:shared"), pixiv_key)
+        summary = upgraded.author_summary(pixiv_key)
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary["name"], "Pixiv Name")
+        self.assertEqual(summary["image_count"], 2)
+        self.assertEqual(
+            sorted(upgraded.point_ids_for_author(pixiv_key)), ["p1", "p2"]
+        )
+
+    def test_manual_author_is_reused_and_numeric_keyed(self) -> None:
+        key = self.store.ensure_manual_author("某画师")
+        self.assertTrue(key.isdigit())
+        self.assertEqual(key, self.store.ensure_manual_author("  某画师 "))
+        summary = self.store.author_summary(key)
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary["name"], "某画师")
+        self.assertEqual(summary["identities"][0]["kind"], "name")
 
     def test_pending_records_and_status(self) -> None:
         self.store.upsert_scan("p1", self.payload, _parsed("12345678_p0.png"))
@@ -353,6 +449,93 @@ class ProvenanceStoreTests(unittest.TestCase):
         self.assertEqual(self.store.stale_points({"p1": "c" * 64}), ["p1"])
         self.assertEqual(self.store.get("p1")["status"], "stale")
         self.assertEqual(self.store.stale_points({"p1": "a" * 64}), [])
+
+    def test_social_links_are_normalized_and_conflicts_surface(self) -> None:
+        first = self.store.ensure_author("pixiv", "1", name="Alice")
+        second = self.store.ensure_author("pixiv", "2", name="Bob")
+        self.store.add_link(first, "HTTPS://Example.COM/Artist/", label="主页")
+        summary = self.store.author_summary(first)
+        assert summary is not None
+        self.assertEqual(summary["links"][0]["identity"], "https://example.com/Artist")
+        self.assertEqual(summary["links"][0]["display"], "主页")
+        with self.assertRaises(ValueError):
+            self.store.add_link(second, "https://example.com/Artist")
+        with self.assertRaises(ValueError):
+            self.store.add_link(first, "ftp://example.com/a")
+
+    def test_unassigned_author_is_a_pseudo_author(self) -> None:
+        author = self.store.ensure_author("pixiv", "1", name="Alice")
+        self.store.upsert_scan("p1", self.payload, _parsed("12345678_p0.png"))
+        self.store.upsert_scan(
+            "p2",
+            {**self.payload, "content_hash": "b" * 64},
+            _parsed("1761931720818122000_1.jpg"),
+        )
+        self.store.set_fetch_result(
+            "p2",
+            {
+                "platform": "twitter",
+                "source_id": "1761931720818122000",
+                "page": 1,
+                "url": "https://x.com/i/status/1761931720818122000",
+                "status": "ok",
+                "tags": [],
+            },
+            author_key=author,
+        )
+        self.assertEqual(self.store.point_ids_for_author("none"), ["p1"])
+        self.assertEqual(
+            self.store.author_counts_for_points(["p1", "p2"]),
+            {"none": 1, author: 1},
+        )
+        summary = self.store.author_summary("none")
+        assert summary is not None
+        self.assertEqual(summary["name"], "无画师")
+        self.assertEqual(summary["image_count"], 1)
+
+    def test_artist_stats_orders_and_filters_scopes(self) -> None:
+        alice = self.store.ensure_author("pixiv", "1", name="Alice")
+        bob = self.store.ensure_author("pixiv", "2", name="Bob")
+        for point_id, mtime, author in [
+            ("p1", 1_000, alice),
+            ("p2", 4_000, alice),
+            ("p3", 3_000, bob),
+        ]:
+            payload = {
+                **self.payload,
+                "content_hash": f"{point_id}" * 20,
+                "mtime_ns": mtime,
+            }
+            self.store.upsert_scan(point_id, payload, _parsed(f"1234567{point_id[-1]}_p0.png"))
+            self.store.set_fetch_result(
+                point_id,
+                {
+                    "platform": "pixiv",
+                    "source_id": f"1234567{point_id[-1]}",
+                    "page": 0,
+                    "url": f"https://www.pixiv.net/artworks/1234567{point_id[-1]}",
+                    "status": "ok",
+                    "tags": [],
+                },
+                author_key=author,
+            )
+        self.store.upsert_scan(
+            "p4",
+            {**self.payload, "content_hash": "d" * 64, "mtime_ns": 5_000},
+            _parsed("99999999_p0.png"),
+        )
+        latest = self.store.artist_stats(
+            None, sort="latest_desc", include_unassigned=True, limit=10
+        )
+        self.assertEqual([item["key"] for item in latest["authors"]], ["none", alice, bob])
+        by_count = self.store.artist_stats(
+            None, sort="count_desc", include_unassigned=False, limit=10
+        )
+        self.assertEqual([item["key"] for item in by_count["authors"]], [alice, bob])
+        searched = self.store.artist_stats(None, query="无画师", include_unassigned=True, limit=10)
+        self.assertEqual([item["key"] for item in searched["authors"]], ["none"])
+        scoped = self.store.artist_stats(["p1", "p3"], sort="name_asc", limit=10)
+        self.assertEqual([item["key"] for item in scoped["authors"]], [alice, bob])
 
     def test_stats_reports_platforms_and_authors(self) -> None:
         self.store.upsert_scan("p1", self.payload, _parsed("12345678_p0.png"))

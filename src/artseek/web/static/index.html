@@ -514,14 +514,23 @@
       position: relative; display: flex; align-items: center; gap: 8px;
       min-height: 32px; margin: 18px 2px 8px;
     }
-    .floating-controls { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-    @media (min-width: 901px) {
-      .floating-controls {
-        position: fixed; top: 12px; right: 14px; z-index: 48;
-        padding: 4px; border: 1px solid rgba(255,255,255,.92); border-radius: 14px;
-        background: rgba(255,255,255,.84); box-shadow: 0 7px 22px rgba(58,47,64,.1);
-        backdrop-filter: blur(14px);
-      }
+    body.mobile-search-open .results-head {
+      position: sticky; top: var(--search-panel-bottom, 76px); z-index: 25;
+      padding: 5px 6px; border-radius: 12px;
+      background: rgba(251,250,252,.94); backdrop-filter: blur(12px);
+      box-shadow: 0 4px 14px rgba(58,47,64,.06);
+    }
+    .view-controls-slot { display: flex; align-items: center; flex: 0 0 auto; min-height: 32px; }
+    .floating-controls { display: flex; align-items: center; gap: 6px; }
+    .floating-controls.is-floating {
+      position: fixed; top: 12px; right: 14px; z-index: 48;
+      padding: 4px; border: 1px solid rgba(255,255,255,.92); border-radius: 14px;
+      background: rgba(255,255,255,.84); box-shadow: 0 7px 22px rgba(58,47,64,.1);
+      backdrop-filter: blur(14px);
+    }
+    .search-panel-toggle svg {
+      width: 17px; height: 17px; fill: none; stroke: currentColor;
+      stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.9;
     }
     .query-info { flex: 1 1 auto; min-width: 0; min-height: 24px; color: var(--muted); font-size: 13px; }
     .collection-sort { position: relative; flex: 0 0 auto; display: flex; gap: 4px; }
@@ -690,18 +699,45 @@
     .gallery.view-list .card-order-handle { top: 4px; left: 4px; width: 22px; height: 22px; }
     .gallery.view-list .card-order-handle svg { width: 12px; height: 12px; }
     .list-body { min-width: 0; }
-    .list-name {
+    .list-title {
       overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-      font-size: 13px; font-weight: 650;
+      color: var(--ink); font-size: 13px; font-weight: 650;
     }
-    .list-meta {
-      margin-top: 3px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    .list-title-link { color: inherit; text-decoration: none; }
+    .list-title-link:hover { text-decoration: underline; }
+    .list-sub {
+      display: flex; align-items: center; gap: 5px; min-width: 0;
+      margin-top: 3px; overflow: hidden; white-space: nowrap;
       color: var(--muted); font-size: 11px;
     }
-    .list-hits {
-      margin-top: 3px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-      color: #965a71; font-size: 11px;
+    .list-author-wrap {
+      display: inline-flex; align-items: center; gap: 4px;
+      flex: 0 1 auto; min-width: 0; max-width: 46%;
     }
+    .list-author {
+      flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+      color: #965a71; font-weight: 650; text-decoration: none;
+    }
+    .list-author[href]:hover { text-decoration: underline; }
+    .list-author.is-empty { color: var(--muted); font-weight: 400; }
+    .list-author-links { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; }
+    .list-author-links .platform-icon { width: 15px; height: 15px; }
+    .list-author-links .platform-icon svg { width: 9px; height: 9px; }
+    .list-author-links .platform-icon.pixiv svg { width: 10px; height: 10px; }
+    .list-sep { flex: 0 0 auto; color: #b7adb9; }
+    .list-tags { display: flex; gap: 6px; min-width: 0; overflow: hidden; }
+    .list-tag {
+      max-width: 150px; overflow: hidden; text-overflow: ellipsis;
+      color: #965a71; text-decoration: none;
+    }
+    .list-tag:hover { text-decoration: underline; }
+    .list-meta {
+      display: flex; align-items: center; gap: 5px; min-width: 0;
+      margin-top: 3px; overflow: hidden; white-space: nowrap;
+      color: var(--muted); font-size: 11px;
+    }
+    .list-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .list-size, .list-score { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
     .card-list-actions {
       display: flex; align-items: center; gap: 6px;
       opacity: 0; pointer-events: none; transition: opacity .15s ease;
@@ -722,6 +758,150 @@
     }
     .gallery.view-list .card-favorite:hover,
     .gallery.view-list .card-remove:hover { transform: none; color: #8a5268; }
+    .artist-mode-bar {
+      display: flex; align-items: center; gap: 8px;
+      flex: 1 1 auto; min-width: 0;
+    }
+    .artist-mode-bar[hidden] { display: none; }
+    .artist-sort .collection-sort-menu { left: 0; right: auto; }
+    .artist-search {
+      flex: 0 1 240px; min-width: 0; margin-left: auto;
+    }
+    .artist-search input {
+      width: 100%; min-height: 32px; padding: 5px 10px; border-radius: 10px;
+      font-size: 12px; line-height: 1.2;
+    }
+    .artist-dropdown-toggle {
+      display: flex; align-items: center; gap: 7px; margin-top: 2px; padding: 8px;
+      border-top: 1px solid var(--line); color: var(--muted); font-size: 12px;
+    }
+    .artist-dropdown-toggle input { width: 14px; height: 14px; accent-color: #c97a98; }
+    .gallery.view-artists { display: block; padding-bottom: 48px; }
+    .artist-list { display: grid; gap: 14px; }
+    .artist-row {
+      min-width: 0; padding: 12px 12px 10px; border: 1px solid #eee9ef;
+      border-radius: 18px; background: #fff;
+      box-shadow: 0 7px 22px rgba(58, 47, 64, .055);
+    }
+    .artist-head {
+      display: flex; align-items: center; gap: 8px; min-width: 0;
+      padding: 0 2px 9px;
+    }
+    .artist-name {
+      min-width: 0; max-width: 60%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      color: var(--ink); font-size: 14px; font-weight: 700; text-decoration: none;
+    }
+    .artist-name:hover { color: #8a5268; text-decoration: underline; }
+    .artist-sub {
+      flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      color: var(--muted); font-size: 11px;
+    }
+    .artist-socials {
+      display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto;
+    }
+    .artist-socials .platform-icon { width: 18px; height: 18px; }
+    .artist-socials .platform-icon svg { width: 11px; height: 11px; }
+    .artist-socials .platform-icon.pixiv svg { width: 12px; height: 12px; }
+    .artist-settings {
+      flex: 0 0 auto; display: inline-grid; place-items: center;
+      width: 30px; height: 30px; min-height: 0; padding: 0; border-radius: 9px;
+      background: #f6f1f5; color: #665866; margin-left: auto;
+    }
+    .artist-settings svg {
+      width: 16px; height: 16px; fill: none; stroke: currentColor;
+      stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8;
+    }
+    .artist-strip {
+      display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden;
+      padding-bottom: 4px; scroll-snap-type: x proximity;
+      overscroll-behavior-x: contain; scrollbar-width: thin;
+    }
+    .artist-thumb {
+      position: relative; flex: 0 0 auto; width: 112px; height: 112px; min-height: 0; padding: 0;
+      overflow: hidden; border-radius: 12px; background: #f1edf2;
+      scroll-snap-align: start; cursor: zoom-in;
+    }
+    .artist-thumb img {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+      transition: transform .18s ease;
+    }
+    .artist-thumb:hover img { transform: scale(1.04); }
+    .artist-thumb:focus-visible { outline: 2px solid #ddb2c2; outline-offset: 2px; }
+    .artist-strip-sentinel { flex: 0 0 1px; align-self: stretch; }
+    .artist-strip-loading {
+      flex: 0 0 auto; display: grid; place-items: center; width: 64px;
+      color: var(--muted); font-size: 11px;
+    }
+    .artist-empty { padding: 24px 8px; color: var(--muted); font-size: 13px; text-align: center; }
+    .artist-dialog {
+      width: min(460px, calc(100vw - 24px)); max-height: min(80vh, 720px);
+      padding: 0; border: 1px solid #e2d6dd; border-radius: 18px;
+      background: #fff; color: var(--ink); box-shadow: 0 24px 60px rgba(43, 33, 50, .26);
+    }
+    .artist-dialog::backdrop { background: rgba(36, 28, 42, .42); backdrop-filter: blur(2px); }
+    .artist-dialog-body {
+      display: grid; gap: 14px; max-height: min(80vh, 720px); overflow-y: auto;
+      padding: 16px;
+    }
+    .artist-dialog-head {
+      display: flex; align-items: center; gap: 8px; padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .artist-dialog-head strong {
+      flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      font-size: 15px;
+    }
+    .artist-dialog-close {
+      width: 30px; height: 30px; min-height: 0; padding: 0; border-radius: 9px;
+      background: #f6f1f5; color: #665866; font-size: 17px; line-height: 1;
+    }
+    .artist-dialog-section { display: grid; gap: 7px; }
+    .artist-dialog-section h4 {
+      margin: 0; color: var(--muted); font-size: 11px; font-weight: 700;
+      letter-spacing: .04em; text-transform: uppercase;
+    }
+    .artist-uid-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .artist-uid {
+      padding: 4px 8px; border-radius: 999px; background: #f6f1f5;
+      color: #665866; font-size: 11px; font-variant-numeric: tabular-nums;
+    }
+    .artist-link-list { display: grid; gap: 5px; min-width: 0; }
+    .artist-link-row {
+      display: flex; align-items: center; gap: 6px; min-width: 0;
+      padding: 6px 8px; border-radius: 9px; background: #faf7f9;
+      font-size: 12px;
+    }
+    .artist-link-row a {
+      flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      color: #8a5268; text-decoration: none;
+    }
+    .artist-link-row a:hover { text-decoration: underline; }
+    .artist-link-row span { flex: 0 0 auto; color: var(--muted); font-size: 10px; }
+    .artist-form { display: grid; gap: 6px; }
+    .artist-form-row { display: flex; gap: 6px; min-width: 0; }
+    .artist-form-row select {
+      flex: 0 0 auto; width: 104px; min-width: 0; border: 1px solid var(--line);
+      border-radius: 10px; padding: 7px 8px; background: #fff; color: var(--ink); font: 12px/1.2 inherit;
+    }
+    .artist-form-row input {
+      flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 10px;
+      padding: 7px 9px; font-size: 12px;
+    }
+    .artist-form button { min-height: 32px; padding: 7px 12px; border-radius: 10px; font-size: 12px; }
+    .artist-form .danger-soft { background: #f7e8ee; color: #8a3f5b; }
+    .artist-dialog-status, .artist-dialog-note {
+      min-height: 16px; color: var(--muted); font-size: 12px; line-height: 1.4;
+    }
+    .artist-dialog-status.is-error { color: #a63d5e; }
+    .artist-dialog-status.is-ok { color: #4c7a5c; }
+    @media (max-width: 720px) {
+      .artist-mode-bar { flex-wrap: wrap; }
+      .artist-search { flex: 1 1 100%; margin-left: 0; }
+      .artist-row { padding: 10px 8px 8px; border-radius: 15px; }
+      .artist-thumb { width: 92px; height: 92px; }
+      .artist-name { max-width: 52%; font-size: 13px; }
+      .artist-strip { gap: 4px; }
+    }
     .card {
       position: relative; min-width: 0; max-width: 100%; overflow: hidden; border: 1px solid #eee9ef;
       border-radius: 16px; background: #fff; box-shadow: 0 7px 22px rgba(58, 47, 64, .055);
@@ -1208,16 +1388,6 @@
     .viewer-collection-menu-create button { min-height: 38px; padding: 8px 10px; background: #4a3d4d; color: #fff; }
     .search-panel-spacer { display: block; width: 100%; height: 0; }
     .search-panel-spacer[hidden] { display: none; }
-    .search-fab {
-      position: fixed; right: 12px; top: calc(env(safe-area-inset-top, 0px) + 10px);
-      z-index: 35; width: 44px; height: 44px; min-width: 44px; padding: 0;
-      display: grid; place-items: center; border: 1px solid #e4d9e1; border-radius: 999px;
-      background: rgba(255,255,255,.96); color: #8a5268;
-      box-shadow: 0 8px 22px rgba(69,51,76,.18);
-    }
-    .search-fab[hidden] { display: none; }
-    .search-fab svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
-    .search-fab:hover { transform: none; background: #fff; }
     .scroll-top {
       position: fixed; right: 12px; bottom: calc(18px + env(safe-area-inset-bottom, 0px));
       z-index: 34; width: 44px; height: 44px; min-width: 44px; padding: 0;
@@ -1290,7 +1460,7 @@
       .filter-toggle { width: 44px; min-width: 44px; height: 44px; }
       .tree-panel { order: -4; }
       .sidebar-toggle { display: none; }
-      .floating-controls { margin-left: auto; }
+      .view-controls-slot { margin-left: auto; }
       .results-column { order: 0; }
       .search-panel.loading { opacity: .55; pointer-events: none; }
       .fold-toggle { display: flex; }
@@ -1417,7 +1587,7 @@
       .gallery-col { gap: 3px; }
       .gallery.view-list .card { grid-template-columns: 68px minmax(0, 1fr) auto; gap: 8px; padding: 5px; }
       .gallery.view-list .image-wrap { width: 68px; height: 68px; }
-      .gallery.view-list .list-name { font-size: 12px; }
+      .gallery.view-list .list-title { font-size: 12px; }
       .card { border-radius: 12px; }
       .image-wrap { border-radius: 11px; }
       .side-tab, .collection-footer-actions button,
@@ -1542,9 +1712,6 @@
       <button class="brand" id="home-logo" type="button" title="回到主页，显示勾选目录" aria-label="回到主页，显示勾选目录">ArtSeek</button>
       <div class="subtitle">本地插画收藏 · 语义与相似图检索</div>
     </header>
-    <button id="search-fab" class="search-fab" type="button" aria-label="打开搜索" aria-controls="panel" aria-expanded="false" hidden>
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>
-    </button>
     <button id="scroll-top" class="scroll-top" type="button" aria-label="回到最上方" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 14l6-6 6 6"/></svg>
     </button>
@@ -1736,17 +1903,31 @@
       <div class="results-column">
         <div class="results-head">
           <div id="query-info" class="query-info"></div>
-          <div class="floating-controls" id="floating-controls">
-            <button class="collection-sort-toggle sidebar-toggle" id="sidebar-toggle" type="button" aria-label="收起左侧菜单" title="收起左侧菜单" aria-expanded="true" aria-controls="tree-panel">
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 5h16v14H4zM9 5v14M15 10l-2 2 2 2"/></svg>
-            </button>
-            <div id="collection-sort" class="collection-sort" hidden>
-              <button class="collection-sort-toggle" id="collection-sort-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="collection-sort-menu" aria-label="收藏夹排序" title="收藏夹排序"></button>
-              <button class="collection-sort-pin" id="collection-sort-pin" type="button" aria-label="保存为收藏夹排序" title="保存为收藏夹排序" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 4h12v17l-6-4-6 4z"/></svg></button>
-              <div id="collection-sort-menu" class="collection-sort-menu" role="dialog" aria-label="收藏夹排序" hidden></div>
+          <div id="artist-mode-bar" class="artist-mode-bar" hidden>
+            <div id="artist-sort" class="collection-sort artist-sort">
+              <button class="collection-sort-toggle" id="artist-sort-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="artist-sort-menu" aria-label="画师排序" title="画师排序"></button>
+              <div id="artist-sort-menu" class="collection-sort-menu" role="dialog" aria-label="画师排序" hidden></div>
             </div>
-            <div id="gallery-view" class="collection-sort gallery-view" hidden>
-              <button class="collection-sort-toggle" id="gallery-view-toggle" type="button" aria-label="查看形式" title="查看形式"></button>
+            <div class="artist-search">
+              <input id="artist-search" type="text" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" inputmode="search" enterkeyhint="search" placeholder="搜索画师名、UID 或社交账号" aria-label="搜索画师">
+            </div>
+          </div>
+          <div class="view-controls-slot" id="view-controls-slot">
+            <div class="floating-controls" id="floating-controls">
+              <button class="collection-sort-toggle search-panel-toggle" id="search-panel-toggle" type="button" aria-label="展开搜索面板" title="展开搜索面板" aria-controls="panel" aria-expanded="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>
+              </button>
+              <button class="collection-sort-toggle sidebar-toggle" id="sidebar-toggle" type="button" aria-label="收起左侧菜单" title="收起左侧菜单" aria-expanded="true" aria-controls="tree-panel">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 5h16v14H4zM9 5v14M15 10l-2 2 2 2"/></svg>
+              </button>
+              <div id="collection-sort" class="collection-sort" hidden>
+                <button class="collection-sort-toggle" id="collection-sort-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="collection-sort-menu" aria-label="收藏夹排序" title="收藏夹排序"></button>
+                <button class="collection-sort-pin" id="collection-sort-pin" type="button" aria-label="保存为收藏夹排序" title="保存为收藏夹排序" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 4h12v17l-6-4-6 4z"/></svg></button>
+                <div id="collection-sort-menu" class="collection-sort-menu" role="dialog" aria-label="收藏夹排序" hidden></div>
+              </div>
+              <div id="gallery-view" class="collection-sort gallery-view" hidden>
+                <button class="collection-sort-toggle" id="gallery-view-toggle" type="button" aria-label="查看形式" title="查看形式"></button>
+              </div>
             </div>
           </div>
         </div>
@@ -1832,6 +2013,13 @@
     </div>
     <div class="provenance-dialog-body" id="provenance-dialog-body"></div>
   </dialog>
+  <dialog id="artist-dialog" class="artist-dialog" aria-label="画师设置">
+    <div class="artist-dialog-head">
+      <strong id="artist-dialog-title">画师设置</strong>
+      <button class="artist-dialog-close" id="artist-dialog-close" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="artist-dialog-body" id="artist-dialog-body"><div class="artist-dialog-status" id="artist-dialog-status" aria-live="polite"></div></div>
+  </dialog>
   <div id="drop-mask" class="drop-mask" aria-hidden="true">
     <div class="drop-card">松开以添加参考图</div>
   </div>
@@ -1880,6 +2068,7 @@
       { value: 'square', label: '正方形瀑布流' },
       { value: 'compact', label: '缩小的正方形瀑布流' },
       { value: 'list', label: '列表' },
+      { value: 'artists', label: '画师模式' },
     ];
     const GALLERY_VIEW_LABELS = Object.fromEntries(
       GALLERY_VIEWS.map((option) => [option.value, option.label])
@@ -1900,6 +2089,27 @@
         return false;
       }
     }
+    const ARTIST_SORT_STORAGE_KEY = 'artseek.artistSort';
+    const ARTIST_SORT_OPTIONS = [
+      { value: 'name_asc', label: '作者名 · A→Z' },
+      { value: 'name_desc', label: '作者名 · Z→A' },
+      { value: 'latest_desc', label: '最新作品 · 新→旧' },
+      { value: 'latest_asc', label: '最新作品 · 旧→新' },
+      { value: 'count_desc', label: '作品数 · 多→少' },
+      { value: 'count_asc', label: '作品数 · 少→多' },
+    ];
+    const ARTIST_SORT_LABELS = Object.fromEntries(
+      ARTIST_SORT_OPTIONS.map((option) => [option.value, option.label])
+    );
+    function loadArtistSort() {
+      try {
+        const value = localStorage.getItem(ARTIST_SORT_STORAGE_KEY);
+        if (ARTIST_SORT_LABELS[value]) return value;
+      } catch {
+        // Keep the default when storage is unavailable.
+      }
+      return 'latest_desc';
+    }
     function galleryViewIcon(value) {
       const mode = String(value || 'natural');
       const paths = {
@@ -1907,6 +2117,7 @@
         square: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
         compact: 'M4 4h4v4H4zM10 4h4v4h-4zM16 4h4v4h-4zM4 10h4v4H4zM10 10h4v4h-4zM16 10h4v4h-4zM4 16h4v4H4zM10 16h4v4h-4zM16 16h4v4h-4z',
         list: 'M4 5h4v4H4zM11 7h9M4 15h4v4H4zM11 17h9',
+        artists: 'M12 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM5 20c0-3 3.1-5 7-5s7 2 7 5M4 7h2M4 11h2M18 7h2M18 11h2',
       };
       return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="${paths[mode] || paths.natural}"/></svg>`;
     }
@@ -1992,7 +2203,7 @@
       cardActionRevealCard: null, cardActionRevealTimer: 0, viewerUiHidden: false,
       authorSort: 'mtime', authorSeed: null, tagSort: 'mtime', tagSeed: null,
       colHeights: [],
-      mode: 'idle', browseKey: '', browseName: '', browseTotal: 0,
+      mode: 'idle', scopeScrollY: 0, browseKey: '', browseName: '', browseTotal: 0,
       browseSort: loadFolderSort(), browseSeed: null, scopeTotal: 0,
       collectionRandomSeed: null,
       randomSeed: null, randomTotal: 0,
@@ -2004,6 +2215,15 @@
       collectionViewSort: '', collectionSortTemp: false, collectionSortBusy: false,
       galleryView: loadGalleryView(),
       sidebarCollapsed: loadSidebarCollapsed(),
+      artistView: {
+        authors: [], offset: 0, total: 0, hasMore: false, loading: false, seq: 0,
+        sort: loadArtistSort(), includeUnassigned: false, query: '',
+        scope: null, imageSort: 'mtime_desc', imageSeed: null,
+      },
+      artistRows: new Map(),
+      artistObservers: [],
+      artistSettingsKey: '',
+      viewerPlaylist: null, viewerRowKey: null,
       cardOrderDrag: null,
       cardActionGesture: null, cardActionClickUntil: 0,
       galleryDragItem: null,
@@ -2640,6 +2860,12 @@
         : '';
       const members = author && Array.isArray(author.members) ? author.members : [];
       const platformIcons = platformIconLinks(members);
+      const pixivIds = author && Array.isArray(author.pixiv_ids) ? author.pixiv_ids : [];
+      const xHandles = author && Array.isArray(author.x_handles) ? author.x_handles : [];
+      const associations = [
+        ...pixivIds.map((id) => `Pixiv ${id}`),
+        ...xHandles.map((handle) => `@${handle}`),
+      ].join(' · ');
       const postButton = url
         ? '<button type="button" data-prov-action="open-post">打开原帖</button>'
         : '';
@@ -2652,6 +2878,7 @@
           ${description ? `<div class="provenance-description">${escapeHtml(description)}</div>` : ''}
           <div class="provenance-row"><b>${platform}</b><span>${escapeHtml(record.source_id || '')}</span><span>${escapeHtml(data.page_label || '')}</span></div>
           <div class="provenance-row"><span>作者</span>${authorButton}${platformIcons ? `<span class="platform-icons">${platformIcons}</span>` : ''}</div>
+          ${associations ? `<div class="provenance-row"><span>关联</span><span title="${escapeHtml(associations)}">${escapeHtml(associations)}</span></div>` : ''}
           <div class="provenance-row"><span>发布</span><span>${escapeHtml(record.posted_at || '')}</span></div>
           <div class="provenance-row"><span>状态</span><b>${escapeHtml(status)}</b></div>
           <div class="provenance-row"><span>文件</span><span class="provenance-file" title="${escapeHtml(data.path || '')}">${escapeHtml(data.path || '')}</span></div>
@@ -2673,7 +2900,10 @@
           <input id="prov-title" placeholder="标题" value="${escapeHtml(record.title || '')}">
           <div class="provenance-row">
             <input id="prov-author-name" placeholder="作者名" value="${escapeHtml(author ? (author.name || '') : '')}" style="flex:1">
-            <input id="prov-author-handle" placeholder="@handle" value="${escapeHtml(author ? (author.handle || '') : '')}" style="flex:1">
+          </div>
+          <div class="provenance-row">
+            <input id="prov-pixiv-id" placeholder="Pixiv ID（可留空）" value="${escapeHtml(pixivIds[0] || '')}" style="flex:1">
+            <input id="prov-x-handle" placeholder="X handle（可留空）" value="${escapeHtml(xHandles[0] || '')}" style="flex:1">
           </div>
           <input id="prov-tags" placeholder="手动标签，用逗号分隔" value="${escapeHtml((record.manual_tags || []).join(', '))}">
           <div class="provenance-actions">
@@ -2782,7 +3012,8 @@
       const body = {
         title: $('prov-title').value,
         author_name: $('prov-author-name').value,
-        author_handle: $('prov-author-handle').value,
+        pixiv_id: $('prov-pixiv-id').value,
+        x_handle: $('prov-x-handle').value,
         manual_tags: $('prov-tags').value.split(',').map((item) => item.trim()).filter(Boolean),
       };
       const url = $('prov-url').value.trim();
@@ -3909,7 +4140,7 @@
       }
     });
     $('home-logo').addEventListener('click', () => goHome());
-    $('search-fab').addEventListener('click', () => setMobileSearchOpen(true));
+    $('search-panel-toggle').addEventListener('click', () => setMobileSearchOpen(!state.mobileSearchOpen));
     $('scroll-top').addEventListener('click', scrollToTop);
     document.addEventListener('click', closeMobileSearchIfOutside, true);
     window.addEventListener('scroll', () => {
@@ -3922,7 +4153,8 @@
         setMobileSearchOpen(false, { preserveScroll: false });
       }
       hideCardActionReveal();
-      syncSearchFabVisibility();
+      if (state.mode === 'scope') state.scopeScrollY = window.scrollY;
+      syncFloatingControls();
       syncScrollTopVisibility();
     }, { passive: true });
     document.addEventListener('keydown', (event) => {
@@ -4008,6 +4240,8 @@
       clearViewerSlots();
       state.currentRefKey = null;
       state.viewerSource = 'gallery';
+      state.viewerPlaylist = null;
+      state.viewerRowKey = null;
       syncRefSelection();
       restoreViewerScroll();
     });
@@ -4138,7 +4372,36 @@
       const state = filterSuggestState[fieldId] || { query: '', items: [], hasMore: false };
       const menu = $(config.menu);
       menu.replaceChildren();
-      if (!state.items.length) {
+      const unassignedCount = Number(state.unassignedCount || 0);
+      const unassignedQuery = /无画师|未标注|none|unassigned/i.test(state.query || '');
+      const showUnassigned = config.kind === 'author' && (unassignedCount > 0 || unassignedQuery);
+      if (showUnassigned) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'filter-suggestion';
+        button.title = ['无画师', `${unassignedCount} 张`].join('\n');
+        const name = document.createElement('span');
+        name.className = 'filter-suggestion-name';
+        name.textContent = '无画师';
+        const alias = document.createElement('span');
+        alias.className = 'filter-suggestion-alias';
+        alias.textContent = '未标注作者 / none';
+        const count = document.createElement('small');
+        count.textContent = `${unassignedCount} 张`;
+        button.append(name, alias, count);
+        button.addEventListener('click', () => {
+          addFilterChip('author', 'none', unassignedCount, '无画师');
+          const input = $(fieldId);
+          input.value = '';
+          filterSuggestBlurGuard.delete(fieldId);
+          updateSuggestToggle(fieldId);
+          updateFilterBadge();
+          closeFilterSuggestions(fieldId);
+          scheduleFilterApply();
+        });
+        menu.append(button);
+      }
+      if (!state.items.length && !showUnassigned) {
         const empty = document.createElement('div');
         empty.className = 'filter-suggestion';
         empty.textContent = state.loading ? '正在读取…' : '没有匹配项';
@@ -4187,7 +4450,7 @@
               config.chipKind,
               value,
               config.kind === 'author' ? item.image_count : item.count,
-              config.kind === 'author' ? '' : (item.display_zh || ''),
+              config.kind === 'author' ? label : (item.display_zh || ''),
             );
             const input = $(fieldId);
             input.value = '';
@@ -4236,6 +4499,7 @@
         state.offset = 0;
         state.items = [];
         state.hasMore = false;
+        state.unassignedCount = 0;
       }
       state.loading = true;
       filterSuggestState[fieldId] = state;
@@ -4275,6 +4539,7 @@
       state.items = append ? state.items.concat(items) : items;
       state.offset = offset + items.length;
       state.hasMore = Boolean(data.has_more);
+      if (config.kind === 'author') state.unassignedCount = Number(data.unassigned_count || 0);
       renderFilterSuggestions(fieldId);
     }
     function scheduleFilterSuggestions(fieldId, query) {
@@ -4366,7 +4631,7 @@
       updateFilterBadge();
     }
     async function enrichAuthorChip(chip, key, label, links, count) {
-      if (!key.includes(':')) return;
+      if (!key) return;
       try {
         const data = await parseResponse(await fetch(
           `/api/authors/${encodeURIComponent(key)}`,
@@ -4400,7 +4665,7 @@
       chip.dataset.value = text;
       const label = document.createElement('span');
       label.textContent = kind === 'author'
-        ? text
+        ? (displayText || text)
         : (displayText || `#${text}`);
       label.title = text;
       const links = kind === 'author' ? document.createElement('span') : null;
@@ -4463,7 +4728,11 @@
       if (kind === 'text_tags' && looksLikeTagExpression(raw)) {
         setTagExpression(raw);
       } else {
-        for (const value of splitFilterTags(raw)) addFilterChip(kind, value);
+        for (const value of splitFilterTags(raw)) {
+          const unassigned = kind === 'author'
+            && /^(none|unassigned|无画师|未标注|作者未标注|无作者)$/i.test(value);
+          addFilterChip(kind, unassigned ? 'none' : value, null, unassigned ? '无画师' : '');
+        }
       }
       input.value = '';
       updateSuggestToggle(config.input);
@@ -4576,9 +4845,30 @@
     function compactInfo() {
       return window.matchMedia('(max-width: 720px)').matches;
     }
-    function syncSearchFabVisibility() {
-      const visible = !state.mobileSearchOpen && window.scrollY > 80;
-      $('search-fab').hidden = !visible;
+    function syncFloatingControls() {
+      const slot = $('view-controls-slot');
+      const controls = $('floating-controls');
+      if (!slot || !controls) return;
+      const rect = slot.getBoundingClientRect();
+      const floating = rect.bottom < 0;
+      controls.classList.toggle('is-floating', floating);
+    }
+    function settleGalleryScroll() {
+      requestAnimationFrame(() => {
+        syncFloatingControls();
+        if (window.scrollY > 0 && document.documentElement.scrollHeight <= window.innerHeight + 1) {
+          window.scrollTo({ top: 0, behavior: 'auto' });
+        }
+      });
+    }
+    function syncSearchPanelOffset() {
+      const root = document.documentElement;
+      if (!state.mobileSearchOpen) {
+        root.style.removeProperty('--search-panel-bottom');
+        return;
+      }
+      const bottom = $('panel').getBoundingClientRect().bottom;
+      root.style.setProperty('--search-panel-bottom', `${Math.max(0, Math.ceil(bottom + 6))}px`);
     }
     function syncScrollTopVisibility() {
       const threshold = Math.max(480, window.innerHeight * 0.75);
@@ -4588,10 +4878,14 @@
       const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
     }
+    function restorePageScroll(top) {
+      if (!Number.isFinite(Number(top))) return;
+      requestAnimationFrame(() => window.scrollTo({ top: Math.max(0, Number(top)), behavior: 'auto' }));
+    }
     function setMobileSearchOpen(open, { preserveScroll = true } = {}) {
       const next = Boolean(open);
       if (next === state.mobileSearchOpen) {
-        syncSearchFabVisibility();
+        syncSearchPanelOffset();
         return;
       }
       const scrollY = window.scrollY;
@@ -4605,17 +4899,23 @@
       }
       state.mobileSearchOpen = next;
       document.body.classList.toggle('mobile-search-open', next);
-      $('search-fab').setAttribute('aria-expanded', String(next));
+      const toggle = $('search-panel-toggle');
+      const label = next ? '收起搜索面板' : '展开搜索面板';
+      toggle.setAttribute('aria-expanded', String(next));
+      toggle.setAttribute('aria-label', label);
+      toggle.title = label;
       if (next) {
         state.mobileSearchIgnoreScrollUntil = performance.now() + 400;
-        $('search-fab').hidden = true;
         requestAnimationFrame(() => {
+          syncSearchPanelOffset();
+          syncFloatingControls();
           try { $('query').focus({ preventScroll: true }); }
           catch (_) { $('query').focus(); }
         });
       } else {
         spacer.hidden = true;
-        syncSearchFabVisibility();
+        syncSearchPanelOffset();
+        requestAnimationFrame(syncFloatingControls);
       }
       if (preserveScroll) {
         requestAnimationFrame(() => {
@@ -4627,7 +4927,7 @@
       if (!state.mobileSearchOpen) return;
       const target = event.target instanceof Element ? event.target : null;
       if (!target) return;
-      if (target.closest('#panel, #search-fab')) return;
+      if (target.closest('#panel, #search-panel-toggle')) return;
       if (state.galleryDragItem || document.body.classList.contains('file-drag')) return;
       setMobileSearchOpen(false);
     }
@@ -4637,6 +4937,7 @@
       $('panel').closest('.search-column')?.classList.toggle('is-filters-open', open);
       $('filter-toggle').setAttribute('aria-expanded', String(open));
       if (!open) closeAllFilterSuggestions();
+      requestAnimationFrame(syncSearchPanelOffset);
     }
     function formatWeight(value) {
       return Number(value).toFixed(Number.isInteger(Number(value)) ? 0 : 1);
@@ -5087,6 +5388,7 @@
       return FOLDER_SORT_LABELS[state.tagSort] ? state.tagSort : 'mtime';
     }
     function sortContext() {
+      if (artistViewActive()) return null;
       if (relevanceSearchActive()) {
         return { kind: 'relevance', title: '搜索排序', options: SEARCH_RELEVANCE_OPTIONS, sort: 'search', temporary: false };
       }
@@ -5294,7 +5596,10 @@
       const bar = $('gallery-view');
       const active = state.mode !== 'idle';
       bar.hidden = !active;
-      if (!active) return;
+      if (!active) {
+        renderArtistBar();
+        return;
+      }
       const view = state.galleryView;
       const index = GALLERY_VIEWS.findIndex((option) => option.value === view);
       const nextLabel = GALLERY_VIEWS[(index + 1) % GALLERY_VIEWS.length].label;
@@ -5303,6 +5608,7 @@
       const title = `查看形式：${GALLERY_VIEW_LABELS[view] || view}（点击切换到${nextLabel}）`;
       toggle.setAttribute('aria-label', title);
       toggle.title = title;
+      renderArtistBar();
     }
     function captureGalleryCenterAnchor() {
       const cards = [...$('gallery').querySelectorAll('.card[data-point-id]')];
@@ -5335,6 +5641,7 @@
       if (!GALLERY_VIEW_LABELS[value]) return;
       if (state.galleryView === value) return;
       const anchor = captureGalleryCenterAnchor();
+      const wasArtists = state.galleryView === 'artists';
       state.galleryView = value;
       try {
         localStorage.setItem(GALLERY_VIEW_STORAGE_KEY, value);
@@ -5342,6 +5649,14 @@
         // Keep the in-memory choice when storage is unavailable.
       }
       renderGalleryView();
+      if (value === 'artists') {
+        void fetchArtistGallery({ reset: true });
+        return;
+      }
+      if (wasArtists) {
+        disconnectArtistObservers();
+        $('gallery').classList.remove('view-artists');
+      }
       renderGallery(state.results, { append: false });
       restoreGalleryCenterAnchor(anchor);
       requestAnimationFrame(() => restoreGalleryCenterAnchor(anchor));
@@ -5941,6 +6256,37 @@
     }
     $('sidebar-toggle').addEventListener('click', () => applySidebarCollapsed(!state.sidebarCollapsed));
     $('gallery-view-toggle').addEventListener('click', () => cycleGalleryView());
+    $('artist-sort-toggle').addEventListener('click', () => toggleArtistSortMenu());
+    $('artist-sort-menu').addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeArtistSortMenu({ restoreFocus: true });
+      }
+    });
+    let artistSearchTimer = 0;
+    function scheduleArtistSearch(value) {
+      state.artistView.query = String(value || '').trim();
+      clearTimeout(artistSearchTimer);
+      artistSearchTimer = setTimeout(() => {
+        artistSearchTimer = 0;
+        void fetchArtistGallery({ reset: true });
+      }, 180);
+    }
+    $('artist-search').addEventListener('input', (event) => {
+      scheduleArtistSearch(event.currentTarget.value);
+    });
+    $('artist-search').addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      clearTimeout(artistSearchTimer);
+      artistSearchTimer = 0;
+      state.artistView.query = $('artist-search').value.trim();
+      void fetchArtistGallery({ reset: true });
+    });
+    $('artist-dialog-close').addEventListener('click', () => $('artist-dialog').close());
+    $('artist-dialog').addEventListener('click', (event) => {
+      if (event.target === $('artist-dialog')) $('artist-dialog').close();
+    });
     $('collection-sort-toggle').addEventListener('click', () => toggleCollectionSortMenu());
     $('collection-sort-pin').addEventListener('click', () => {
       applyCollectionSort(effectiveCollectionSort(), { temporary: false });
@@ -5975,6 +6321,10 @@
       const sortMenu = $('collection-sort-menu');
       if (!sortMenu.hidden && !$('collection-sort').contains(event.target)) {
         closeCollectionSortMenu({ restoreFocus: false });
+      }
+      const artistMenu = $('artist-sort-menu');
+      if (artistMenu && !artistMenu.hidden && !$('artist-sort').contains(event.target)) {
+        closeArtistSortMenu({ restoreFocus: false });
       }
     });
     function renderCollectionList() {
@@ -6090,6 +6440,7 @@
     }
     async function selectCollection(collection, { skipRoute = false } = {}) {
       rememberTemporaryReturn();
+      window.scrollTo({ top: 0, behavior: 'auto' });
       state.mode = 'collection';
       state.collectionId = collection.id;
       state.collectionName = collection.name;
@@ -6554,6 +6905,7 @@
     }
 
     async function runSearch() {
+      window.scrollTo({ top: 0, behavior: 'auto' });
       commitAllFilterInputs();
       clearTimeout(state.filterApplyTimer);
       state.filterApplyTimer = 0;
@@ -6561,6 +6913,7 @@
     }
 
     function loadMoreResults() {
+      if (state.galleryView === 'artists') return fetchArtistGallery({ reset: false });
       if (state.mode === 'browse') return fetchFolderImages({ reset: false });
       if (state.mode === 'random') return fetchRandomBrowse({ reset: false });
       if (state.mode === 'collection') return fetchCollectionImages({ reset: false });
@@ -6569,6 +6922,587 @@
       if (state.mode === 'scope') return fetchScopeImages({ reset: false });
       if (state.mode === 'search') return fetchResults({ reset: false });
       return Promise.resolve();
+    }
+
+    function artistViewActive() {
+      return state.galleryView === 'artists' && state.mode !== 'idle';
+    }
+    function normalizeArtistImageSort(value) {
+      const text = String(value || '');
+      if (text === 'mtime') return 'mtime_desc';
+      if (text === 'name') return 'name_asc';
+      if (['mtime_desc', 'mtime_asc', 'name_asc', 'name_desc', 'random'].includes(text)) {
+        return text;
+      }
+      return 'mtime_desc';
+    }
+    function artistImageSort() {
+      if (state.mode === 'search') {
+        return normalizeArtistImageSort(effectiveSearchSort());
+      }
+      if (state.mode === 'author') return normalizeArtistImageSort(effectiveAuthorSort());
+      if (state.mode === 'tag') return normalizeArtistImageSort(effectiveTagSort());
+      if (state.mode === 'collection') {
+        return effectiveCollectionSort();
+      }
+      if (state.mode === 'random') return 'random';
+      if (state.mode === 'browse' || state.mode === 'scope') {
+        return normalizeArtistImageSort(effectiveBrowseSort());
+      }
+      return 'mtime_desc';
+    }
+    function artistScopePayload() {
+      const scope = {
+        folder_keys: null,
+        mtime_after: null,
+        mtime_before: null,
+        author_keys: [],
+        title_query: '',
+        text_tags: [],
+        tag_expression: '',
+        collection_id: '',
+        snapshot_id: '',
+      };
+      const range = currentTimeRange();
+      if (state.mode === 'search') {
+        const frozen = state.searchRequest;
+        if (frozen) {
+          scope.folder_keys = Array.isArray(frozen.folder_keys) ? [...frozen.folder_keys] : [...treeState.selected];
+          scope.mtime_after = frozen.mtime_after || null;
+          scope.mtime_before = frozen.mtime_before || null;
+          scope.author_keys = [...(frozen.author_keys || [])];
+          scope.title_query = frozen.title_query || '';
+          scope.text_tags = [...(frozen.text_tags || [])];
+          scope.tag_expression = frozen.tag_expression || '';
+        } else {
+          const advanced = readAdvancedFilters();
+          scope.folder_keys = [...treeState.selected];
+          scope.mtime_after = range.after || null;
+          scope.mtime_before = range.before || null;
+          scope.author_keys = [...(advanced.authors || [])];
+          scope.title_query = advanced.title_query || '';
+          scope.text_tags = [...(advanced.text_tags || [])];
+          scope.tag_expression = advanced.tag_expression || '';
+        }
+        if (state.searchSnapshotId) {
+          scope.snapshot_id = state.searchSnapshotId;
+          scope.folder_keys = null;
+          scope.mtime_after = null;
+          scope.mtime_before = null;
+          scope.author_keys = [];
+          scope.title_query = '';
+          scope.text_tags = [];
+          scope.tag_expression = '';
+        }
+      } else if (state.mode === 'author') {
+        scope.author_keys = state.authorKey ? [state.authorKey] : [];
+      } else if (state.mode === 'tag') {
+        scope.text_tags = state.tagName ? [state.tagName] : [];
+      } else if (state.mode === 'collection') {
+        scope.collection_id = state.collectionId || '';
+      } else if (state.mode === 'browse') {
+        scope.folder_keys = state.browseKey ? [state.browseKey] : [...treeState.selected];
+        scope.mtime_after = range.after || null;
+        scope.mtime_before = range.before || null;
+      } else if (state.mode === 'random' || state.mode === 'scope') {
+        scope.folder_keys = [...treeState.selected];
+        scope.mtime_after = range.after || null;
+        scope.mtime_before = range.before || null;
+      }
+      return scope;
+    }
+    function artistScopeSignature() {
+      return JSON.stringify([artistScopePayload(), artistImageSort()]);
+    }
+    function artistIncludeUnassigned() {
+      if (state.artistView.includeUnassigned) return true;
+      if (state.mode === 'author' && state.authorKey === 'none') return true;
+      return (artistScopePayload().author_keys || []).includes('none');
+    }
+    function artistSortIcon(value) {
+      const mode = String(value || 'latest_desc');
+      const arrow = mode.endsWith('_desc')
+        ? '<path d="M19 7v10m-2.4-2.4L19 17l2.4-2.4"/>'
+        : '<path d="M19 17V7m-2.4 2.4L19 7l2.4 2.4"/>';
+      return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM4 19c0-2.5 2.2-4 5-4s5 1.5 5 4"/><path d="M16 11a2.4 2.4 0 1 0 0-4.8"/>${arrow}</svg>`;
+    }
+    function renderArtistBar() {
+      const active = artistViewActive();
+      $('query-info').hidden = active;
+      $('artist-mode-bar').hidden = !active;
+      if (!active) {
+        closeArtistSortMenu();
+        return;
+      }
+      const view = state.artistView;
+      const toggle = $('artist-sort-toggle');
+      toggle.innerHTML = artistSortIcon(view.sort);
+      const label = ARTIST_SORT_LABELS[view.sort] || view.sort;
+      const title = `画师排序：${label}（点击更改）`;
+      toggle.setAttribute('aria-label', title);
+      toggle.title = title;
+      const search = $('artist-search');
+      if (search.value !== view.query) search.value = view.query;
+      if (!$('artist-sort-menu').hidden) renderArtistSortMenu();
+      renderCollectionSort();
+    }
+    function renderArtistSortMenu() {
+      const view = state.artistView;
+      const menu = $('artist-sort-menu');
+      menu.innerHTML = `<div class="collection-sort-title">画师排序</div>${ARTIST_SORT_OPTIONS.map((option) => `
+        <button class="collection-sort-option" type="button" role="menuitemradio" aria-checked="${option.value === view.sort}" data-artist-sort="${option.value}">
+          ${artistSortIcon(option.value)}
+          <span>${option.label}</span>
+          <span class="collection-sort-check" aria-hidden="true">${option.value === view.sort ? '✓' : ''}</span>
+        </button>`).join('')}
+        <label class="artist-dropdown-toggle"><input id="artist-show-unassigned" type="checkbox" ${view.includeUnassigned ? 'checked' : ''}> 显示无画师</label>`;
+      menu.querySelectorAll('[data-artist-sort]').forEach((button) => {
+        button.addEventListener('click', () => {
+          applyArtistSort(button.dataset.artistSort);
+        });
+      });
+      menu.querySelector('#artist-show-unassigned')?.addEventListener('change', (event) => {
+        state.artistView.includeUnassigned = event.currentTarget.checked;
+        closeArtistSortMenu({ restoreFocus: true });
+        void fetchArtistGallery({ reset: true });
+      });
+    }
+    function openArtistSortMenu() {
+      renderArtistSortMenu();
+      $('artist-sort-menu').hidden = false;
+      $('artist-sort-toggle').setAttribute('aria-expanded', 'true');
+      requestAnimationFrame(() => {
+        $('artist-sort-menu').querySelector('[aria-checked="true"]')?.focus();
+      });
+    }
+    function closeArtistSortMenu({ restoreFocus = false } = {}) {
+      const menu = $('artist-sort-menu');
+      if (!menu || menu.hidden) return;
+      menu.hidden = true;
+      $('artist-sort-toggle').setAttribute('aria-expanded', 'false');
+      if (restoreFocus) $('artist-sort-toggle').focus();
+    }
+    function toggleArtistSortMenu() {
+      if ($('artist-sort-menu').hidden) openArtistSortMenu();
+      else closeArtistSortMenu({ restoreFocus: true });
+    }
+    function applyArtistSort(value) {
+      if (!ARTIST_SORT_LABELS[value]) return;
+      state.artistView.sort = value;
+      try { localStorage.setItem(ARTIST_SORT_STORAGE_KEY, value); }
+      catch (_) { /* keep the in-memory choice */ }
+      closeArtistSortMenu({ restoreFocus: true });
+      renderArtistBar();
+      window.scrollTo({ top: 0, behavior: 'auto' });
+      void fetchArtistGallery({ reset: true });
+    }
+    let artistRefreshTimer = 0;
+    function queueArtistRefresh() {
+      clearTimeout(artistRefreshTimer);
+      artistRefreshTimer = setTimeout(() => {
+        artistRefreshTimer = 0;
+        if (!artistViewActive()) return;
+        const signature = artistScopeSignature();
+        if (!state.artistView.authors.length || signature !== state.artistView.signature) {
+          void fetchArtistGallery({ reset: true });
+        }
+      }, 0);
+    }
+    async function fetchArtistGallery({ reset }) {
+      if (!artistViewActive()) return;
+      const view = state.artistView;
+      if (!reset && (view.loading || !view.hasMore || !view.authors.length)) return;
+      const seq = reset ? ++view.seq : view.seq;
+      const signature = artistScopeSignature();
+      if (reset) {
+        view.loading = true;
+        view.authors = [];
+        view.offset = 0;
+        view.total = 0;
+        view.hasMore = false;
+        view.imageSort = artistImageSort();
+        view.imageSeed = view.imageSort === 'random'
+          ? (view.signature === signature && view.imageSeed != null ? view.imageSeed : newRandomSeed())
+          : null;
+        view.signature = signature;
+        disconnectArtistObservers();
+        state.artistRows.clear();
+        renderArtistGallery({ append: false });
+        $('load-more').textContent = '正在载入画师…';
+        $('load-more').hidden = false;
+      } else {
+        view.loading = true;
+        $('load-more').textContent = '正在载入更多画师…';
+        $('load-more').hidden = false;
+      }
+      try {
+        const body = {
+          ...artistScopePayload(),
+          q: view.query,
+          sort: view.sort,
+          include_unassigned: artistIncludeUnassigned(),
+          offset: reset ? 0 : view.authors.length,
+          limit: 30,
+          image_sort: view.imageSort,
+          image_limit: 20,
+          image_seed: view.imageSeed,
+        };
+        const data = await parseResponse(await fetch('/api/artists/gallery', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }));
+        if (seq !== view.seq || !artistViewActive()) return;
+        if (data.image_seed != null) view.imageSeed = Number(data.image_seed);
+        const incoming = Array.isArray(data.authors) ? data.authors : [];
+        view.authors = reset ? incoming : view.authors.concat(incoming);
+        view.offset = view.authors.length;
+        view.total = Number(data.total || 0);
+        view.hasMore = Boolean(data.has_more) && incoming.length > 0;
+        view.loading = false;
+        renderArtistGallery({ append: !reset });
+        $('load-more').hidden = !view.hasMore;
+        $('load-more').textContent = '正在载入更多画师…';
+      } catch (error) {
+        if (seq !== view.seq) return;
+        $('gallery').innerHTML = `<div class="artist-empty">画师列表载入失败：${escapeHtml(error.message)}</div>`;
+        $('load-more').hidden = true;
+        view.hasMore = false;
+        view.loading = false;
+      } finally {
+        if (seq === view.seq) view.loading = false;
+      }
+    }
+    function disconnectArtistObservers() {
+      for (const observer of state.artistObservers) observer.disconnect();
+      state.artistObservers = [];
+    }
+    function artistThumbElement(item, artistKey) {
+      const thumb = document.createElement('button');
+      thumb.type = 'button';
+      thumb.className = 'artist-thumb';
+      thumb.dataset.artistThumb = '1';
+      thumb.dataset.artistKey = artistKey;
+      thumb.dataset.pointId = item.id;
+      thumb.setAttribute('aria-label', `查看原图：${item.name || item.path || item.id}`);
+      thumb.title = item.name || item.path || '';
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.draggable = false;
+      img.alt = item.name || '';
+      img.src = `/thumb/${item.id}`;
+      thumb.append(img);
+      return thumb;
+    }
+    function artistRowElement(author) {
+      const key = String(author.key || '');
+      const name = String(author.name || author.handle || key || '未命名画师');
+      const section = document.createElement('section');
+      section.className = 'artist-row';
+      section.dataset.artistKey = key;
+      const head = document.createElement('header');
+      head.className = 'artist-head';
+      const link = document.createElement('a');
+      link.className = 'artist-name';
+      link.href = `/author/${encodeURIComponent(key)}`;
+      link.textContent = name;
+      link.title = key === 'none' ? '无画师的独立筛选页' : `打开画师「${name}」的筛选页`;
+      head.append(link);
+      if (key !== 'none' && author.handle && String(author.handle) !== name) {
+        const sub = document.createElement('span');
+        sub.className = 'artist-sub';
+        sub.textContent = `@${author.handle}`;
+        head.append(sub);
+      }
+      const socials = document.createElement('span');
+      socials.className = 'artist-socials';
+      socials.innerHTML = platformIconLinks(author.members || []);
+      if (socials.childNodes.length) head.append(socials);
+      if (key !== 'none') {
+        const settings = document.createElement('button');
+        settings.type = 'button';
+        settings.className = 'artist-settings';
+        settings.dataset.artistSettings = key;
+        settings.setAttribute('aria-label', `画师设置：${name}`);
+        settings.title = '画师设置';
+        settings.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></svg>';
+        head.append(settings);
+      }
+      section.append(head);
+      const strip = document.createElement('div');
+      strip.className = 'artist-strip';
+      strip.dataset.artistStrip = key;
+      const images = Array.isArray(author.images) ? author.images : [];
+      for (const item of images) strip.append(artistThumbElement(item, key));
+      const sentinel = document.createElement('span');
+      sentinel.className = 'artist-strip-sentinel';
+      sentinel.setAttribute('aria-hidden', 'true');
+      strip.append(sentinel);
+      section.append(strip);
+      const row = {
+        key,
+        images: [...images],
+        hasMore: Boolean(author.images_has_more),
+        offset: Number(author.images_offset || images.length),
+        total: Number(author.images_total || images.length),
+        seed: author.image_seed,
+        loading: false,
+        element: section,
+        strip,
+        sentinel,
+        observer: null,
+      };
+      state.artistRows.set(key, row);
+      return section;
+    }
+    function observeArtistRow(row) {
+      if (!row.hasMore) return;
+      row.observer = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void loadArtistRow(row.key);
+      }, { root: row.strip, rootMargin: '0px 240px', threshold: 0 });
+      row.observer.observe(row.sentinel);
+      state.artistObservers.push(row.observer);
+    }
+    async function loadArtistRow(key) {
+      const row = state.artistRows.get(key);
+      if (!row || row.loading || !row.hasMore) return;
+      row.loading = true;
+      const loading = document.createElement('span');
+      loading.className = 'artist-strip-loading';
+      loading.textContent = '载入…';
+      row.strip.insertBefore(loading, row.sentinel);
+      try {
+        const data = await parseResponse(await fetch(
+          `/api/artists/${encodeURIComponent(key)}/images`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ...artistScopePayload(),
+              sort: state.artistView.imageSort,
+              seed: row.seed,
+              offset: row.offset,
+              limit: 20,
+            }),
+          },
+        ));
+        const incoming = Array.isArray(data.results) ? data.results : [];
+        for (const item of incoming) {
+          row.strip.insertBefore(artistThumbElement(item, key), loading);
+          row.images.push(item);
+        }
+        row.offset += incoming.length;
+        row.seed = data.seed;
+        row.hasMore = Boolean(data.has_more) && incoming.length > 0;
+        if (!row.hasMore) {
+          row.observer?.disconnect();
+          row.observer = null;
+          row.sentinel.remove();
+        }
+        if ($('viewer').open && state.viewerRowKey === key) {
+          updateViewerNav();
+          syncNeighborImages();
+        }
+      } catch (error) {
+        loading.textContent = '载入失败';
+        loading.title = error.message;
+        setTimeout(() => loading.remove(), 2400);
+        row.loading = false;
+        return;
+      }
+      loading.remove();
+      row.loading = false;
+    }
+    function renderArtistGallery({ append } = { append: false }) {
+      const gallery = $('gallery');
+      gallery.classList.remove('view-square', 'view-compact', 'view-list');
+      gallery.classList.add('view-artists');
+      if (!append) {
+        disconnectArtistObservers();
+        gallery.replaceChildren();
+      }
+      let list = gallery.querySelector('.artist-list');
+      if (!list) {
+        if (!state.artistView.authors.length) {
+          gallery.innerHTML = state.artistView.loading
+            ? '<div class="artist-empty">正在载入画师…</div>'
+            : '<div class="artist-empty">筛选范围内没有可展示的画师。若想查看未标注作者的图片，请在画师排序菜单中开启“显示无画师”。</div>';
+          state.colHeights = [];
+          settleGalleryScroll();
+          return;
+        }
+        list = document.createElement('div');
+        list.className = 'artist-list';
+        gallery.append(list);
+      }
+      const existing = new Set(
+        [...list.querySelectorAll('.artist-row')].map((row) => row.dataset.artistKey),
+      );
+      for (const author of state.artistView.authors) {
+        const key = String(author.key || '');
+        if (existing.has(key)) continue;
+        list.append(artistRowElement(author));
+        const row = state.artistRows.get(key);
+        if (row) observeArtistRow(row);
+      }
+      bindArtistGalleryEvents();
+      if (append) settleGalleryScroll();
+    }
+    function bindArtistGalleryEvents() {
+      const gallery = $('gallery');
+      if (gallery.dataset.artistBound) return;
+      gallery.dataset.artistBound = '1';
+      gallery.addEventListener('click', (event) => {
+        const settings = event.target.closest('[data-artist-settings]');
+        if (settings) {
+          event.preventDefault();
+          void openArtistDialog(settings.dataset.artistSettings);
+          return;
+        }
+        const thumb = event.target.closest('[data-artist-thumb]');
+        if (!thumb) return;
+        const key = thumb.dataset.artistKey;
+        const row = state.artistRows.get(key);
+        const item = row?.images.find((entry) => entry.id === thumb.dataset.pointId);
+        if (item) openViewer(item, { playlist: row.images, rowKey: key });
+      });
+      gallery.addEventListener('wheel', (event) => {
+        if (!event.shiftKey) return;
+        const strip = event.target.closest('.artist-strip');
+        if (!strip || strip.scrollWidth <= strip.clientWidth) return;
+        strip.scrollLeft += event.deltaY || event.deltaX;
+        event.preventDefault();
+      }, { passive: false });
+    }
+
+    function artistDialogStatus(message, kind = '') {
+      const host = $('artist-dialog-status');
+      if (!host) return;
+      host.textContent = message || '';
+      host.className = `artist-dialog-status${kind ? ` is-${kind}` : ''}`;
+    }
+    function renderArtistDialog(author) {
+      const key = String(author.key || '');
+      const name = String(author.name || author.handle || key || '未命名画师');
+      $('artist-dialog-title').textContent = name;
+      const uids = [];
+      if (key) uids.push(`作者 ID：${key}`);
+      for (const value of author.pixiv_ids || []) uids.push(`Pixiv：${value}`);
+      for (const value of author.x_handles || []) uids.push(`X：@${value}`);
+      const members = Array.isArray(author.members) ? author.members : [];
+      const links = members.map((member) => {
+        const url = member.profile_url || '';
+        const label = member.platform === 'link'
+          ? (member.handle || url)
+          : `${member.platform}${member.handle ? ` · ${member.handle}` : ''}`;
+        return `<div class="artist-link-row">${platformIconSvg(member.platform)}<a href="${escapeHtml(url)}" target="_blank" rel="noopener" title="${escapeHtml(url)}">${escapeHtml(label)}</a><span>${escapeHtml(member.platform)}</span></div>`;
+      }).join('');
+      $('artist-dialog-body').innerHTML = `
+        <section class="artist-dialog-section">
+          <h4>UID</h4>
+          <div class="artist-uid-list">${uids.map((value) => `<span class="artist-uid">${escapeHtml(value)}</span>`).join('') || '<span class="artist-uid">未登记</span>'}</div>
+        </section>
+        <section class="artist-dialog-section">
+          <h4>社交链接</h4>
+          <div class="artist-link-list">${links || '<div class="artist-dialog-note">还没有社交链接。</div>'}</div>
+        </section>
+        <section class="artist-dialog-section">
+          <h4>添加社交账号</h4>
+          <form class="artist-form" id="artist-add-form" autocomplete="off">
+            <div class="artist-form-row">
+              <select name="kind" aria-label="身份类型">
+                <option value="link">社交链接</option>
+                <option value="pixiv">Pixiv ID</option>
+                <option value="twitter">X handle</option>
+              </select>
+              <input name="value" type="text" placeholder="链接 / 数字 ID / @handle" aria-label="社交账号或链接">
+            </div>
+            <div class="artist-form-row">
+              <input name="label" type="text" placeholder="备注（可选，用于社交链接）" aria-label="社交链接备注">
+              <button type="submit">添加</button>
+            </div>
+          </form>
+        </section>
+        <section class="artist-dialog-section">
+          <h4>合并另一位画师</h4>
+          <form class="artist-form" id="artist-merge-form" autocomplete="off">
+            <div class="artist-form-row">
+              <input name="source" type="text" placeholder="另一个 UID / Pixiv ID / X handle" aria-label="要合并的作者">
+              <button class="danger-soft" type="submit">合并</button>
+            </div>
+          </form>
+        </section>
+        <div class="artist-dialog-status" id="artist-dialog-status" aria-live="polite"></div>`;
+      const addForm = $('artist-add-form');
+      addForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const kind = addForm.elements.kind.value;
+        const value = addForm.elements.value.value.trim();
+        const label = addForm.elements.label.value.trim();
+        if (!value) {
+          artistDialogStatus('请填写要添加的链接或账号。', 'error');
+          return;
+        }
+        artistDialogStatus('正在添加…');
+        try {
+          await parseResponse(await fetch(`/api/authors/${encodeURIComponent(key)}/identities`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kind, value, label }),
+          }));
+          await refreshArtistDialog(key, '已添加社交账号。');
+        } catch (error) {
+          artistDialogStatus(error.message, 'error');
+        }
+      });
+      const mergeForm = $('artist-merge-form');
+      mergeForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const source = mergeForm.elements.source.value.trim();
+        if (!source) {
+          artistDialogStatus('请填写要合并的 UID 或账号。', 'error');
+          return;
+        }
+        if (!window.confirm(`将「${source}」合并到当前画师「${name}」？\n作品与社交账号都会迁移到当前画师，且不可撤销。`)) return;
+        artistDialogStatus('正在合并…');
+        try {
+          await parseResponse(await fetch(`/api/authors/${encodeURIComponent(key)}/merge`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source }),
+          }));
+          await refreshArtistDialog(key, '已合并。');
+        } catch (error) {
+          artistDialogStatus(error.message, 'error');
+        }
+      });
+    }
+    async function refreshArtistDialog(key, message) {
+      try {
+        const data = await parseResponse(await fetch(`/api/authors/${encodeURIComponent(key)}`));
+        if (state.artistSettingsKey !== key) return;
+        renderArtistDialog(data.author);
+        artistDialogStatus(message, 'ok');
+      } catch (error) {
+        artistDialogStatus(error.message, 'error');
+      }
+      filterSuggestCache.clear();
+      if (artistViewActive()) await fetchArtistGallery({ reset: true });
+    }
+    async function openArtistDialog(key) {
+      if (!key || key === 'none') return;
+      state.artistSettingsKey = key;
+      $('artist-dialog-title').textContent = '画师设置';
+      $('artist-dialog-body').innerHTML = '<div class="artist-dialog-status">正在读取…</div>';
+      if (!$('artist-dialog').open) $('artist-dialog').showModal();
+      try {
+        const data = await parseResponse(await fetch(`/api/authors/${encodeURIComponent(key)}`));
+        if (state.artistSettingsKey !== key) return;
+        renderArtistDialog(data.author || {});
+      } catch (error) {
+        $('artist-dialog-body').innerHTML = `<div class="artist-dialog-status is-error">${escapeHtml(error.message)}</div>`;
+      }
     }
 
     function newRandomSeed() {
@@ -6682,8 +7616,10 @@
 
     function rememberTemporaryReturn() {
       if (['browse', 'collection'].includes(state.mode)) return;
+      if (state.mode === 'scope') state.scopeScrollY = window.scrollY;
       state.tempReturn = {
         mode: state.mode,
+        scrollY: window.scrollY,
         route: currentGalleryRoute(),
         selected: [...treeState.selected],
         mtimeAfter: treeState.mtimeAfter,
@@ -6701,8 +7637,12 @@
       const snapshot = state.tempReturn;
       state.tempReturn = null;
       if (!snapshot) {
-        if (treeState.selected.size) startScopeBrowse();
-        else resetGalleryToIdle();
+        if (treeState.selected.size) {
+          startScopeBrowse({ restoreScroll: state.scopeScrollY });
+        } else {
+          resetGalleryToIdle();
+          restorePageScroll(state.scopeScrollY);
+        }
         return;
       }
       const valid = new Set(allFolderKeys(treeState.roots));
@@ -6720,17 +7660,22 @@
       if (snapshot.mode === 'search') {
         commitRoute(snapshot.route, { replace: true, overlay: 0 });
         await applySearchRoute(snapshot.route);
+        restorePageScroll(snapshot.scrollY);
         return;
       }
       if (snapshot.mode === 'scope') {
         commitRoute({ kind: 'scope' }, { replace: true, overlay: 0 });
-        startScopeBrowse({ skipRoute: true });
+        await startScopeBrowse({ skipRoute: true, restoreScroll: snapshot.scrollY ?? state.scopeScrollY });
         return;
       }
       if (snapshot.mode === 'home' || snapshot.mode === 'idle') {
         commitRoute({ kind: 'home' }, { replace: true, overlay: 0 });
-        if (treeState.selected.size) startScopeBrowse({ skipRoute: true });
-        else resetGalleryToIdle();
+        if (treeState.selected.size) {
+          await startScopeBrowse({ skipRoute: true, restoreScroll: snapshot.scrollY ?? state.scopeScrollY });
+        } else {
+          resetGalleryToIdle();
+          restorePageScroll(snapshot.scrollY ?? state.scopeScrollY);
+        }
         return;
       }
       commitRoute(snapshot.route, { replace: true, overlay: 0 });
@@ -6738,6 +7683,7 @@
     }
     function previewFolder(key, name, { skipRoute = false } = {}) {
       rememberTemporaryReturn();
+      window.scrollTo({ top: 0, behavior: 'auto' });
       state.mode = 'browse';
       state.browseKey = key;
       state.browseName = name || key;
@@ -6787,17 +7733,22 @@
       closeCollectionSortMenu();
     }
     function enterHomeGallery() {
-      if (treeState.selected.size) startScopeBrowse({ skipRoute: true });
-      else resetGalleryToIdle();
+      if (treeState.selected.size) {
+        startScopeBrowse({ skipRoute: true, restoreScroll: state.scopeScrollY });
+      } else {
+        resetGalleryToIdle();
+        restorePageScroll(state.scopeScrollY);
+      }
     }
     function goHome() {
       const route = { kind: 'home' };
       commitRoute(route, { replace: false, overlay: 0 });
       applyAppRoute(route);
     }
-    function startScopeBrowse({ skipRoute = false } = {}) {
+    async function startScopeBrowse({ skipRoute = false, restoreScroll = null } = {}) {
       if (!treeState.selected.size) {
         refreshDefaultGallery();
+        restorePageScroll(restoreScroll);
         return;
       }
       state.mode = 'scope';
@@ -6811,7 +7762,8 @@
       renderCollectionSort();
       renderGalleryView();
       if (!skipRoute) commitGalleryRoute({ replace: true });
-      fetchScopeImages({ reset: true });
+      await fetchScopeImages({ reset: true });
+      restorePageScroll(restoreScroll);
     }
 
     async function fetchScopeImages({ reset }) {
@@ -7317,13 +8269,16 @@
       return cardDisplayAspect(item);
     }
     function estimateCardHeight(item, columnWidth) {
-      if (state.galleryView === 'list') return 76;
+      if (state.galleryView === 'list') return 96;
       return columnWidth / cardLayoutAspect(item);
     }
-    function cardSummaryHTML(item) {
+    function cardTitleModel(item) {
       const fromSource = viewerTitleModelFromItem(item);
       const cached = item && item.id ? state.viewerTitleCache.get(item.id) : null;
-      const model = (fromSource && fromSource.title) ? fromSource : (cached || fromSource || {});
+      return (fromSource && fromSource.title) ? fromSource : (cached || fromSource || {});
+    }
+    function cardSummaryHTML(item) {
+      const model = cardTitleModel(item);
       const fallback = String((item && (item.name || item.path)) || '')
         .replace(/\.[^./\\]+$/, '') || '无题';
       const title = String(model.title || fallback);
@@ -7386,16 +8341,61 @@
         ? item.tag_hits.map((tag) => `<a class="card-tag" href="/tag/${encodeURIComponent(tag)}" data-tag="${escapeHtml(tag)}">${escapeHtml(tag.replaceAll('_', ' '))}</a>`).join(' · ')
         : '';
       if (listMode) {
-        const meta = [
-          item.width > 0 && item.height > 0 ? `${item.width} × ${item.height}` : '',
-          Number.isFinite(item.score) ? `匹配 ${item.score.toFixed(0)}` : '',
-        ].filter(Boolean).join(' · ');
+        const model = cardTitleModel(item);
+        const sourceModel = viewerTitleModelFromItem(item);
+        const fallback = String((item && (item.name || item.path)) || '')
+          .replace(/\.[^./\\]+$/, '') || '无题';
+        const title = String(model.title || fallback);
+        const authorName = String(
+          model.authorName
+          || (item.source && item.source.author_name)
+          || '',
+        );
+        const authorKey = String(
+          model.authorKey
+          || (item.source && item.source.author_key)
+          || '',
+        );
+        const authorMembers = (sourceModel && sourceModel.authorMembers)
+          || model.authorMembers
+          || [];
+        const tags = [...new Set([
+          ...((sourceModel && sourceModel.tags) || []),
+          ...(model.tags || []),
+          ...(item.tag_hits || []),
+        ].filter(Boolean))].slice(0, 4);
+        const authorHtml = authorName
+          ? (authorKey
+            ? `<a class="list-author" href="/author/${encodeURIComponent(authorKey)}" target="_blank" rel="noopener" title="在新标签页打开作者">${escapeHtml(authorName)}</a>`
+            : `<span class="list-author">${escapeHtml(authorName)}</span>`)
+          : '<span class="list-author is-empty">作者未标注</span>';
+        const authorLinks = platformIconLinks(authorMembers);
+        const titleHtml = model.url
+          ? `<a class="list-title-link" href="${escapeHtml(model.url)}" target="_blank" rel="noopener" title="打开原帖">${escapeHtml(title)}</a>`
+          : escapeHtml(title);
+        const tagsHtml = tags.map((tag) => (
+          `<a class="list-tag card-tag" href="/tag/${encodeURIComponent(tag)}" data-tag="${escapeHtml(tag)}" title="${escapeHtml(tag)}">${escapeHtml(tag.replaceAll('_', ' '))}</a>`
+        )).join('');
+        const metaParts = [];
+        if (item.path) {
+          metaParts.push(`<span class="list-path" title="${escapeHtml(item.path)}">${escapeHtml(item.path)}</span>`);
+        }
+        if (item.width > 0 && item.height > 0) {
+          metaParts.push(`<span class="list-size">${item.width} × ${item.height}</span>`);
+        }
+        if (Number.isFinite(item.score)) {
+          metaParts.push(`<span class="list-score">匹配 ${item.score.toFixed(0)}</span>`);
+        }
+        const meta = metaParts.join('<span class="list-sep">·</span>');
         return `<article class="card card-list" data-index="${index}" data-point-id="${escapeHtml(item.id)}"${cardAccess}>
           <div class="image-wrap"${imageAccess}${galleryDrag}>${orderHandle}<img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false"></div>
           <div class="list-body">
-            <div class="list-name">${escapeHtml(item.name)}</div>
-            <div class="list-meta">${meta}</div>
-            ${hitsText ? `<div class="list-hits">命中：${hitsText}</div>` : ''}
+            <div class="list-title" title="${escapeHtml(title)}">${titleHtml}</div>
+            <div class="list-sub">
+              <span class="list-author-wrap">${authorHtml}${authorLinks ? `<span class="list-author-links">${authorLinks}</span>` : ''}</span>
+              ${tagsHtml ? `<span class="list-sep">·</span><span class="list-tags">${tagsHtml}</span>` : ''}
+            </div>
+            ${meta ? `<div class="list-meta">${meta}</div>` : ''}
           </div>
           <div class="card-list-actions">${removeAction}${favoriteAction}</div>
         </article>`;
@@ -7406,9 +8406,16 @@
         </article>`;
     }
     function renderGallery(results, { append } = { append: false }) {
+      if (state.galleryView === 'artists') {
+        renderCollectionSort();
+        renderGalleryView();
+        queueArtistRefresh();
+        return;
+      }
       renderCollectionSort();
       renderGalleryView();
       const gallery = $('gallery');
+      gallery.classList.remove('view-artists');
       gallery.classList.toggle('view-square', state.galleryView === 'square');
       gallery.classList.toggle('view-compact', state.galleryView === 'compact');
       gallery.classList.toggle('view-list', state.galleryView === 'list');
@@ -7423,6 +8430,7 @@
         $('gallery').innerHTML = `<div class="empty">${empty}</div>`;
         delete $('gallery').dataset.cols;
         state.colHeights = [];
+        settleGalleryScroll();
         return;
       }
       if (!append) {
@@ -7438,6 +8446,7 @@
         placeCard(wrap.firstElementChild, item);
       });
       bindGalleryCards();
+      settleGalleryScroll();
     }
 
     function bindGalleryCards() {
@@ -7445,7 +8454,7 @@
         if (card.dataset.bound) return;
         card.dataset.bound = '1';
         card.addEventListener('click', (event) => {
-          if (event.target.closest('.card-tag')) return;
+          if (event.target.closest('a')) return;
           if (performance.now() < state.cardActionClickUntil) return;
           const item = state.results[Number(card.dataset.index)];
           if (!item) return;
@@ -7471,7 +8480,7 @@
           openViewer(item);
         });
         card.addEventListener('keydown', (event) => {
-          if (event.target.closest('.card-tag')) return;
+          if (event.target.closest('a')) return;
           if (event.key !== 'Enter' && event.key !== ' ') return;
           if (event.target.closest('[data-card-action]')) return;
           if (event.target !== card && !event.target.closest('[data-card-open]')) return;
@@ -7825,9 +8834,22 @@
       else void persistCardOrder(item, null, neighbor.id);
     }
 
+    function viewerList() {
+      return state.viewerPlaylist || state.results;
+    }
+    function viewerHasMore() {
+      if (state.viewerRowKey) {
+        const row = state.artistRows.get(state.viewerRowKey);
+        return Boolean(row && (row.hasMore || row.loading));
+      }
+      return Boolean(state.hasMore);
+    }
+    function viewerLoadMore() {
+      return state.viewerRowKey ? loadArtistRow(state.viewerRowKey) : loadMoreResults();
+    }
     function currentIndex() {
       if (!state.current) return -1;
-      return state.results.findIndex((item) => item.id === state.current.id);
+      return viewerList().findIndex((item) => item.id === state.current.id);
     }
     function syncViewerChrome() {
       syncRefSelection();
@@ -7853,10 +8875,12 @@
         }
       } else {
         const index = currentIndex();
-        const total = state.results.length;
+        const list = viewerList();
+        const total = list.length;
+        const hasMore = viewerHasMore();
         $('viewer-prev').hidden = index <= 0;
-        $('viewer-next').hidden = index < 0 || (index >= total - 1 && !state.hasMore);
-        $('viewer-index').textContent = index >= 0 && total ? `${index + 1} / ${total}${state.hasMore ? '+' : ''}` : '';
+        $('viewer-next').hidden = index < 0 || (index >= total - 1 && !hasMore);
+        $('viewer-index').textContent = index >= 0 && total ? `${index + 1} / ${total}${hasMore ? '+' : ''}` : '';
         if (state.current && state.references.some((item) => item.id === state.current.id)) {
           $('viewer-reference').textContent = '已在参考中';
           $('viewer-reference').disabled = true;
@@ -8038,9 +9062,10 @@
           height: ref.height || 0,
         };
       }
+      const list = viewerList();
       const index = currentIndex() + delta;
-      if (index < 0 || index >= state.results.length) return null;
-      const item = state.results[index];
+      if (index < 0 || index >= list.length) return null;
+      const item = list[index];
       return {
         item,
         src: galleryImageSrc(item),
@@ -8123,10 +9148,10 @@
           void prefetchProvenance(neighbor.item);
         }
       }
-      if (state.viewerSource === 'reference' || !state.hasMore) return;
+      if (state.viewerSource === 'reference' || !viewerHasMore()) return;
       const index = currentIndex();
-      if (index < 0 || index < state.results.length - 2) return;
-      void Promise.resolve(loadMoreResults()).then(() => {
+      if (index < 0 || index < viewerList().length - 2) return;
+      void Promise.resolve(viewerLoadMore()).then(() => {
         if (!$('viewer').open) return;
         updateViewerNav();
         syncNeighborImages();
@@ -8196,7 +9221,11 @@
       updateViewerNav();
       loadImageNotes();
     }
-    function openViewer(item) {
+    function openViewer(item, { playlist, rowKey = '', keepPlaylist = false } = {}) {
+      if (!keepPlaylist) {
+        state.viewerPlaylist = Array.isArray(playlist) ? playlist : null;
+        state.viewerRowKey = state.viewerPlaylist ? rowKey : '';
+      }
       const alreadyOpen = $('viewer').open;
       if (!alreadyOpen) {
         state.viewerReturnRoute = appRouteHref(currentGalleryRoute());
@@ -8240,7 +9269,7 @@
       }
       const next = currentIndex() + delta;
       if (next < 0) return false;
-      if (next >= state.results.length) return Boolean(state.hasMore);
+      if (next >= viewerList().length) return viewerHasMore();
       return true;
     }
     function commitViewerStep(delta) {
@@ -8253,7 +9282,7 @@
       }
       const index = currentIndex();
       if (index < 0) return false;
-      const item = state.results[index + delta];
+      const item = viewerList()[index + delta];
       if (!item) return false;
       applyGalleryViewerState(item);
       if (item.id) syncOpenOverlayRoute({ replace: true });
@@ -8271,9 +9300,9 @@
       try {
         if (state.viewerSource !== 'reference') {
           const next = currentIndex() + delta;
-          if (next >= state.results.length) {
-            if (state.hasMore) await loadMoreResults();
-            if (!state.results[next]) {
+          if (next >= viewerList().length) {
+            if (viewerHasMore()) await viewerLoadMore();
+            if (!viewerList()[next]) {
               view.slideTarget = 0;
               startViewAnim();
               return false;
@@ -8316,14 +9345,14 @@
             view.preserveSlide = false;
             return false;
           }
-          const item = state.results[index + delta];
+          const item = viewerList()[index + delta];
           if (!item) {
             view.preserveSlide = false;
             view.slideTarget = 0;
             startViewAnim();
             return false;
           }
-          openViewer(item);
+          openViewer(item, { keepPlaylist: true });
           view.preserveSlide = false;
         }
         prefetchViewerAhead();
@@ -8975,10 +10004,12 @@
     let galleryResizeTimer = 0;
     window.addEventListener('resize', () => {
       syncQueryPlaceholder();
-      syncSearchFabVisibility();
+      syncFloatingControls();
+      syncSearchPanelOffset();
       syncScrollTopVisibility();
       clearTimeout(galleryResizeTimer);
       galleryResizeTimer = setTimeout(() => {
+        if (state.galleryView === 'artists') return;
         const gallery = $('gallery');
         if (!gallery || !state.results.length) return;
         if (gallery.dataset.cols === String(galleryColumnCount())) return;
@@ -9188,6 +10219,7 @@
       const path = (url.pathname || '/').replace(/\/+$/, '') || '/';
       const params = new URLSearchParams(url.search || '');
       const parts = path.split('/').filter(Boolean);
+      if (!parts.length) return { kind: 'scope' };
       if (parts[0] === 'i' && parts[1]) {
         const imageId = parts[1];
         if (parts[2] === 'notes') {
@@ -9235,7 +10267,7 @@
       return { kind: 'home' };
     }
     function appRouteHref(route) {
-      if (!route || route.kind === 'home') return '/';
+      if (!route || route.kind === 'home' || route.kind === 'scope') return '/';
       if (route.kind === 'search') {
         const params = new URLSearchParams();
         if (route.query) params.set('q', route.query);
@@ -9251,7 +10283,6 @@
         const query = params.toString();
         return query ? `/search?${query}` : '/search';
       }
-      if (route.kind === 'scope') return '/scope';
       if (route.kind === 'folder') {
         const author = route.author ? `&author=${encodeURIComponent(route.author)}` : '';
         return `/folder?key=${encodeURIComponent(route.key || '')}${author}`;
@@ -9656,7 +10687,7 @@
           await applySearchRoute(route);
         } else if (route.kind === 'scope') {
           if (!(state.mode === 'scope' && state.results.length)) {
-            startScopeBrowse({ skipRoute: true });
+            await startScopeBrowse({ skipRoute: true, restoreScroll: state.scopeScrollY });
           }
         } else if (route.kind === 'folder' && route.key) {
           if (!(state.mode === 'browse' && state.browseKey === route.key && state.results.length)) {
@@ -9755,7 +10786,8 @@
         }),
       ]);
       syncQueryPlaceholder();
-      syncSearchFabVisibility();
+      syncFloatingControls();
+      syncSearchPanelOffset();
       syncScrollTopVisibility();
       const route = parseAppRoute();
       if (!restoreCachedFolderSelection()) {
@@ -9767,7 +10799,11 @@
           updateTreeSummary();
         }
       }
-      history.replaceState({ artseek: 1, overlay: 0, ...route }, '', currentHref());
+      history.replaceState(
+        { artseek: 1, overlay: 0, ...route },
+        '',
+        route.kind === 'scope' ? '/' : currentHref(),
+      );
       if (route.kind === 'home') {
         clearHomeSearch();
         enterHomeGallery();

@@ -464,7 +464,7 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(record["title"], "手动标题")
         self.assertIn("title", record["manual_fields"])
         author_key = record["author_key"]
-        self.assertTrue(author_key.startswith("manual:"))
+        self.assertTrue(author_key.isdigit())
 
         listed = self.client.get("/api/authors", params={"q": "某画师"})
         self.assertEqual(listed.status_code, 200)
@@ -487,6 +487,54 @@ class ProvenanceApiTests(unittest.TestCase):
         )
         self.assertEqual(search.status_code, 200)
         self.assertEqual(self.engine.search_calls[-1]["restrict_ids"], ["p1"])
+
+    def test_manual_handle_attaches_to_current_artist(self) -> None:
+        pixiv = self.store.ensure_author("pixiv", "100", name="Pixiv Name")
+        self.store.upsert_scan(
+            "p1", self.payload, ParsedSource(parse_filename(self.image.name))
+        )
+        self.store.set_fetch_result(
+            "p1",
+            {
+                "platform": "pixiv",
+                "source_id": "12345678",
+                "page": 0,
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "status": "ok",
+            },
+            author_key=pixiv,
+        )
+        response = self.client.put(
+            "/api/images/p1/provenance",
+            json={"x_handle": "fresh_handle"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["record"]["author_key"], pixiv)
+        self.assertIn("fresh_handle", data["author"]["x_handles"])
+        self.assertEqual(self.store.count_authors(), 1)
+
+    def test_manual_pixiv_and_x_fields_merge_conflicting_artists(self) -> None:
+        pixiv = self.store.ensure_author("pixiv", "100", name="Pixiv Name")
+        twitter = self.store.ensure_author(
+            "twitter", "200", name="X Name", handle="shared_handle"
+        )
+        response = self.client.put(
+            "/api/images/p1/provenance",
+            json={
+                "author_name": "Pixiv Name",
+                "pixiv_id": "100",
+                "x_handle": "@shared_handle",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["record"]["author_key"], pixiv)
+        self.assertEqual(self.store.canonical_author_key(twitter), pixiv)
+        author = data["author"]
+        self.assertIn("100", author["pixiv_ids"])
+        self.assertIn("shared_handle", author["x_handles"])
+        self.assertEqual(author["image_count"], 1)
 
     def test_manual_tags_are_editable_and_source_tags_are_preserved(self) -> None:
         self.store.upsert_scan(
@@ -545,7 +593,8 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["record"]["title"], "初音ミク")
-        self.assertEqual(data["record"]["author_key"], "pixiv:1554775")
+        self.assertEqual(data["record"]["author_key"], data["author"]["key"])
+        self.assertEqual(data["author"]["pixiv_ids"], ["1554775"])
         self.assertEqual(data["author"]["image_count"], 1)
 
     def test_search_author_token_aligns_linked_social_accounts(self) -> None:
@@ -705,6 +754,162 @@ class ProvenanceApiTests(unittest.TestCase):
         tag_url = f"/api/tags/{quote('作者排序测试', safe='')}/images"
         by_tag = self.client.get(tag_url, params={"sort": "name_desc"})
         self.assertEqual([item["id"] for item in by_tag.json()["results"]], ["p2", "p1"])
+
+    def _add_artist_image(
+        self,
+        point_id: str,
+        name: str,
+        *,
+        mtime_ns: int,
+        author_key: str | None,
+        source_id: str,
+    ) -> None:
+        payload = dict(
+            self.payload,
+            path=str(self.root / name),
+            path_key=str(self.root / name).casefold(),
+            name=name,
+            content_hash=(point_id * 32)[:64],
+            mtime_ns=mtime_ns,
+        )
+        self.engine.store.payloads[point_id] = payload
+        self.store.upsert_scan(
+            point_id,
+            payload,
+            ParsedSource(parse_filename("12345678_p0.png")),
+            path_key=str(self.root / name).casefold(),
+        )
+        if author_key:
+            self.store.set_fetch_result(
+                point_id,
+                {
+                    "platform": "pixiv",
+                    "source_id": source_id,
+                    "page": 0,
+                    "url": f"https://www.pixiv.net/artworks/{source_id}",
+                    "status": "ok",
+                    "tags": [],
+                },
+                author_key=author_key,
+            )
+
+    def test_artist_gallery_orders_scopes_and_unassigned(self) -> None:
+        alice = self.store.ensure_author("pixiv", "1", name="Alice")
+        bob = self.store.ensure_author("pixiv", "2", name="Bob")
+        self._add_artist_image("p1", "z.png", mtime_ns=1_000, author_key=alice, source_id="1001")
+        self._add_artist_image("p2", "a.png", mtime_ns=4_000, author_key=alice, source_id="1002")
+        self._add_artist_image("p3", "m.png", mtime_ns=3_000, author_key=bob, source_id="2001")
+        self._add_artist_image("p4", "b.png", mtime_ns=5_000, author_key=None, source_id="3001")
+        response = self.client.post(
+            "/api/artists/gallery",
+            json={
+                "include_unassigned": True,
+                "sort": "count_desc",
+                "image_sort": "name_asc",
+                "limit": 10,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual([item["key"] for item in data["authors"]], ["none", alice, bob])
+        self.assertEqual([item["id"] for item in data["authors"][0]["images"]], ["p4"])
+        self.assertEqual([item["id"] for item in data["authors"][1]["images"]], ["p2", "p1"])
+        searched = self.client.post(
+            "/api/artists/gallery", json={"q": "Bob", "sort": "name_asc"}
+        )
+        self.assertEqual([item["key"] for item in searched.json()["authors"]], [bob])
+        only_unassigned = self.client.post(
+            "/api/artists/gallery",
+            json={"author_keys": ["none"], "include_unassigned": True},
+        )
+        self.assertEqual(
+            [item["key"] for item in only_unassigned.json()["authors"]], ["none"]
+        )
+        page_one = self.client.post(
+            f"/api/artists/{alice}/images",
+            json={"sort": "name_asc", "limit": 1, "offset": 0},
+        ).json()
+        page_two = self.client.post(
+            f"/api/artists/{alice}/images",
+            json={"sort": "name_asc", "limit": 1, "offset": 1},
+        ).json()
+        self.assertEqual([item["id"] for item in page_one["results"]], ["p2"])
+        self.assertTrue(page_one["has_more"])
+        self.assertEqual([item["id"] for item in page_two["results"]], ["p1"])
+        collection_id = self.client.post(
+            "/api/collections", json={"name": "画师模式测试"}
+        ).json()["collection"]["id"]
+        for point_id in ("p1", "p2"):
+            self.client.post(
+                f"/api/collections/{collection_id}/items", json={"image_id": point_id}
+            )
+        manual = self.client.post(
+            "/api/artists/gallery",
+            json={
+                "collection_id": collection_id,
+                "image_sort": "manual",
+                "include_unassigned": True,
+            },
+        ).json()
+        self.assertEqual([item["key"] for item in manual["authors"]], [alice])
+        self.assertEqual(
+            [item["id"] for item in manual["authors"][0]["images"]], ["p2", "p1"]
+        )
+        added = self.client.post(
+            "/api/artists/gallery",
+            json={"collection_id": collection_id, "image_sort": "added_asc"},
+        ).json()
+        self.assertEqual(
+            [item["id"] for item in added["authors"][0]["images"]], ["p1", "p2"]
+        )
+        manual_page = self.client.post(
+            f"/api/artists/{alice}/images",
+            json={
+                "collection_id": collection_id,
+                "sort": "manual",
+                "limit": 1,
+                "offset": 1,
+            },
+        ).json()
+        self.assertEqual([item["id"] for item in manual_page["results"]], ["p1"])
+
+    def test_artist_identity_and_merge_endpoints(self) -> None:
+        alice = self.store.ensure_author("pixiv", "1", name="Alice")
+        bob = self.store.ensure_author("pixiv", "2", name="Bob")
+        self._add_artist_image("p1", "a.png", mtime_ns=1_000, author_key=alice, source_id="1001")
+        self._add_artist_image("p2", "b.png", mtime_ns=2_000, author_key=bob, source_id="2001")
+        added = self.client.post(
+            f"/api/authors/{alice}/identities",
+            json={"kind": "link", "value": "https://example.com/alice", "label": "主页"},
+        )
+        self.assertEqual(added.status_code, 200)
+        links = added.json()["author"]["links"]
+        self.assertEqual(links[0]["display"], "主页")
+        merged = self.client.post(
+            f"/api/authors/{alice}/merge", json={"source": "2"}
+        )
+        self.assertEqual(merged.status_code, 200)
+        self.assertEqual(merged.json()["author"]["image_count"], 2)
+        self.assertEqual(
+            self.client.get(f"/api/authors/{bob}").json()["author"]["key"], alice
+        )
+        rejected = self.client.post(
+            f"/api/authors/{alice}/merge", json={"source": "none"}
+        )
+        self.assertEqual(rejected.status_code, 400)
+
+    def test_unassigned_author_pages_and_suggestions(self) -> None:
+        self._add_artist_image("p1", "a.png", mtime_ns=1_000, author_key=None, source_id="1001")
+        summary = self.client.get("/api/authors/none")
+        self.assertEqual(summary.status_code, 200)
+        self.assertEqual(summary.json()["author"]["name"], "无画师")
+        images = self.client.get("/api/authors/none/images")
+        self.assertEqual([item["id"] for item in images.json()["results"]], ["p1"])
+        suggestions = self.client.post(
+            "/api/authors",
+            json={"q": "", "folder_keys": [canonical_path("d:/art/收藏")]},
+        )
+        self.assertEqual(suggestions.json()["unassigned_count"], 1)
 
     def test_text_label_is_a_model_search_input(self) -> None:
         before = len(self.engine.search_calls)

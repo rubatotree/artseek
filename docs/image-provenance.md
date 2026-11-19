@@ -126,26 +126,34 @@ CREATE INDEX idx_source_hash ON image_source(content_hash);
 CREATE INDEX idx_source_author ON image_source(author_key);
 CREATE INDEX idx_source_platform_status ON image_source(platform, status);
 
-CREATE TABLE author (
-    key             TEXT PRIMARY KEY,  -- pixiv:1554775 / twitter:yoneyamai
-    platform        TEXT NOT NULL,
-    platform_id     TEXT NOT NULL,
+CREATE TABLE artist (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,  -- 简短的唯一画师 ID
     name            TEXT,
-    handle          TEXT,
-    profile_url     TEXT,
+    name_key        TEXT,               -- NFKC + casefold，用于搜索
+    name_source     TEXT,               -- manual | pixiv | twitter
     avatar_url      TEXT,
-    social_json     TEXT,
+    note            TEXT,
     profile_fetched INTEGER NOT NULL DEFAULT 0,
-    updated_at      INTEGER NOT NULL,
-    UNIQUE(platform, platform_id)
+    image_count     INTEGER NOT NULL DEFAULT 0,  -- 触发器维护
+    created_at      INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL
 );
 
-CREATE TABLE author_alias (
-    alias_key     TEXT PRIMARY KEY,
-    canonical_key TEXT NOT NULL,
-    evidence      TEXT,                 -- pixiv_social / twitter_bio / manual
-    confidence    REAL NOT NULL,
-    updated_at    INTEGER NOT NULL
+CREATE TABLE artist_identity (
+    kind        TEXT NOT NULL,          -- pixiv_id | x_id | handle | name
+    identity    TEXT NOT NULL,          -- 归一化后的 ID / handle
+    display     TEXT,
+    profile_url TEXT,
+    source      TEXT,                   -- pixiv | twitter | manual
+    artist_id   INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY(kind, identity)
+);
+
+CREATE TABLE artist_legacy (
+    legacy_key TEXT PRIMARY KEY,        -- pixiv:1554775 / twitter:yoneyamai / 旧数字 ID
+    artist_id  INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
 );
 
 CREATE TABLE fetch_state (
@@ -173,14 +181,21 @@ CREATE TABLE fetch_state (
 - 文件消失：记录保留，标记 `point_missing`，不删除用户手动填写的元信息。
 - 多份拷贝共享同一 `content_hash`：各自有 `point_id` 行；手动编辑时在同一事务里同步所有同哈希行，避免改一份漏一份。
 
-### 3.4 作者组
+### 3.4 画师身份与合并
 
-- 每个平台账号先建一个 `author`。
-- Pixiv 作者资料里的 `social.twitter.url` → `author_alias`，置信度高。
-- Twitter 作者简介/主页/推文中的 pixiv URL → `author_alias`，置信度中。
-- `画师/<name>/` 目录 → `author_alias`，置信度低，默认只做提示，不自动合并。
-- 一个作者组可以有多个平台账号（例如 Pixiv + Twitter + 小号）。按作者筛选时取该组所有 key 的并集。
-- 不自动把「同名」当成同一人；同名只作为候选，需手动确认。
+- 每个画师只有一个简短数字 ID（`artist.id`，API 中仍以 `author_key` 字段返回）。
+- `image_source.author_key` 保存该数字 ID；`artist_identity` 记录一个画师关联的：
+  - `pixiv_id`：Pixiv 用户 ID；
+  - `x_id`：X 数字用户 ID（抓取可用时，handle 改名不影响）；
+  - `handle`：X screen name 或 Pixiv `userAccount`，归一化后共享同一命名空间；
+  - `name`：仅手动创建、无平台身份的显示名。
+- 一个画师可以有多个 Pixiv ID / X 账号 / 历史 handle；X handle 可以为空（仅 Pixiv 画师）。
+- 写入新身份时，如果同一 `kind + identity` 已属于另一个画师，两个画师自动合并：身份、图片、旧 key 全部迁移到较小 ID；被合并的 ID 写入 `artist_legacy`，旧 URL / 搜索过滤器仍可解析。
+- 不自动按「同名」合并；手动填写 `pixiv_id` 或 `x_handle` 时才建立跨平台关联。
+- 只填写一个新的 X handle 时，优先挂到当前图片所属画师；如果该 handle 已属于别的画师，则把图片改挂到该画师，而不强行合并两个已有画师。同时填写 Pixiv ID 与 X handle 视为明确声明二者同一人，冲突时合并。
+- Pixiv `userAccount` 与 X handle 相同会合并，因为两者共享 `handle` 身份命名空间；这修复了历史上同一 X handle 出现在两个画师下的问题。
+- `artist.image_count` 由 `image_source` 的 INSERT/UPDATE/DELETE 触发器维护；作者建议列表直接读取该列，不再每次聚合全部图片。
+- 旧 schema（v4）升级到 v5 时会自动备份 `provenance.sqlite3.bak-v4-*`，然后合并冲突身份并重写 `author_key`。
 
 ---
 
@@ -268,7 +283,7 @@ per-domain 请求起始间隔（pixiv 0.75s, fxtwitter 0.2s, saucenao 7.5s, asci
 1. 立即归一化成 `pixiv:{id}` / `twitter:{id}`；
 2. 若已有缓存，直接返回；
 3. 否则入队并返回 `pending`，UI 轮询或稍后刷新；
-4. 也允许直接粘贴作者主页 URL，建立 `author_alias`；
+4. 也允许直接粘贴作者主页 URL，或在查看器“编辑来源”中填写 Pixiv ID / X handle；两者会挂到同一画师上，冲突时自动合并；
 5. 手动编辑的字段标记 `manual_override`，自动刷新不覆盖，除非用户点「恢复自动」。
 
 ---
@@ -288,9 +303,9 @@ GET  /api/provenance/stats                      # 统计 + 任务状态
 POST /api/provenance/job/pause
 POST /api/provenance/job/resume
 POST /api/provenance/job/stop
-GET  /api/authors?q=...                         # 作者搜索
-GET  /api/authors/{key}                         # 作者组详情
-GET  /api/authors/{key}/images                  # 作者组下的图（分页）
+GET  /api/authors?q=...                         # 作者搜索（数字 ID / 名称 / handle）
+GET  /api/authors/{key}                         # 画师详情：identities、pixiv_ids、x_handles、image_count
+GET  /api/authors/{key}/images                  # 画师下的图（分页）
 ```
 
 SPA 路由增加 `/author/{key}`，直接打开作者页时也能看到该作者的全部图。

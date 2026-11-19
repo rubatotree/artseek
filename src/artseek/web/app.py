@@ -68,6 +68,7 @@ from ..notes import NoteError, NoteStore, resolve_content_hash
 from ..provenance import (
     PIXIV_DOMAIN,
     TWITTER_DOMAIN,
+    UNASSIGNED_AUTHOR_KEY,
     BudgetExhausted,
     FetchError,
     FxTwitterClient,
@@ -75,7 +76,9 @@ from ..provenance import (
     ProvenanceService,
     ProvenanceStore,
     RateLimiter,
-    manual_author_key,
+    normalize_pixiv_user_id,
+    normalize_social_link,
+    normalize_twitter_handle,
     parse_payload_path,
     parse_source_text,
     scan_payloads,
@@ -246,6 +249,46 @@ class SuggestionRequest(BaseModel):
     mtime_after: str | None = None
     mtime_before: str | None = None
     kind: str = "source"
+
+
+class ArtistScopeRequest(BaseModel):
+    folder_keys: list[str] | None = None
+    mtime_after: str | None = None
+    mtime_before: str | None = None
+    author_keys: list[str] = Field(default_factory=list)
+    title_query: str = ""
+    text_tags: list[str] = Field(default_factory=list)
+    tag_expression: str = ""
+    collection_id: str = ""
+    snapshot_id: str = ""
+
+
+class ArtistGalleryRequest(ArtistScopeRequest):
+    q: str = ""
+    sort: str = "latest_desc"
+    include_unassigned: bool = False
+    offset: int = Field(default=0, ge=0, le=50_000)
+    limit: int = Field(default=30, ge=1, le=100)
+    image_sort: str = "mtime_desc"
+    image_limit: int = Field(default=20, ge=1, le=60)
+    image_seed: int | None = None
+
+
+class ArtistImagesRequest(ArtistScopeRequest):
+    sort: str = "mtime_desc"
+    seed: int | None = None
+    offset: int = Field(default=0, ge=0, le=50_000)
+    limit: int = Field(default=20, ge=1, le=60)
+
+
+class ArtistIdentityRequest(BaseModel):
+    kind: str = "link"
+    value: str = ""
+    label: str = ""
+
+
+class ArtistMergeRequest(BaseModel):
+    source: str = ""
 
 
 class IndexAddRequest(BaseModel):
@@ -440,6 +483,8 @@ class ProvenanceManualRequest(BaseModel):
     description: str | None = Field(default=None, max_length=20_000)
     author_name: str | None = Field(default=None, max_length=200)
     author_handle: str | None = Field(default=None, max_length=100)
+    pixiv_id: str | None = Field(default=None, max_length=200)
+    x_handle: str | None = Field(default=None, max_length=200)
     tags: list[str] | None = None
     manual_tags: list[str] | None = None
     clear_manual: bool = False
@@ -544,7 +589,15 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     app.state.collection_id_cursors_lock = threading.RLock()
     app.state.tag_suggestion_lock = threading.RLock()
     app.state.image_tag_suggestions = {"generation": -1, "items": []}
+    app.state.author_scope_cache: OrderedDict[
+        tuple[Any, ...], tuple[float, dict[str, int]]
+    ] = OrderedDict()
+    app.state.author_scope_cache_lock = threading.RLock()
     static_path = Path(__file__).with_name("static") / "index.html"
+
+    def invalidate_author_cache() -> None:
+        with app.state.author_scope_cache_lock:
+            app.state.author_scope_cache.clear()
 
     @app.on_event("shutdown")
     def shutdown() -> None:
@@ -1876,6 +1929,15 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     def resolve_author_token(value: str) -> str:
         store: ProvenanceStore = app.state.provenance
         token = str(value or "").strip().lstrip("@")
+        if token.casefold() in {
+            UNASSIGNED_AUTHOR_KEY,
+            "unassigned",
+            "无画师",
+            "未标注",
+            "作者未标注",
+            "无作者",
+        }:
+            return UNASSIGNED_AUTHOR_KEY
         summary = store.author_summary(token)
         if summary is not None:
             return str(summary["key"])
@@ -2258,6 +2320,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 service.close()
                 job.running = False
                 job.paused = False
+                invalidate_author_cache()
                 if then_auto_tag and not job.stop_event.is_set():
                     start_auto_tag_job(limit=None)
                 else:
@@ -2465,6 +2528,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 job.message = "来源扫描失败"
             finally:
                 started_next = False
+                invalidate_author_cache()
                 if not job.stop_event.is_set() and job.error is None:
                     if should_enrich:
                         started_next = start_enrich_job(
@@ -2588,6 +2652,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                     origin=parsed.primary.origin,
                 )
             record = store.get(point_id)
+            invalidate_author_cache()
             return provenance_payload(point_id, payload, path)
         fields: dict[str, Any] = {}
         ref = None
@@ -2605,18 +2670,51 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             fields["manual_tags"] = [
                 tag.strip() for tag in request.manual_tags if tag.strip()
             ]
-        if request.author_name is not None or request.author_handle is not None:
+        if (
+            request.author_name is not None
+            or request.author_handle is not None
+            or request.pixiv_id is not None
+            or request.x_handle is not None
+        ):
             name = (request.author_name or "").strip()
-            handle = (request.author_handle or "").strip().lstrip("@")
-            if handle:
-                key = store.ensure_author(
-                    "twitter", handle, name=name or handle, handle=handle
+            raw_pixiv = (request.pixiv_id or "").strip()
+            raw_x = (request.x_handle or request.author_handle or "").strip()
+            pixiv_id = normalize_pixiv_user_id(raw_pixiv) if raw_pixiv else ""
+            x_handle = normalize_twitter_handle(raw_x) if raw_x else ""
+            if raw_pixiv and not pixiv_id:
+                raise HTTPException(400, "Pixiv ID 应为数字 ID 或作者主页 URL")
+            if raw_x and not re.fullmatch(r"[A-Za-z0-9_]{1,15}", x_handle):
+                raise HTTPException(400, "X handle 格式无效")
+            key = ""
+            if pixiv_id or x_handle:
+                base_key = str(record.get("author_key") or "")
+                single_platform = ""
+                single_value = ""
+                if bool(pixiv_id) != bool(x_handle):
+                    single_platform = "pixiv" if pixiv_id else "twitter"
+                    single_value = pixiv_id or x_handle
+                owner = (
+                    store.identity_owner(single_platform, single_value)
+                    if single_platform
+                    else None
                 )
+                if owner is not None:
+                    key = owner
+                elif base_key.isdigit() and single_platform:
+                    key = store.attach_identity(
+                        base_key,
+                        single_platform,
+                        single_value,
+                        name=name or None,
+                    )
+                else:
+                    key = store.ensure_linked_author(
+                        name=name or None,
+                        pixiv_id=pixiv_id or None,
+                        x_handle=x_handle or None,
+                    )
             elif name:
-                key = manual_author_key(name)
-                store.ensure_author("manual", key.split(":", 1)[1], name=name)
-            else:
-                key = ""
+                key = store.ensure_manual_author(name)
             if key:
                 fields["author_key"] = key
         if ref is not None:
@@ -2626,6 +2724,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 domain = PIXIV_DOMAIN if record["platform"] == "pixiv" else TWITTER_DOMAIN
                 state = store.domain_state(domain)
                 if int(state.get("blocked_until") or 0) > int(time.time()):
+                    invalidate_author_cache()
                     return provenance_payload(point_id, payload, path)
                 service = make_service()
                 try:
@@ -2636,6 +2735,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                     service.close()
         elif fields:
             store.set_manual(point_id, fields)
+        invalidate_author_cache()
         return provenance_payload(point_id, payload, path)
 
     @app.post("/api/images/{point_id}/provenance/resolve")
@@ -2661,6 +2761,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                     store.set_status(point_id, getattr(exc, "status", "error"), str(exc))
                 finally:
                     service.close()
+        invalidate_author_cache()
         return provenance_payload(point_id, payload, path)
 
     def suggestion_scope_ids(
@@ -2693,11 +2794,35 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         page_size = max(1, min(int(limit), 500))
         start = max(0, int(offset))
         scope_ids = suggestion_scope_ids(folder_keys, mtime_after, mtime_before)
-        counts = (
-            app.state.provenance.author_counts_for_points(scope_ids)
-            if scope_ids is not None
-            else None
+        counts = None
+        if scope_ids is not None:
+            cache_key = (
+                tuple(sorted(folder_keys or [])),
+                mtime_after or "",
+                mtime_before or "",
+            )
+            now = time.monotonic()
+            with app.state.author_scope_cache_lock:
+                cached = app.state.author_scope_cache.get(cache_key)
+                if cached is not None and now - cached[0] <= 20.0:
+                    counts = cached[1]
+            if counts is None:
+                counts = app.state.provenance.author_counts_for_points(scope_ids)
+                with app.state.author_scope_cache_lock:
+                    app.state.author_scope_cache[cache_key] = (now, counts)
+                    while len(app.state.author_scope_cache) > 16:
+                        app.state.author_scope_cache.popitem(last=False)
+        unassigned_count = (
+            int(counts.get(UNASSIGNED_AUTHOR_KEY, 0))
+            if counts is not None
+            else app.state.provenance.unassigned_count()
         )
+        if counts is not None:
+            counts = {
+                key: value
+                for key, value in counts.items()
+                if key != UNASSIGNED_AUTHOR_KEY
+            }
         authors = app.state.provenance.list_authors(
             q,
             limit=page_size + 1,
@@ -2708,6 +2833,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "authors": authors[:page_size],
             "has_more": len(authors) > page_size,
             "offset": start,
+            "unassigned_count": unassigned_count,
         }
 
     @app.get("/api/authors")
@@ -2785,6 +2911,315 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             "total": total,
             "has_more": offset + len(page_ids) < total,
             "results": results,
+        }
+
+    def resolve_artist_scope(request: ArtistScopeRequest) -> set[str] | None:
+        """Resolve the current UI filter context into one point-ID universe."""
+        scope: set[str] | None = None
+
+        def intersect(values: Sequence[str]) -> None:
+            nonlocal scope
+            cleaned = {str(value) for value in values if value}
+            scope = cleaned if scope is None else scope & cleaned
+
+        if request.snapshot_id:
+            if not is_snapshot_id(request.snapshot_id):
+                raise HTTPException(400, "检索快照编号不合法")
+            snapshot = app.state.search_snapshots.get(request.snapshot_id)
+            if snapshot is None:
+                raise HTTPException(404, "检索快照不存在或已过期")
+            intersect([str(item.get("id") or "") for item in snapshot.get("results") or []])
+        if request.folder_keys is not None:
+            catalog = app.state.engine.folder_catalog()
+            ids = catalog.point_ids(
+                request.folder_keys,
+                after_ns=day_start_ns(request.mtime_after),
+                before_ns=day_end_ns(request.mtime_before),
+            )
+            if ids is None:
+                ids = [point_id for acc in catalog.folders.values() for point_id in acc.ids]
+            intersect(ids)
+        if request.collection_id:
+            collection = require_collection(request.collection_id)
+            intersect(collection.item_ids)
+        filters_present = bool(
+            request.author_keys
+            or request.title_query.strip()
+            or request.text_tags
+            or request.tag_expression.strip()
+        )
+        if filters_present:
+            authors = [
+                resolve_author_token(value)
+                for value in request.author_keys
+                if str(value or "").strip()
+            ]
+            restrict = restricted_ids(
+                author_keys=authors,
+                tag_tokens=request.text_tags,
+                title_query=request.title_query,
+                tag_expression=request.tag_expression,
+            )
+            intersect(restrict or [])
+        return scope
+
+    def artist_collection_order(request: ArtistScopeRequest) -> tuple[str, ...] | None:
+        if not request.collection_id:
+            return None
+        method = str(
+            getattr(request, "image_sort", "") or getattr(request, "sort", "")
+        )
+        if method not in {"manual", "added_asc", "added_desc"}:
+            return None
+        collection = require_collection(request.collection_id)
+        if method == "manual":
+            return collection.ordered_item_ids()
+        if method == "added_desc":
+            return tuple(reversed(collection.item_ids))
+        return collection.item_ids
+
+    def scoped_author_images(
+        author_key: str,
+        scope: set[str] | None,
+        *,
+        sort: str,
+        seed: int | None,
+        offset: int,
+        limit: int,
+        order_ids: Sequence[str] | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], str, int | None, int, bool]:
+        store: ProvenanceStore = app.state.provenance
+        summary = store.author_summary(author_key)
+        if summary is None:
+            raise HTTPException(404, "作者不存在")
+        ids = store.point_ids_for_author(author_key)
+        if scope is not None:
+            ids = [point_id for point_id in ids if point_id in scope]
+        if order_ids is not None:
+            rank = {point_id: index for index, point_id in enumerate(order_ids)}
+            ids.sort(key=lambda point_id: rank.get(point_id, len(rank)))
+            order, used_seed = sort, None
+        else:
+            ids, order, used_seed = sort_gallery_ids(ids, sort, seed)
+        total = len(ids)
+        page_size = max(1, min(int(limit), 200))
+        page_ids = ids[offset : offset + page_size]
+        payloads = retrieve_collection_payloads(page_ids)
+        results = attach_provenance(
+            [
+                gallery_result(point_id, payloads[point_id])
+                for point_id in page_ids
+                if isinstance(payloads.get(point_id), dict)
+            ]
+        )
+        return (
+            summary,
+            results,
+            order,
+            used_seed,
+            total,
+            offset + len(page_ids) < total,
+        )
+
+    @app.post("/api/artists/gallery")
+    def artist_gallery(request: ArtistGalleryRequest) -> dict[str, Any]:
+        store: ProvenanceStore = app.state.provenance
+        scope = resolve_artist_scope(request)
+        page = store.artist_stats(
+            list(scope) if scope is not None else None,
+            query=request.q,
+            sort=request.sort,
+            include_unassigned=request.include_unassigned,
+            offset=request.offset,
+            limit=request.limit,
+        )
+        image_sort = {
+            "name": "name_asc",
+            "count": "mtime_desc",
+            "count_asc": "mtime_desc",
+            "mtime": "mtime_desc",
+        }.get(request.image_sort, request.image_sort)
+        if image_sort not in {
+            "mtime_desc",
+            "mtime_asc",
+            "name_asc",
+            "name_desc",
+            "random",
+            "manual",
+            "added_asc",
+            "added_desc",
+        }:
+            image_sort = "mtime_desc"
+        order_ids = artist_collection_order(request)
+        if order_ids is not None and image_sort not in {"manual", "added_asc", "added_desc"}:
+            order_ids = None
+        base_seed = request.image_seed
+        if image_sort == "random" and base_seed is None:
+            base_seed = random.SystemRandom().randrange(1 << 53)
+        authors: list[dict[str, Any]] = []
+        for entry in page["authors"]:
+            row_seed = base_seed
+            if image_sort == "random" and base_seed is not None:
+                row_seed = random.Random(f"{base_seed}:{entry['key']}").randrange(1 << 53)
+            summary, results, _, _, total, has_more = scoped_author_images(
+                str(entry["key"]),
+                scope,
+                sort=image_sort,
+                seed=row_seed,
+                offset=0,
+                limit=request.image_limit,
+                order_ids=order_ids,
+            )
+            entry = dict(entry)
+            entry["images"] = results
+            entry["images_has_more"] = has_more
+            entry["images_offset"] = len(results)
+            entry["images_total"] = total
+            entry["image_seed"] = row_seed
+            entry["pixiv_ids"] = summary.get("pixiv_ids") or []
+            entry["x_handles"] = summary.get("x_handles") or []
+            authors.append(entry)
+        page["authors"] = authors
+        page["image_sort"] = image_sort
+        page["image_seed"] = base_seed
+        return page
+
+    @app.post("/api/artists/{author_key}/images")
+    def scoped_artist_images(
+        author_key: str, request: ArtistImagesRequest
+    ) -> dict[str, Any]:
+        scope = resolve_artist_scope(request)
+        sort = {
+            "name": "name_asc",
+            "count": "mtime_desc",
+            "count_asc": "mtime_desc",
+            "mtime": "mtime_desc",
+        }.get(request.sort, request.sort)
+        if sort not in {
+            "mtime_desc",
+            "mtime_asc",
+            "name_asc",
+            "name_desc",
+            "random",
+            "manual",
+            "added_asc",
+            "added_desc",
+        }:
+            sort = "mtime_desc"
+        order_ids = artist_collection_order(request)
+        if order_ids is not None and sort not in {"manual", "added_asc", "added_desc"}:
+            order_ids = None
+        summary, results, order, seed, total, has_more = scoped_author_images(
+            author_key,
+            scope,
+            sort=sort,
+            seed=request.seed,
+            offset=request.offset,
+            limit=request.limit,
+            order_ids=order_ids,
+        )
+        return {
+            "author": summary,
+            "offset": request.offset,
+            "limit": request.limit,
+            "sort": order,
+            "seed": seed,
+            "total": total,
+            "has_more": has_more,
+            "results": results,
+        }
+
+    @app.post("/api/authors/{author_key}/identities")
+    def add_author_identity(
+        author_key: str, request: ArtistIdentityRequest
+    ) -> dict[str, Any]:
+        store: ProvenanceStore = app.state.provenance
+        if author_key.casefold() == UNASSIGNED_AUTHOR_KEY:
+            raise HTTPException(400, "无画师不能添加身份")
+        kind = request.kind.strip().casefold()
+        try:
+            if kind == "link":
+                if not normalize_social_link(request.value):
+                    raise ValueError("请输入有效的 http(s) 链接")
+                store.add_link(author_key, request.value, label=request.label)
+            elif kind in {"pixiv", "pixiv_id"}:
+                store.attach_identity(author_key, "pixiv", request.value)
+            elif kind in {"twitter", "x", "x_id"}:
+                store.attach_identity(author_key, "twitter", request.value)
+            else:
+                raise HTTPException(400, "不支持的身份类型")
+        except ValueError as exc:
+            status = 409 if "已属于" in str(exc) else 400
+            raise HTTPException(status, str(exc)) from exc
+        invalidate_author_cache()
+        summary = store.author_summary(author_key)
+        if summary is None:
+            raise HTTPException(404, "作者不存在")
+        return {"author": summary}
+
+    @app.post("/api/authors/{author_key}/merge")
+    def merge_author(author_key: str, request: ArtistMergeRequest) -> dict[str, Any]:
+        store: ProvenanceStore = app.state.provenance
+        target = author_key.strip().lstrip("@")
+        if target.casefold() == UNASSIGNED_AUTHOR_KEY:
+            raise HTTPException(400, "无画师不能合并")
+        target_summary = store.author_summary(target)
+        if target_summary is None:
+            raise HTTPException(404, "作者不存在")
+        token = request.source.strip().lstrip("@")
+        if not token:
+            raise HTTPException(400, "请输入要合并的 UID、Pixiv ID 或 X handle")
+        if token.casefold() in {UNASSIGNED_AUTHOR_KEY, "无画师", "未标注", "作者未标注", "无作者"}:
+            raise HTTPException(400, "无画师不能合并")
+        source_key = ""
+        if token.isdigit():
+            summary = store.author_summary(token)
+            if summary is not None:
+                source_key = str(summary["key"])
+        if not source_key:
+            owner = store.identity_owner("pixiv", token)
+            if owner:
+                source_key = owner
+        if not source_key:
+            owner = store.identity_owner("twitter", token)
+            if owner:
+                source_key = owner
+        if not source_key:
+            matches = store.list_authors(token, limit=5)
+            grouped: dict[str, list[dict[str, Any]]] = {}
+            for item in matches:
+                root = store.canonical_author_key(str(item["key"]))
+                grouped.setdefault(root, []).append(item)
+            if len(grouped) == 1:
+                source_key = next(iter(grouped))
+            elif len(grouped) > 1:
+                raise HTTPException(
+                    409,
+                    detail={
+                        "message": "作者不唯一，请选择完整 UID",
+                        "author_candidates": [
+                            {
+                                "key": root,
+                                "name": members[0].get("name")
+                                or members[0].get("handle")
+                                or root,
+                            }
+                            for root, members in grouped.items()
+                        ],
+                    },
+                )
+        if not source_key:
+            raise HTTPException(404, "没有找到要合并的作者")
+        source_summary = store.author_summary(source_key)
+        if source_summary is None:
+            raise HTTPException(404, "没有找到要合并的作者")
+        if str(source_summary["key"]) == str(target_summary["key"]):
+            return {"author": target_summary, "merged_from": None}
+        store.merge_authors(source_key, target)
+        invalidate_author_cache()
+        return {
+            "author": store.author_summary(target),
+            "merged_from": source_summary,
         }
 
     def image_tag_suggestions() -> list[dict[str, Any]]:

@@ -650,7 +650,7 @@ class ProvenanceService:
             return None
         key = self.store.ensure_author(
             "twitter",
-            result.author_handle,
+            result.author_id or result.author_handle,
             name=result.author_name,
             handle=result.author_handle,
             profile_url=result.author_profile_url,

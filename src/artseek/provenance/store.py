@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import difflib
-import hashlib
 import json
 import re
 import sqlite3
@@ -15,9 +14,17 @@ from typing import Any
 
 from .parser import ParsedSource, SourceRef, canonical_pixiv_url, twitter_photo_url
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 ORIGIN_PRIORITY = {"filename": 1, "embedded": 2, "manual": 3, "saucy": 4, "ascii2d": 4}
 AUTHOR_TTL_SECONDS = 30 * 24 * 60 * 60
+# Identity kinds form one shared namespace per kind, so a handle discovered on
+# Pixiv and the same handle discovered on X resolve to a single artist row.
+IDENTITY_PIXIV = "pixiv_id"
+IDENTITY_TWITTER = "x_id"
+IDENTITY_HANDLE = "handle"
+IDENTITY_NAME = "name"
+IDENTITY_LINK = "link"
+UNASSIGNED_AUTHOR_KEY = "none"
 _STATUSES = frozenset(
     {"pending", "ok", "not_found", "protected", "rate_limited", "error", "unresolved", "stale"}
 )
@@ -44,7 +51,75 @@ def _loads(value: Any, fallback: Any) -> Any:
 
 
 def _normalized_handle(value: str | None) -> str:
-    return str(value or "").strip().lstrip("@").casefold()
+    text = unicodedata.normalize("NFKC", str(value or "")).strip().lstrip("@")
+    return re.sub(r"\s+", " ", text).casefold()
+
+
+def _author_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    text = text.lstrip("@")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def normalize_pixiv_user_id(value: str | None) -> str:
+    """Accept a bare Pixiv user ID or a profile URL."""
+    text = unicodedata.normalize("NFKC", str(value or "")).strip()
+    if not text:
+        return ""
+    if text.casefold().startswith("pixiv:"):
+        text = text.split(":", 1)[1].strip()
+    match = re.search(r"pixiv\.net/(?:en/)?users/(\d+)", text, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return text if text.isdigit() else ""
+
+
+def normalize_twitter_handle(value: str | None) -> str:
+    """Accept a bare X handle, @handle, or an x.com/twitter.com profile URL."""
+    text = unicodedata.normalize("NFKC", str(value or "")).strip()
+    if not text:
+        return ""
+    match = re.search(
+        r"(?:x|twitter)\.com/(?:#!/)?@?([A-Za-z0-9_]{1,15})", text, re.IGNORECASE
+    )
+    if match:
+        text = match.group(1)
+    return text.lstrip("@").strip()
+
+
+def normalize_social_link(value: str | None) -> str:
+    """Return a canonical http(s) URL, or an empty string when invalid."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    text = unicodedata.normalize("NFKC", str(value or "")).strip()
+    if not text:
+        return ""
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return ""
+    if parts.scheme.casefold() not in {"http", "https"} or not parts.netloc:
+        return ""
+    path = parts.path.rstrip("/")
+    return urlunsplit(
+        (
+            parts.scheme.casefold(),
+            parts.netloc.casefold(),
+            path,
+            parts.query,
+            "",
+        )
+    )
+
+
+def _identity_kind_platform(kind: str) -> str:
+    return {
+        IDENTITY_PIXIV: "pixiv",
+        IDENTITY_TWITTER: "twitter",
+        IDENTITY_HANDLE: "twitter",
+        IDENTITY_NAME: "manual",
+        IDENTITY_LINK: "link",
+    }.get(kind, "other")
 
 
 class ProvenanceStore:
@@ -122,26 +197,66 @@ class ProvenanceStore:
                     ON image_source(author_key);
                 CREATE INDEX IF NOT EXISTS idx_source_platform_status
                     ON image_source(platform, status);
-                CREATE TABLE IF NOT EXISTS author (
-                    key TEXT PRIMARY KEY,
-                    platform TEXT NOT NULL,
-                    platform_id TEXT NOT NULL,
+                CREATE TABLE IF NOT EXISTS artist (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT,
-                    handle TEXT,
-                    profile_url TEXT,
+                    name_key TEXT,
+                    name_source TEXT,
                     avatar_url TEXT,
-                    social_json TEXT,
+                    note TEXT,
                     profile_fetched INTEGER NOT NULL DEFAULT 0,
-                    updated_at INTEGER NOT NULL,
-                    UNIQUE(platform, platform_id)
-                );
-                CREATE TABLE IF NOT EXISTS author_alias (
-                    alias_key TEXT PRIMARY KEY,
-                    canonical_key TEXT NOT NULL,
-                    evidence TEXT,
-                    confidence REAL NOT NULL DEFAULT 0.5,
+                    image_count INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
+                CREATE INDEX IF NOT EXISTS idx_artist_name_key
+                    ON artist(name_key);
+                CREATE INDEX IF NOT EXISTS idx_artist_image_count
+                    ON artist(image_count DESC, id);
+                CREATE TABLE IF NOT EXISTS artist_identity (
+                    kind TEXT NOT NULL,
+                    identity TEXT NOT NULL,
+                    display TEXT,
+                    profile_url TEXT,
+                    source TEXT,
+                    artist_id INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (kind, identity)
+                );
+                CREATE INDEX IF NOT EXISTS idx_artist_identity_artist
+                    ON artist_identity(artist_id);
+                CREATE TABLE IF NOT EXISTS artist_legacy (
+                    legacy_key TEXT PRIMARY KEY,
+                    artist_id INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_artist_legacy_artist
+                    ON artist_legacy(artist_id);
+                CREATE TRIGGER IF NOT EXISTS trg_artist_count_insert
+                AFTER INSERT ON image_source
+                WHEN NEW.author_key IS NOT NULL AND NEW.author_key <> ''
+                BEGIN
+                    UPDATE artist SET image_count = image_count + 1
+                    WHERE id = CAST(NEW.author_key AS INTEGER);
+                END;
+                CREATE TRIGGER IF NOT EXISTS trg_artist_count_update
+                AFTER UPDATE OF author_key ON image_source
+                WHEN OLD.author_key IS NOT NEW.author_key
+                BEGIN
+                    UPDATE artist SET image_count = MAX(image_count - 1, 0)
+                    WHERE OLD.author_key IS NOT NULL
+                      AND id = CAST(OLD.author_key AS INTEGER);
+                    UPDATE artist SET image_count = image_count + 1
+                    WHERE NEW.author_key IS NOT NULL AND NEW.author_key <> ''
+                      AND id = CAST(NEW.author_key AS INTEGER);
+                END;
+                CREATE TRIGGER IF NOT EXISTS trg_artist_count_delete
+                AFTER DELETE ON image_source
+                WHEN OLD.author_key IS NOT NULL AND OLD.author_key <> ''
+                BEGIN
+                    UPDATE artist SET image_count = MAX(image_count - 1, 0)
+                    WHERE id = CAST(OLD.author_key AS INTEGER);
+                END;
                 CREATE TABLE IF NOT EXISTS fetch_state (
                     domain TEXT PRIMARY KEY,
                     blocked_until INTEGER,
@@ -153,18 +268,16 @@ class ProvenanceStore:
                 );
                 """
             )
-            columns = {
-                str(row[1])
-                for row in connection.execute("PRAGMA table_info(author)").fetchall()
-            }
-            if "profile_fetched" not in columns:
-                connection.execute(
-                    "ALTER TABLE author ADD COLUMN profile_fetched INTEGER NOT NULL DEFAULT 0"
-                )
             source_columns = {
                 str(row[1])
                 for row in connection.execute("PRAGMA table_info(image_source)").fetchall()
             }
+            artist_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(artist)").fetchall()
+            }
+            if "name_source" not in artist_columns:
+                connection.execute("ALTER TABLE artist ADD COLUMN name_source TEXT")
             if "mtime_ns" not in source_columns:
                 connection.execute("ALTER TABLE image_source ADD COLUMN mtime_ns INTEGER")
             if "manual_tags_json" not in source_columns:
@@ -196,6 +309,8 @@ class ProvenanceStore:
                     "WHERE platform = 'pixiv' AND status = 'not_found'",
                     (_now(),),
                 )
+            if previous_version < 5:
+                self._migrate_author_schema(connection)
             connection.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
@@ -220,6 +335,150 @@ class ProvenanceStore:
                     "WHERE point_id = ?",
                     (_now(), row["point_id"]),
                 )
+
+    def _migrate_author_schema(self, connection: sqlite3.Connection) -> None:
+        """Convert the legacy ``author``/``author_alias`` schema to artist IDs.
+
+        Every legacy key becomes a legacy lookup entry.  Identities are attached
+        in a shared handle namespace, so two old author rows that share a Pixiv
+        ``userAccount`` or an X screen name are merged into one artist.
+        """
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'author'"
+        ).fetchone()
+        if exists is None:
+            return
+        connection.commit()
+        self._backup_before_migration(connection)
+        alias_table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'author_alias'"
+        ).fetchone()
+        aliases: dict[str, str] = {}
+        if alias_table is not None:
+            aliases = {
+                str(row["alias_key"]): str(row["canonical_key"])
+                for row in connection.execute(
+                    "SELECT alias_key, canonical_key FROM author_alias"
+                )
+            }
+        rows = [dict(row) for row in connection.execute("SELECT * FROM author")]
+
+        def root(key: str) -> str:
+            current = key
+            seen: set[str] = set()
+            for _ in range(16):
+                if current in seen:
+                    break
+                seen.add(current)
+                target = aliases.get(current)
+                if target is None:
+                    break
+                current = target
+            return current
+
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            groups.setdefault(root(str(row["key"])), []).append(row)
+        ordered = sorted(
+            groups.items(),
+            key=lambda item: (
+                -sum(1 for row in item[1] if row.get("platform") == "pixiv"),
+                -len(item[1]),
+                item[0],
+            ),
+        )
+        for root_key, items in ordered:
+            specs: list[tuple[str, str, str | None, str | None, str | None]] = []
+            name: str | None = None
+            pixiv_name: str | None = None
+            twitter_name: str | None = None
+            manual_name: str | None = None
+            avatar: str | None = None
+            fetched = False
+            keys: list[str] = []
+            for row in items:
+                keys.append(str(row["key"]))
+                platform = str(row.get("platform") or "")
+                platform_id = str(row.get("platform_id") or "")
+                handle = str(row.get("handle") or "").strip()
+                row_name = str(row.get("name") or "").strip() or None
+                if platform == "pixiv":
+                    specs.extend(
+                        self._identity_specs(
+                            "pixiv",
+                            platform_id,
+                            handle=handle or None,
+                            profile_url=row.get("profile_url"),
+                        )
+                    )
+                    pixiv_name = pixiv_name or row_name
+                elif platform == "twitter":
+                    specs.extend(
+                        self._identity_specs(
+                            "twitter",
+                            platform_id,
+                            handle=handle or platform_id,
+                            profile_url=row.get("profile_url"),
+                        )
+                    )
+                    twitter_name = twitter_name or row_name
+                elif platform == "manual":
+                    specs.extend(
+                        self._identity_specs(
+                            "manual", row_name or platform_id, name=row_name
+                        )
+                    )
+                    manual_name = manual_name or row_name
+                avatar = avatar or row.get("avatar_url")
+                fetched = fetched or bool(row.get("profile_fetched"))
+            name = pixiv_name or twitter_name or manual_name
+            artist_id = self._ensure_artist_locked(
+                connection,
+                specs,
+                name=name,
+                avatar_url=avatar,
+                profile_fetched=fetched,
+                overwrite_name=False,
+                legacy_keys=keys,
+                commit=False,
+            )
+            for key in keys:
+                connection.execute(
+                    "UPDATE image_source SET author_key = ? WHERE author_key = ?",
+                    (str(artist_id), key),
+                )
+            for alias_key in aliases:
+                if root(alias_key) == root_key:
+                    self._record_legacy_locked(connection, alias_key, artist_id)
+                    connection.execute(
+                        "UPDATE image_source SET author_key = ? WHERE author_key = ?",
+                        (str(artist_id), alias_key),
+                    )
+        connection.execute("DROP TABLE IF EXISTS author_alias")
+        connection.execute("DROP TABLE IF EXISTS author")
+        connection.execute(
+            "UPDATE artist SET image_count = ("
+            "SELECT COUNT(*) FROM image_source "
+            "WHERE image_source.author_key = CAST(artist.id AS TEXT)"
+            ")"
+        )
+        connection.commit()
+
+    def _backup_before_migration(self, connection: sqlite3.Connection) -> None:
+        if not self.path.exists():
+            return
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        target = self.path.with_name(f"{self.path.name}.bak-v4-{stamp}")
+        if target.exists():
+            return
+        try:
+            backup = sqlite3.connect(str(target))
+            try:
+                connection.backup(backup)
+            finally:
+                backup.close()
+        except sqlite3.DatabaseError:
+            pass
 
     @contextmanager
     def _read(self):
@@ -663,144 +922,6 @@ class ProvenanceStore:
             connection.commit()
         return stale
 
-    # ------------------------------------------------------------------ authors
-
-    def ensure_author(
-        self,
-        platform: str,
-        platform_id: str,
-        *,
-        name: str | None = None,
-        handle: str | None = None,
-        profile_url: str | None = None,
-        avatar_url: str | None = None,
-        social: dict[str, Any] | None = None,
-        profile_fetched: bool = False,
-    ) -> str:
-        stored_id = _normalized_handle(platform_id) if platform == "twitter" else platform_id
-        key = f"{platform}:{stored_id}"
-        now = _now()
-        with self._read() as connection:
-            connection.execute(
-                """
-                INSERT INTO author (
-                    key, platform, platform_id, name, handle, profile_url,
-                    avatar_url, social_json, profile_fetched, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(key) DO UPDATE SET
-                    name = COALESCE(excluded.name, author.name),
-                    handle = COALESCE(excluded.handle, author.handle),
-                    profile_url = COALESCE(excluded.profile_url, author.profile_url),
-                    avatar_url = COALESCE(excluded.avatar_url, author.avatar_url),
-                    social_json = COALESCE(excluded.social_json, author.social_json),
-                    profile_fetched = MAX(author.profile_fetched, excluded.profile_fetched),
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    key,
-                    platform,
-                    stored_id,
-                    name,
-                    handle,
-                    profile_url,
-                    avatar_url,
-                    _json(social or {}, {}),
-                    1 if profile_fetched else 0,
-                    now,
-                ),
-            )
-            connection.commit()
-        return key
-
-    def get_author(self, key: str) -> dict[str, Any] | None:
-        with self._read() as connection:
-            row = connection.execute("SELECT * FROM author WHERE key = ?", (key,)).fetchone()
-        return self._row_to_author(row) if row is not None else None
-
-    def author_is_fresh(self, key: str, *, max_age: int = AUTHOR_TTL_SECONDS) -> bool:
-        author = self.get_author(key)
-        return bool(author and _now() - int(author["updated_at"]) <= max_age)
-
-    def author_profile_fresh(self, key: str, *, max_age: int = AUTHOR_TTL_SECONDS) -> bool:
-        author = self.get_author(key)
-        return bool(
-            author
-            and author.get("profile_fetched")
-            and _now() - int(author["updated_at"]) <= max_age
-        )
-
-    def link_authors(
-        self,
-        alias_key: str,
-        canonical_key: str,
-        *,
-        evidence: str,
-        confidence: float = 0.8,
-    ) -> str:
-        alias = self.canonical_author_key(alias_key)
-        canonical = self.canonical_author_key(canonical_key)
-        if alias == canonical:
-            return canonical
-        now = _now()
-        with self._read() as connection:
-            connection.execute(
-                """
-                INSERT INTO author_alias (
-                    alias_key, canonical_key, evidence, confidence, updated_at
-                ) VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(alias_key) DO UPDATE SET
-                    canonical_key = excluded.canonical_key,
-                    evidence = excluded.evidence,
-                    confidence = excluded.confidence,
-                    updated_at = excluded.updated_at
-                """,
-                (alias, canonical, evidence, confidence, now),
-            )
-            # Move any existing aliases that pointed at the old root.
-            connection.execute(
-                "UPDATE author_alias SET canonical_key = ?, updated_at = ? "
-                "WHERE canonical_key = ? AND alias_key != ?",
-                (canonical, now, alias, alias),
-            )
-            connection.commit()
-        return canonical
-
-    def canonical_author_key(self, key: str) -> str:
-        current = key
-        seen: set[str] = set()
-        with self._read() as connection:
-            for _ in range(8):
-                if current in seen:
-                    break
-                seen.add(current)
-                row = connection.execute(
-                    "SELECT canonical_key FROM author_alias WHERE alias_key = ?", (current,)
-                ).fetchone()
-                if row is None:
-                    break
-                current = str(row["canonical_key"])
-        return current
-
-    def author_members(self, key: str) -> list[str]:
-        canonical = self.canonical_author_key(key)
-        with self._read() as connection:
-            rows = connection.execute(
-                "SELECT alias_key FROM author_alias WHERE canonical_key = ?", (canonical,)
-            ).fetchall()
-        members = {canonical, *(str(row["alias_key"]) for row in rows)}
-        return sorted(members)
-
-    def point_ids_for_author(self, key: str) -> list[str]:
-        members = self.author_members(key)
-        placeholders = ",".join("?" for _ in members)
-        with self._read() as connection:
-            rows = connection.execute(
-                f"SELECT point_id FROM image_source WHERE author_key IN ({placeholders}) "
-                "ORDER BY mtime_ns IS NULL, mtime_ns DESC, updated_at DESC, point_id",
-                members,
-            ).fetchall()
-        return [str(row["point_id"]) for row in rows]
-
     def list_source_tags(
         self, query: str = "", *, limit: int = 60, offset: int = 0
     ) -> list[dict[str, Any]]:
@@ -892,10 +1013,16 @@ class ProvenanceStore:
             rows = connection.execute(
                 "SELECT image_source.author_key AS key, COUNT(*) AS count "
                 "FROM image_source JOIN _scope_points USING(point_id) "
-                "WHERE image_source.author_key IS NOT NULL "
                 "GROUP BY image_source.author_key"
             ).fetchall()
-        return {str(row["key"]): int(row["count"]) for row in rows}
+        counts: dict[str, int] = {}
+        for row in rows:
+            key = row["key"]
+            if key in (None, ""):
+                counts[UNASSIGNED_AUTHOR_KEY] = int(row["count"])
+            else:
+                counts[str(key)] = int(row["count"])
+        return counts
 
     def source_tag_counts_for_points(
         self,
@@ -1045,11 +1172,16 @@ class ProvenanceStore:
                     "WHERE all_tags.point_id = image_source.point_id "
                     "AND LOWER(value) LIKE ?) "
                     "OR LOWER(COALESCE(title, '')) LIKE ? "
-                    "OR EXISTS (SELECT 1 FROM author WHERE author.key = image_source.author_key "
-                    "AND (LOWER(COALESCE(name, '')) LIKE ? "
-                    "OR LOWER(COALESCE(handle, '')) LIKE ? OR LOWER(key) LIKE ?)))"
+                    "OR EXISTS (SELECT 1 FROM artist "
+                    "WHERE CAST(artist.id AS TEXT) = image_source.author_key "
+                    "AND (LOWER(COALESCE(artist.name, '')) LIKE ? "
+                    "OR LOWER(COALESCE(artist.name_key, '')) LIKE ? "
+                    "OR EXISTS (SELECT 1 FROM artist_identity "
+                    "WHERE artist_identity.artist_id = artist.id "
+                    "AND (artist_identity.identity LIKE ? "
+                    "OR LOWER(artist_identity.display) LIKE ?)))))"
                 )
-                params.extend([like, like, like, like, like])
+                params.extend([like, like, like, like, like, like])
             clauses.append("(" + " OR ".join(alternatives) + ")")
         with self._read() as connection:
             rows = connection.execute(
@@ -1085,109 +1217,983 @@ class ProvenanceStore:
             ).fetchall()
         return [str(row["point_id"]) for row in rows]
 
+    # --------------------------------------------------------- artist registry
+
+    @staticmethod
+    def _identity_specs(
+        platform: str,
+        platform_id: str,
+        *,
+        name: str | None = None,
+        handle: str | None = None,
+        profile_url: str | None = None,
+    ) -> list[tuple[str, str, str | None, str | None, str | None]]:
+        """Return ``(kind, identity, display, profile_url, source)`` specs.
+
+        Handle identities share one namespace across Pixiv and X.  That is what
+        makes a Pixiv ``userAccount`` and an X screen name with the same text
+        resolve to one artist instead of two disconnected rows.
+        """
+        platform = str(platform or "").strip().casefold()
+        raw = str(platform_id or "").strip()
+        display = str(handle or "").strip().lstrip("@")
+        specs: list[tuple[str, str, str | None, str | None, str | None]] = []
+        if platform == "pixiv":
+            pixiv_id = normalize_pixiv_user_id(raw)
+            if pixiv_id:
+                specs.append(
+                    (
+                        IDENTITY_PIXIV,
+                        pixiv_id,
+                        pixiv_id,
+                        profile_url or f"https://www.pixiv.net/users/{pixiv_id}",
+                        "pixiv",
+                    )
+                )
+            handle_text = display or str(handle or "").strip()
+            handle_key = _normalized_handle(handle_text)
+            if handle_key:
+                specs.append((IDENTITY_HANDLE, handle_key, handle_text, None, "pixiv"))
+        elif platform == "twitter":
+            handle_text = display or raw.lstrip("@")
+            handle_key = _normalized_handle(handle_text)
+            if raw.isdigit():
+                specs.append(
+                    (
+                        IDENTITY_TWITTER,
+                        raw,
+                        handle_text or raw,
+                        f"https://x.com/{handle_text}" if handle_text else None,
+                        "twitter",
+                    )
+                )
+            if handle_key:
+                specs.append(
+                    (
+                        IDENTITY_HANDLE,
+                        handle_key,
+                        handle_text,
+                        f"https://x.com/{handle_text}" if handle_text else None,
+                        "twitter",
+                    )
+                )
+        elif platform == "manual":
+            label = str(name or raw or handle or "").strip()
+            name_key = _author_text(label)
+            if name_key:
+                specs.append((IDENTITY_NAME, name_key, label, None, "manual"))
+        elif raw:
+            identity = _normalized_handle(raw)
+            specs.append((platform, identity, display or raw, profile_url, platform))
+        unique: list[tuple[str, str, str | None, str | None, str | None]] = []
+        seen: set[tuple[str, str]] = set()
+        for spec in specs:
+            key = (spec[0], spec[1])
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(spec)
+        return unique
+
+    @staticmethod
+    def _name_priority(value: Any) -> tuple[int, int, int]:
+        text = str(value or "").strip()
+        if not text:
+            return (0, 0, 0)
+        non_ascii = any(ord(char) > 127 for char in text)
+        human_script = 1 if non_ascii and len(text) >= 2 else 0
+        return (1, human_script, min(len(text), 40))
+
+    def _canonical_locked(self, connection: sqlite3.Connection, key: str) -> str:
+        raw = str(key or "").strip()
+        if not raw:
+            return raw
+        if raw.isdigit():
+            row = connection.execute(
+                "SELECT id FROM artist WHERE id = ?", (int(raw),)
+            ).fetchone()
+            if row is not None:
+                return str(row["id"])
+        row = connection.execute(
+            "SELECT artist_id FROM artist_legacy WHERE legacy_key = ?", (raw,)
+        ).fetchone()
+        if row is not None:
+            return str(row["artist_id"])
+        if ":" in raw:
+            prefix, value = raw.split(":", 1)
+            prefix = prefix.strip().casefold()
+            candidates: list[tuple[str, str]] = []
+            if prefix in {"twitter", "x", "handle"}:
+                candidates.append((IDENTITY_HANDLE, _normalized_handle(value)))
+                if value.strip().isdigit():
+                    candidates.append((IDENTITY_TWITTER, value.strip()))
+            elif prefix == "pixiv":
+                candidates.append((IDENTITY_PIXIV, normalize_pixiv_user_id(value)))
+            elif prefix in {"manual", "artist"}:
+                candidates.append((IDENTITY_NAME, _author_text(value)))
+            for kind, identity in candidates:
+                if not identity:
+                    continue
+                row = connection.execute(
+                    "SELECT artist_id FROM artist_identity WHERE kind = ? AND identity = ?",
+                    (kind, identity),
+                ).fetchone()
+                if row is not None:
+                    return str(row["artist_id"])
+        if raw.startswith("@"):
+            row = connection.execute(
+                "SELECT artist_id FROM artist_identity WHERE kind = ? AND identity = ?",
+                (IDENTITY_HANDLE, _normalized_handle(raw)),
+            ).fetchone()
+            if row is not None:
+                return str(row["artist_id"])
+        return raw
+
+    def _record_legacy_locked(
+        self, connection: sqlite3.Connection, legacy_key: str, artist_id: int
+    ) -> None:
+        key = str(legacy_key or "").strip()
+        if not key:
+            return
+        connection.execute(
+            """
+            INSERT INTO artist_legacy (legacy_key, artist_id, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(legacy_key) DO UPDATE SET
+                artist_id = excluded.artist_id,
+                updated_at = excluded.updated_at
+            """,
+            (key, int(artist_id), _now()),
+        )
+
+    _NAME_SOURCE_RANK = {"manual": 3, "pixiv": 2, "twitter": 1}
+
+    def _update_artist_locked(
+        self,
+        connection: sqlite3.Connection,
+        artist_id: int,
+        *,
+        name: str | None,
+        name_source: str | None,
+        avatar_url: str | None,
+        profile_fetched: bool,
+        overwrite_name: bool,
+        now: int,
+    ) -> None:
+        row = connection.execute(
+            "SELECT name, name_source, avatar_url, profile_fetched FROM artist WHERE id = ?",
+            (int(artist_id),),
+        ).fetchone()
+        if row is None:
+            return
+        updates: list[str] = ["updated_at = ?"]
+        values: list[Any] = [now]
+        current_name = str(row["name"] or "").strip()
+        incoming = str(name or "").strip()
+        incoming_source = str(name_source or "")
+        current_source = str(row["name_source"] or "")
+        if incoming and (
+            (
+                overwrite_name
+                and self._NAME_SOURCE_RANK.get(incoming_source, 0)
+                >= self._NAME_SOURCE_RANK.get(current_source, 0)
+            )
+            or not current_name
+            or self._NAME_SOURCE_RANK.get(incoming_source, 0)
+            > self._NAME_SOURCE_RANK.get(current_source, 0)
+            or (
+                self._NAME_SOURCE_RANK.get(incoming_source, 0)
+                == self._NAME_SOURCE_RANK.get(current_source, 0)
+                and self._name_priority(incoming) > self._name_priority(current_name)
+            )
+        ):
+            updates.extend(["name = ?", "name_key = ?", "name_source = ?"])
+            values.extend([incoming, _author_text(incoming), incoming_source or None])
+        if avatar_url and not row["avatar_url"]:
+            updates.append("avatar_url = ?")
+            values.append(avatar_url)
+        if profile_fetched:
+            updates.append("profile_fetched = 1")
+        values.append(int(artist_id))
+        connection.execute(
+            f"UPDATE artist SET {', '.join(updates)} WHERE id = ?", values
+        )
+
+    def _merge_locked(
+        self,
+        connection: sqlite3.Connection,
+        source_id: int,
+        target_id: int,
+        now: int,
+    ) -> None:
+        source_id = int(source_id)
+        target_id = int(target_id)
+        if source_id == target_id:
+            return
+        source = connection.execute(
+            "SELECT * FROM artist WHERE id = ?", (source_id,)
+        ).fetchone()
+        target = connection.execute(
+            "SELECT * FROM artist WHERE id = ?", (target_id,)
+        ).fetchone()
+        if source is None:
+            return
+        if target is None:
+            connection.execute(
+                "UPDATE artist SET id = ?, updated_at = ? WHERE id = ?",
+                (target_id, now, source_id),
+            )
+            return
+        name = target["name"]
+        name_source = target["name_source"]
+        source_rank = self._NAME_SOURCE_RANK.get(str(source["name_source"] or ""), 0)
+        target_rank = self._NAME_SOURCE_RANK.get(str(name_source or ""), 0)
+        if source_rank > target_rank or (
+            source_rank == target_rank
+            and self._name_priority(source["name"]) > self._name_priority(name)
+        ):
+            name = source["name"]
+            name_source = source["name_source"]
+        avatar = target["avatar_url"] or source["avatar_url"]
+        note = target["note"] or source["note"]
+        profile_fetched = max(
+            int(target["profile_fetched"] or 0), int(source["profile_fetched"] or 0)
+        )
+        created_at = min(int(target["created_at"]), int(source["created_at"]))
+        connection.execute(
+            """
+            UPDATE artist SET name = ?, name_key = ?, name_source = ?, avatar_url = ?, note = ?,
+                profile_fetched = ?, created_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                name,
+                _author_text(name) or None,
+                name_source,
+                avatar,
+                note,
+                profile_fetched,
+                created_at,
+                now,
+                target_id,
+            ),
+        )
+        connection.execute(
+            "UPDATE artist_identity SET artist_id = ?, updated_at = ? WHERE artist_id = ?",
+            (target_id, now, source_id),
+        )
+        connection.execute(
+            "UPDATE image_source SET author_key = ?, updated_at = ? WHERE author_key = ?",
+            (str(target_id), now, str(source_id)),
+        )
+        connection.execute(
+            "UPDATE artist_legacy SET artist_id = ?, updated_at = ? WHERE artist_id = ?",
+            (target_id, now, source_id),
+        )
+        connection.execute("DELETE FROM artist WHERE id = ?", (source_id,))
+        self._record_legacy_locked(connection, str(source_id), target_id)
+        connection.execute(
+            """
+            UPDATE artist SET image_count = (
+                SELECT COUNT(*) FROM image_source WHERE author_key = CAST(? AS TEXT)
+            ) WHERE id = ?
+            """,
+            (target_id, target_id),
+        )
+
+    def _ensure_artist_locked(
+        self,
+        connection: sqlite3.Connection,
+        specs: Sequence[tuple[str, str, str | None, str | None, str | None]],
+        *,
+        name: str | None,
+        name_source: str | None = None,
+        avatar_url: str | None,
+        profile_fetched: bool,
+        overwrite_name: bool,
+        legacy_keys: Sequence[str] = (),
+        base_artist_id: int | None = None,
+        commit: bool = True,
+    ) -> int:
+        now = _now()
+        if name_source is None and name:
+            if any(kind == IDENTITY_PIXIV for kind, *_ in specs):
+                name_source = "pixiv"
+            elif any(kind in {IDENTITY_TWITTER, IDENTITY_HANDLE} for kind, *_ in specs):
+                name_source = "twitter"
+            elif any(kind == IDENTITY_NAME for kind, *_ in specs):
+                name_source = "manual"
+        owners: list[int] = []
+        if base_artist_id is not None:
+            owners.append(int(base_artist_id))
+        for kind, identity, _display, _url, _source in specs:
+            row = connection.execute(
+                "SELECT artist_id FROM artist_identity WHERE kind = ? AND identity = ?",
+                (kind, identity),
+            ).fetchone()
+            if row is not None:
+                owner = int(row["artist_id"])
+                if owner not in owners:
+                    owners.append(owner)
+        artist_id = (
+            int(base_artist_id)
+            if base_artist_id is not None
+            else (min(owners) if owners else None)
+        )
+        if artist_id is None:
+            cursor = connection.execute(
+                """
+                INSERT INTO artist (
+                    name, name_key, name_source, avatar_url, profile_fetched,
+                    image_count, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+                """,
+                (
+                    str(name or "").strip() or None,
+                    _author_text(name) or None,
+                    name_source,
+                    avatar_url,
+                    1 if profile_fetched else 0,
+                    now,
+                    now,
+                ),
+            )
+            artist_id = int(cursor.lastrowid)
+        else:
+            for other in owners:
+                if other != artist_id:
+                    self._merge_locked(connection, other, artist_id, now)
+            self._update_artist_locked(
+                connection,
+                artist_id,
+                name=name,
+                name_source=name_source,
+                avatar_url=avatar_url,
+                profile_fetched=profile_fetched,
+                overwrite_name=overwrite_name,
+                now=now,
+            )
+        for kind, identity, display, url, source in specs:
+            connection.execute(
+                """
+                INSERT INTO artist_identity (
+                    kind, identity, display, profile_url, source, artist_id, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(kind, identity) DO UPDATE SET
+                    artist_id = excluded.artist_id,
+                    display = COALESCE(excluded.display, artist_identity.display),
+                    profile_url = COALESCE(excluded.profile_url, artist_identity.profile_url),
+                    source = CASE
+                        WHEN artist_identity.source = 'twitter'
+                          OR excluded.source = 'twitter' THEN 'twitter'
+                        ELSE COALESCE(excluded.source, artist_identity.source)
+                    END,
+                    updated_at = excluded.updated_at
+                """,
+                (kind, identity, display, url, source, artist_id, now),
+            )
+        for legacy in legacy_keys:
+            self._record_legacy_locked(connection, legacy, artist_id)
+        if commit:
+            connection.commit()
+        return artist_id
+
+    def ensure_author(
+        self,
+        platform: str,
+        platform_id: str,
+        *,
+        name: str | None = None,
+        handle: str | None = None,
+        profile_url: str | None = None,
+        avatar_url: str | None = None,
+        social: dict[str, Any] | None = None,
+        profile_fetched: bool = False,
+    ) -> str:
+        del social  # Social links are resolved into identities before reaching the store.
+        specs = self._identity_specs(
+            platform,
+            platform_id,
+            name=name,
+            handle=handle,
+            profile_url=profile_url,
+        )
+        with self._read() as connection:
+            artist_id = self._ensure_artist_locked(
+                connection,
+                specs,
+                name=name,
+                avatar_url=avatar_url,
+                profile_fetched=profile_fetched,
+                overwrite_name=bool(profile_fetched) or platform == "manual",
+                legacy_keys=[
+                    key
+                    for key in (
+                        f"{platform}:{platform_id}".strip(":"),
+                        f"{platform}:{handle}".strip(":") if handle else "",
+                    )
+                    if key
+                ],
+            )
+        return str(artist_id)
+
+    def ensure_manual_author(self, name: str) -> str:
+        """Find or create the artist identified by a manually entered name."""
+        label = str(name or "").strip()
+        if not label:
+            raise ValueError("作者名不能为空")
+        return self.ensure_author("manual", label, name=label)
+
+    def ensure_linked_author(
+        self,
+        *,
+        name: str | None = None,
+        pixiv_id: str | None = None,
+        x_handle: str | None = None,
+    ) -> str:
+        """Attach Pixiv and/or X identities to one artist, merging conflicts."""
+        specs: list[tuple[str, str, str | None, str | None, str | None]] = []
+        legacy: list[str] = []
+        pixiv_value = normalize_pixiv_user_id(pixiv_id)
+        if pixiv_value:
+            specs.extend(self._identity_specs("pixiv", pixiv_value))
+            legacy.append(f"pixiv:{pixiv_value}")
+        handle_value = normalize_twitter_handle(x_handle)
+        if handle_value:
+            specs.extend(self._identity_specs("twitter", handle_value, handle=handle_value))
+            legacy.extend([f"twitter:{handle_value}", f"twitter:{handle_value.casefold()}"])
+        if not specs:
+            return self.ensure_manual_author(name or "")
+        with self._read() as connection:
+            artist_id = self._ensure_artist_locked(
+                connection,
+                specs,
+                name=name,
+                name_source="manual" if name else None,
+                avatar_url=None,
+                profile_fetched=False,
+                overwrite_name=bool(name),
+                legacy_keys=legacy,
+            )
+        return str(artist_id)
+
+    def identity_owner(self, platform: str, value: str) -> str | None:
+        """Return the artist ID that already owns a Pixiv ID or handle."""
+        platform = str(platform or "").strip().casefold()
+        if platform == "pixiv":
+            kind = IDENTITY_PIXIV
+            identity = normalize_pixiv_user_id(value)
+        else:
+            kind = IDENTITY_HANDLE
+            identity = _normalized_handle(normalize_twitter_handle(value))
+        if not identity:
+            return None
+        with self._read() as connection:
+            row = connection.execute(
+                "SELECT artist_id FROM artist_identity WHERE kind = ? AND identity = ?",
+                (kind, identity),
+            ).fetchone()
+        return str(row["artist_id"]) if row is not None else None
+
+    def attach_identity(
+        self,
+        artist_key: str,
+        platform: str,
+        value: str,
+        *,
+        name: str | None = None,
+    ) -> str:
+        """Attach an unowned Pixiv ID or X handle to an existing artist."""
+        platform = str(platform or "").strip().casefold()
+        if platform == "pixiv":
+            pixiv_id = normalize_pixiv_user_id(value)
+            if not pixiv_id:
+                raise ValueError("Pixiv ID 无效")
+            specs = self._identity_specs("pixiv", pixiv_id)
+            legacy = [f"pixiv:{pixiv_id}"]
+        else:
+            handle = normalize_twitter_handle(value)
+            if not handle:
+                raise ValueError("X handle 无效")
+            specs = self._identity_specs("twitter", handle, handle=handle)
+            legacy = [f"twitter:{handle}", f"twitter:{handle.casefold()}"]
+        with self._read() as connection:
+            base = self._canonical_locked(connection, artist_key)
+            if not base.isdigit():
+                raise ValueError("作者不存在")
+            artist_id = self._ensure_artist_locked(
+                connection,
+                specs,
+                name=name,
+                name_source="manual" if name else None,
+                avatar_url=None,
+                profile_fetched=False,
+                overwrite_name=bool(name),
+                legacy_keys=legacy,
+                base_artist_id=int(base),
+            )
+        return str(artist_id)
+
+    def add_link(self, artist_key: str, url: str, *, label: str = "") -> str:
+        """Attach a normalized http(s) social link to an artist."""
+        if self._is_unassigned_key(artist_key):
+            raise ValueError("无画师不能添加社交链接")
+        normalized = normalize_social_link(url)
+        if not normalized:
+            raise ValueError("请输入有效的 http(s) 链接")
+        display = str(label or "").strip() or normalized
+        with self._read() as connection:
+            base = self._canonical_locked(connection, artist_key)
+            if not base.isdigit():
+                raise ValueError("作者不存在")
+            owner = connection.execute(
+                "SELECT artist_id FROM artist_identity WHERE kind = ? AND identity = ?",
+                (IDENTITY_LINK, normalized),
+            ).fetchone()
+            if owner is not None and str(owner["artist_id"]) != base:
+                owner_id = int(owner["artist_id"])
+                owner_row = connection.execute(
+                    "SELECT name FROM artist WHERE id = ?", (owner_id,)
+                ).fetchone()
+                owner_name = str(owner_row["name"] or owner_id) if owner_row else str(owner_id)
+                raise ValueError(f"该链接已属于画师「{owner_name}」")
+            connection.execute(
+                "INSERT OR REPLACE INTO artist_identity"
+                "(kind, identity, display, profile_url, source, artist_id, updated_at) "
+                "VALUES (?, ?, ?, ?, 'manual', ?, ?)",
+                (IDENTITY_LINK, normalized, display, normalized, int(base), _now()),
+            )
+            connection.execute(
+                "UPDATE artist SET updated_at = ? WHERE id = ?", (_now(), int(base))
+            )
+            connection.commit()
+        return base
+
+    def get_author(self, key: str) -> dict[str, Any] | None:
+        with self._read() as connection:
+            artist_id = self._canonical_locked(connection, key)
+            if not artist_id.isdigit():
+                return None
+            row = connection.execute(
+                "SELECT * FROM artist WHERE id = ?", (int(artist_id),)
+            ).fetchone()
+            if row is None:
+                return None
+            identities = connection.execute(
+                "SELECT * FROM artist_identity WHERE artist_id = ? "
+                "ORDER BY kind, identity",
+                (int(artist_id),),
+            ).fetchall()
+        return self._author_view(row, identities)
+
+    def author_is_fresh(self, key: str, *, max_age: int = AUTHOR_TTL_SECONDS) -> bool:
+        author = self.get_author(key)
+        return bool(author and _now() - int(author["updated_at"]) <= max_age)
+
+    def author_profile_fresh(self, key: str, *, max_age: int = AUTHOR_TTL_SECONDS) -> bool:
+        author = self.get_author(key)
+        return bool(
+            author
+            and author.get("profile_fetched")
+            and _now() - int(author["updated_at"]) <= max_age
+        )
+
+    def link_authors(
+        self,
+        alias_key: str,
+        canonical_key: str,
+        *,
+        evidence: str,
+        confidence: float = 0.8,
+    ) -> str:
+        del evidence, confidence
+        with self._read() as connection:
+            alias = self._canonical_locked(connection, alias_key)
+            canonical = self._canonical_locked(connection, canonical_key)
+            if alias.isdigit() and canonical.isdigit() and alias != canonical:
+                self._merge_locked(connection, int(alias), int(canonical), _now())
+                self._record_legacy_locked(connection, str(alias_key), int(canonical))
+                connection.commit()
+            return canonical
+
+    def merge_authors(self, source_key: str, target_key: str) -> str:
+        """Merge one artist into another; every identity and image follows."""
+        with self._read() as connection:
+            source = self._canonical_locked(connection, source_key)
+            target = self._canonical_locked(connection, target_key)
+            if not source.isdigit() or not target.isdigit():
+                raise ValueError("作者不存在")
+            if source != target:
+                self._merge_locked(connection, int(source), int(target), _now())
+                self._record_legacy_locked(connection, source_key, int(target))
+                connection.commit()
+            return target
+
+    def canonical_author_key(self, key: str) -> str:
+        with self._read() as connection:
+            return self._canonical_locked(connection, key)
+
+    def author_members(self, key: str) -> list[str]:
+        with self._read() as connection:
+            artist_id = self._canonical_locked(connection, key)
+            if not artist_id.isdigit():
+                return []
+            rows = connection.execute(
+                "SELECT kind, identity FROM artist_identity WHERE artist_id = ?",
+                (int(artist_id),),
+            ).fetchall()
+        return sorted(f"{row['kind']}:{row['identity']}" for row in rows)
+
+    def point_ids_for_author(self, key: str) -> list[str]:
+        with self._read() as connection:
+            if self._is_unassigned_key(key):
+                rows = connection.execute(
+                    "SELECT point_id FROM image_source "
+                    "WHERE author_key IS NULL OR author_key = '' "
+                    "ORDER BY mtime_ns IS NULL, mtime_ns DESC, updated_at DESC, point_id"
+                ).fetchall()
+                return [str(row["point_id"]) for row in rows]
+            artist_id = self._canonical_locked(connection, key)
+            if not artist_id.isdigit():
+                return []
+            rows = connection.execute(
+                "SELECT point_id FROM image_source WHERE author_key = ? "
+                "ORDER BY mtime_ns IS NULL, mtime_ns DESC, updated_at DESC, point_id",
+                (artist_id,),
+            ).fetchall()
+        return [str(row["point_id"]) for row in rows]
+
+    @staticmethod
+    def _is_unassigned_key(key: str | None) -> bool:
+        return str(key or "").strip().casefold() == UNASSIGNED_AUTHOR_KEY
+
     def author_names(self, keys: Sequence[str]) -> dict[str, str]:
         clean = list(dict.fromkeys(str(key) for key in keys if key))
         if not clean:
             return {}
         result: dict[str, str] = {}
+        for key in clean:
+            if self._is_unassigned_key(key):
+                result[key] = "无画师"
+        clean = [key for key in clean if not self._is_unassigned_key(key)]
+        if not clean:
+            return result
         with self._read() as connection:
-            for start in range(0, len(clean), 256):
-                batch = clean[start : start + 256]
+            id_map = {
+                key: self._canonical_locked(connection, key) for key in clean
+            }
+            ids = sorted({int(value) for value in id_map.values() if value.isdigit()})
+            names: dict[int, str] = {}
+            for start in range(0, len(ids), 400):
+                batch = ids[start : start + 400]
                 placeholders = ",".join("?" for _ in batch)
                 rows = connection.execute(
-                    f"SELECT key, name, handle FROM author WHERE key IN ({placeholders})",
+                    "SELECT id, name FROM artist WHERE id IN "
+                    f"({placeholders})",
                     batch,
                 ).fetchall()
                 for row in rows:
-                    result[str(row["key"])] = str(
-                        row["name"] or row["handle"] or row["key"]
-                    )
+                    names[int(row["id"])] = str(row["name"] or "")
+            handles = self._primary_handles_locked(connection, ids)
+            for key, value in id_map.items():
+                if not value.isdigit():
+                    continue
+                artist_id = int(value)
+                result[key] = (
+                    names.get(artist_id)
+                    or handles.get(artist_id)
+                    or str(artist_id)
+                )
         return result
 
     def author_groups(self, keys: Sequence[str]) -> dict[str, list[dict[str, Any]]]:
-        """Return canonical/alias keys mapped to their merged author members."""
+        """Return each artist key mapped to its linked platform accounts."""
         wanted = list(dict.fromkeys(str(key) for key in keys if key))
         if not wanted:
             return {}
         with self._read() as connection:
-            alias_rows = connection.execute(
-                "SELECT alias_key, canonical_key FROM author_alias"
-            ).fetchall()
-        aliases = {
-            str(row["alias_key"]): str(row["canonical_key"]) for row in alias_rows
-        }
-
-        def canonical(key: str) -> str:
-            current = key
-            seen: set[str] = set()
-            while current in aliases and current not in seen:
-                seen.add(current)
-                current = aliases[current]
-            return current
-
-        canonical_to_keys: dict[str, set[str]] = {}
-        for key in wanted:
-            root = canonical(key)
-            canonical_to_keys.setdefault(root, {root}).add(key)
-        for alias_key in aliases:
-            root = canonical(alias_key)
-            if root in canonical_to_keys:
-                canonical_to_keys[root].add(alias_key)
-        all_keys = sorted({key for group in canonical_to_keys.values() for key in group})
-        authors: dict[str, dict[str, Any]] = {}
-        if all_keys:
-            with self._read() as connection:
-                for start in range(0, len(all_keys), 256):
-                    batch = all_keys[start : start + 256]
+            roots = {
+                key: self._canonical_locked(connection, key) for key in wanted
+            }
+            ids = sorted({int(value) for value in roots.values() if value.isdigit()})
+            groups: dict[int, list[dict[str, Any]]] = {}
+            if ids:
+                artist_rows_all: list[sqlite3.Row] = []
+                identity_rows_all: list[sqlite3.Row] = []
+                for start in range(0, len(ids), 400):
+                    batch = ids[start : start + 400]
                     placeholders = ",".join("?" for _ in batch)
-                    rows = connection.execute(
-                        "SELECT key, platform, platform_id, name, handle, profile_url "
-                        f"FROM author WHERE key IN ({placeholders})",
-                        batch,
-                    ).fetchall()
-                    for row in rows:
-                        authors[str(row["key"])] = dict(row)
+                    artist_rows_all.extend(
+                        connection.execute(
+                            "SELECT id, name, avatar_url FROM artist WHERE id IN "
+                            f"({placeholders})",
+                            batch,
+                        ).fetchall()
+                    )
+                    identity_rows_all.extend(
+                        connection.execute(
+                            "SELECT * FROM artist_identity WHERE artist_id IN "
+                            f"({placeholders}) ORDER BY artist_id, kind, identity",
+                            batch,
+                        ).fetchall()
+                    )
+                artists = {int(row["id"]): row for row in artist_rows_all}
+                by_artist: dict[int, list[sqlite3.Row]] = {}
+                for row in identity_rows_all:
+                    by_artist.setdefault(int(row["artist_id"]), []).append(row)
+                for artist_id, rows in by_artist.items():
+                    artist = artists.get(artist_id)
+                    groups[artist_id] = self._member_views(
+                        artist, rows
+                    )
         result: dict[str, list[dict[str, Any]]] = {}
-        for root, members in canonical_to_keys.items():
-            group = [authors[key] for key in sorted(members) if key in authors]
-            result[root] = group
-            for key in members:
-                result[key] = group
+        for key, root in roots.items():
+            if self._is_unassigned_key(key):
+                result[key] = []
+            elif root.isdigit() and int(root) in groups:
+                result[key] = groups[int(root)]
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            with self._read() as connection:
+                for row in connection.execute(
+                    "SELECT legacy_key, artist_id FROM artist_legacy "
+                    f"WHERE artist_id IN ({placeholders})",
+                    ids,
+                ).fetchall():
+                    artist_id = int(row["artist_id"])
+                    if artist_id in groups:
+                        result.setdefault(str(row["legacy_key"]), groups[artist_id])
         return result
 
     def author_summary(self, key: str) -> dict[str, Any] | None:
-        canonical = self.canonical_author_key(key)
-        author = self.get_author(canonical)
-        if author is None:
-            return None
-        members = self.author_members(canonical)
-        placeholders = ",".join("?" for _ in members)
+        if self._is_unassigned_key(key):
+            point_ids = self.point_ids_for_author(UNASSIGNED_AUTHOR_KEY)
+            return {
+                "id": 0,
+                "key": UNASSIGNED_AUTHOR_KEY,
+                "name": "无画师",
+                "handle": "",
+                "avatar_url": None,
+                "note": None,
+                "profile_fetched": 0,
+                "image_count": len(point_ids),
+                "created_at": 0,
+                "updated_at": 0,
+                "identities": [],
+                "members": [],
+                "pixiv_ids": [],
+                "x_handles": [],
+                "handles": [],
+                "links": [],
+            }
         with self._read() as connection:
-            count = connection.execute(
-                f"SELECT COUNT(*) FROM image_source WHERE author_key IN ({placeholders})",
-                members,
-            ).fetchone()[0]
-            member_rows = connection.execute(
-                f"SELECT * FROM author WHERE key IN ({placeholders})", members
+            artist_id = self._canonical_locked(connection, key)
+            if not artist_id.isdigit():
+                return None
+            row = connection.execute(
+                "SELECT * FROM artist WHERE id = ?", (int(artist_id),)
+            ).fetchone()
+            if row is None:
+                return None
+            identities = connection.execute(
+                "SELECT * FROM artist_identity WHERE artist_id = ? "
+                "ORDER BY kind, identity",
+                (int(artist_id),),
             ).fetchall()
-        author["members"] = [self._row_to_author(row) for row in member_rows]
-        author["image_count"] = int(count)
-        return author
+        summary = self._author_view(row, identities)
+        summary["members"] = self._member_views(row, identities)
+        summary["image_count"] = int(row["image_count"] or 0)
+        return summary
+
+    def unassigned_count(self) -> int:
+        with self._read() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) FROM image_source "
+                "WHERE author_key IS NULL OR author_key = ''"
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def unassigned_count_for_points(self, point_ids: Sequence[str]) -> int:
+        with self._read() as connection:
+            self._scope_temp_table(connection, point_ids)
+            row = connection.execute(
+                "SELECT COUNT(*) FROM image_source JOIN _scope_points USING(point_id) "
+                "WHERE image_source.author_key IS NULL OR image_source.author_key = ''"
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    @staticmethod
+    def _identity_dict(row: sqlite3.Row) -> dict[str, Any]:
+        kind = str(row["kind"])
+        return {
+            "kind": kind,
+            "identity": str(row["identity"]),
+            "platform": _identity_kind_platform(kind),
+            "handle": str(row["display"] or row["identity"]),
+            "display": str(row["display"] or row["identity"]),
+            "profile_url": str(row["profile_url"] or ""),
+            "source": str(row["source"] or ""),
+        }
+
+    def _author_view(
+        self, row: sqlite3.Row, identities: Sequence[sqlite3.Row]
+    ) -> dict[str, Any]:
+        artist_id = int(row["id"])
+        identity_dicts = [self._identity_dict(item) for item in identities]
+        pixiv_ids = sorted(
+            {
+                item["identity"]
+                for item in identity_dicts
+                if item["kind"] == IDENTITY_PIXIV
+            }
+        )
+        x_handles = sorted(
+            {
+                item["display"]
+                for item in identity_dicts
+                if item["kind"] == IDENTITY_TWITTER
+                or (
+                    item["kind"] == IDENTITY_HANDLE
+                    and item["source"] == "twitter"
+                )
+            },
+            key=str.casefold,
+        )
+        handles = sorted(
+            {
+                item["display"]
+                for item in identity_dicts
+                if item["kind"] == IDENTITY_HANDLE
+            },
+            key=str.casefold,
+        )
+        links = [item for item in identity_dicts if item["kind"] == IDENTITY_LINK]
+        primary = (
+            (x_handles[0] if x_handles else "")
+            or (handles[0] if handles else "")
+            or str(row["name"] or "")
+        )
+        return {
+            "id": artist_id,
+            "key": str(artist_id),
+            "name": row["name"],
+            "handle": primary,
+            "avatar_url": row["avatar_url"],
+            "note": row["note"],
+            "profile_fetched": int(row["profile_fetched"] or 0),
+            "image_count": int(row["image_count"] or 0),
+            "created_at": int(row["created_at"]),
+            "updated_at": int(row["updated_at"]),
+            "identities": identity_dicts,
+            "pixiv_ids": pixiv_ids,
+            "x_handles": x_handles,
+            "handles": handles,
+            "links": links,
+        }
+
+    def _member_views(
+        self, artist: sqlite3.Row | None, identities: Sequence[sqlite3.Row]
+    ) -> list[dict[str, Any]]:
+        name = str(artist["name"] or "") if artist is not None else ""
+        avatar = str(artist["avatar_url"] or "") if artist is not None else ""
+        members: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for row in identities:
+            kind = str(row["kind"])
+            identity = str(row["identity"])
+            display = str(row["display"] or identity)
+            if kind == IDENTITY_PIXIV:
+                platform = "pixiv"
+                platform_id = identity
+                handle = display
+                profile = str(row["profile_url"] or f"https://www.pixiv.net/users/{identity}")
+                key = (platform, platform_id)
+            elif kind == IDENTITY_TWITTER:
+                platform = "twitter"
+                platform_id = identity
+                handle = display
+                profile = str(row["profile_url"] or f"https://x.com/{display}")
+                key = (platform, display.casefold())
+            elif kind == IDENTITY_HANDLE and str(row["source"] or "") == "twitter":
+                platform = "twitter"
+                platform_id = display
+                handle = display
+                profile = str(row["profile_url"] or f"https://x.com/{display}")
+                key = (platform, display.casefold())
+            elif kind == IDENTITY_LINK:
+                platform = "link"
+                platform_id = identity
+                handle = display
+                profile = str(row["profile_url"] or identity)
+                key = (platform, identity.casefold())
+            else:
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            members.append(
+                {
+                    "key": f"{platform}:{platform_id}",
+                    "platform": platform,
+                    "platform_id": platform_id,
+                    "handle": handle,
+                    "name": name,
+                    "profile_url": profile,
+                    "avatar_url": avatar,
+                }
+            )
+        return members
+
+    def _primary_handles_locked(
+        self, connection: sqlite3.Connection, ids: Sequence[int]
+    ) -> dict[int, str]:
+        if not ids:
+            return {}
+        rows: list[sqlite3.Row] = []
+        for start in range(0, len(ids), 400):
+            batch = list(ids[start : start + 400])
+            placeholders = ",".join("?" for _ in batch)
+            rows.extend(
+                connection.execute(
+                    "SELECT artist_id, kind, identity, display, source "
+                    "FROM artist_identity WHERE artist_id IN "
+                    f"({placeholders})",
+                    batch,
+                ).fetchall()
+            )
+        best: dict[int, tuple[int, str]] = {}
+        for row in rows:
+            artist_id = int(row["artist_id"])
+            kind = str(row["kind"])
+            identity = str(row["identity"])
+            display = str(row["display"] or identity)
+            source = str(row["source"] or "")
+            if kind == IDENTITY_TWITTER:
+                rank = 4
+            elif kind == IDENTITY_HANDLE and source == "twitter":
+                rank = 3
+            elif kind == IDENTITY_HANDLE:
+                rank = 2
+            elif kind == IDENTITY_PIXIV:
+                rank = 1
+            else:
+                rank = 0
+            if rank > best.get(artist_id, (0, ""))[0]:
+                best[artist_id] = (rank, display)
+        return {artist_id: value[1] for artist_id, value in best.items()}
 
     @staticmethod
     def _author_text(value: Any) -> str:
-        text = unicodedata.normalize("NFKC", str(value or "")).casefold()
-        text = text.lstrip("@")
-        return re.sub(r"\s+", " ", text).strip()
+        return _author_text(value)
 
     @classmethod
     def _author_score(cls, query: str, *values: Any) -> float:
-        needle = cls._author_text(query)
+        needle = _author_text(query)
         if not needle:
             return 1.0
         best = 0.0
         for raw in values:
-            text = cls._author_text(raw)
+            text = _author_text(raw)
             if not text:
                 continue
             if text == needle:
@@ -1211,72 +2217,262 @@ class ProvenanceStore:
         offset: int = 0,
         image_counts: dict[str, int] | None = None,
     ) -> list[dict[str, Any]]:
-        needle = query.strip()
+        needle = _author_text(query)
         page_size = max(1, min(int(limit), 500))
         start = max(0, int(offset))
-        if not needle and image_counts is None:
-            with self._read() as connection:
+        with self._read() as connection:
+            rows: list[sqlite3.Row]
+            if not needle:
+                rows = connection.execute(
+                    "SELECT id, name, image_count FROM artist"
+                ).fetchall()
+            else:
+                search = needle.split(":", 1)[-1] if ":" in needle else needle
+                pattern = (
+                    "%"
+                    + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    + "%"
+                )
                 rows = connection.execute(
                     """
-                    SELECT author.*, COUNT(image_source.point_id) AS image_count
-                    FROM author
-                    LEFT JOIN image_source ON image_source.author_key = author.key
-                    GROUP BY author.key
-                    ORDER BY image_count DESC,
-                             LOWER(COALESCE(author.name, author.handle, author.key))
-                    LIMIT ? OFFSET ?
+                    SELECT DISTINCT artist.id, artist.name, artist.image_count
+                    FROM artist
+                    LEFT JOIN artist_identity
+                      ON artist_identity.artist_id = artist.id
+                    WHERE artist.name_key LIKE ? ESCAPE '\\'
+                       OR artist_identity.identity LIKE ? ESCAPE '\\'
+                       OR LOWER(artist_identity.display) LIKE ? ESCAPE '\\'
+                    ORDER BY artist.image_count DESC, artist.id
+                    LIMIT 2000
                     """,
-                    (page_size, start),
+                    (pattern, pattern, pattern),
                 ).fetchall()
-            return [
-                self._row_to_author(row) | {"image_count": int(row["image_count"])}
-                for row in rows
-            ]
-        with self._read() as connection:
-            rows = connection.execute(
-                """
-                SELECT author.*, COUNT(image_source.point_id) AS image_count
-                FROM author
-                LEFT JOIN image_source ON image_source.author_key = author.key
-                GROUP BY author.key
-                """
-            ).fetchall()
-        authors = [
-            self._row_to_author(row) | {"image_count": int(row["image_count"])}
-            for row in rows
-        ]
-        if image_counts is not None:
-            for author in authors:
-                author["image_count"] = int(image_counts.get(str(author["key"]), 0))
-        if not needle:
-            authors.sort(
-                key=lambda item: (
-                    -int(item.get("image_count") or 0),
-                    str(item.get("name") or item.get("handle") or item["key"]).casefold(),
+                if len(rows) < page_size + start + 1:
+                    rows = connection.execute(
+                        "SELECT id, name, image_count FROM artist"
+                    ).fetchall()
+            identities: dict[int, list[sqlite3.Row]] = {}
+            if needle and rows:
+                candidate_ids = sorted({int(row["id"]) for row in rows})
+                for chunk_start in range(0, len(candidate_ids), 400):
+                    batch = candidate_ids[chunk_start : chunk_start + 400]
+                    placeholders = ",".join("?" for _ in batch)
+                    for identity in connection.execute(
+                        "SELECT artist_id, kind, identity, display, source "
+                        f"FROM artist_identity WHERE artist_id IN ({placeholders})",
+                        batch,
+                    ).fetchall():
+                        identities.setdefault(int(identity["artist_id"]), []).append(
+                            identity
+                        )
+            scored: list[tuple[float, sqlite3.Row, int]] = []
+            for row in rows:
+                artist_id = int(row["id"])
+                scoped_count = (
+                    int(image_counts.get(str(artist_id), 0))
+                    if image_counts is not None
+                    else int(row["image_count"] or 0)
                 )
-            )
-            return authors[start : start + page_size]
-        scored: list[dict[str, Any]] = []
-        for author in authors:
-            score = self._author_score(
-                needle,
-                author.get("key"),
-                author.get("name"),
-                author.get("handle"),
-                author.get("platform_id"),
-            )
-            if score <= 0:
+                score = 1.0
+                if needle:
+                    values: list[Any] = [row["name"], artist_id]
+                    for identity in identities.get(artist_id, []):
+                        values.extend([identity["display"], identity["identity"]])
+                    score = self._author_score(needle, *values)
+                    if score <= 0:
+                        continue
+                scored.append((score, row, scoped_count))
+            if needle:
+                scored.sort(
+                    key=lambda item: (
+                        -item[0],
+                        -item[2],
+                        str(item[1]["name"] or item[1]["id"]).casefold(),
+                    )
+                )
+            else:
+                scored.sort(
+                    key=lambda item: (
+                        -item[2],
+                        str(item[1]["name"] or item[1]["id"]).casefold(),
+                    )
+                )
+            page = scored[start : start + page_size]
+            page_ids = [int(item[1]["id"]) for item in page]
+            views = self._artist_views_locked(connection, page_ids)
+        result: list[dict[str, Any]] = []
+        for score, row, count in page:
+            view = views.get(int(row["id"]))
+            if view is None:
                 continue
-            author["score"] = round(score, 3)
-            scored.append(author)
-        scored.sort(
-            key=lambda item: (
-                -float(item.get("score") or 0),
-                -int(item.get("image_count") or 0),
-                str(item.get("name") or item.get("handle") or item["key"]).casefold(),
+            view["image_count"] = count
+            if needle:
+                view["score"] = round(score, 3)
+            result.append(view)
+        return result
+
+    def artist_stats(
+        self,
+        point_ids: Sequence[str] | None,
+        *,
+        query: str = "",
+        sort: str = "latest_desc",
+        include_unassigned: bool = False,
+        offset: int = 0,
+        limit: int = 30,
+    ) -> dict[str, Any]:
+        """Aggregate artists for one filter scope, ordered for the artist view."""
+        needle = _author_text(query)
+        order = str(sort or "latest_desc")
+        if order not in {
+            "name_asc",
+            "name_desc",
+            "latest_asc",
+            "latest_desc",
+            "count_asc",
+            "count_desc",
+        }:
+            order = "latest_desc"
+        page_size = max(1, int(limit))
+        start = max(0, int(offset))
+        with self._read() as connection:
+            if point_ids is None:
+                aggregate = connection.execute(
+                    "SELECT author_key, COUNT(*) AS count, "
+                    "MAX(COALESCE(mtime_ns, 0)) AS latest "
+                    "FROM image_source GROUP BY author_key"
+                ).fetchall()
+            else:
+                self._scope_temp_table(connection, point_ids)
+                aggregate = connection.execute(
+                    "SELECT image_source.author_key AS author_key, COUNT(*) AS count, "
+                    "MAX(COALESCE(image_source.mtime_ns, 0)) AS latest "
+                    "FROM image_source JOIN _scope_points USING(point_id) "
+                    "GROUP BY image_source.author_key"
+                ).fetchall()
+            raw: dict[str, tuple[int, int]] = {}
+            for row in aggregate:
+                key = row["author_key"]
+                target = UNASSIGNED_AUTHOR_KEY if key in (None, "") else str(key)
+                count, latest = raw.get(target, (0, 0))
+                raw[target] = (count + int(row["count"]), max(latest, int(row["latest"] or 0)))
+            numeric_ids = sorted(
+                int(key) for key in raw if key.isdigit() and key != UNASSIGNED_AUTHOR_KEY
             )
-        )
-        return scored[start : start + page_size]
+            artist_rows: dict[int, sqlite3.Row] = {}
+            identities: dict[int, list[sqlite3.Row]] = {}
+            for chunk_start in range(0, len(numeric_ids), 400):
+                batch = numeric_ids[chunk_start : chunk_start + 400]
+                placeholders = ",".join("?" for _ in batch)
+                for row in connection.execute(
+                    f"SELECT * FROM artist WHERE id IN ({placeholders})", batch
+                ).fetchall():
+                    artist_rows[int(row["id"])] = row
+                for row in connection.execute(
+                    "SELECT * FROM artist_identity WHERE artist_id IN "
+                    f"({placeholders}) ORDER BY artist_id, kind, identity",
+                    batch,
+                ).fetchall():
+                    identities.setdefault(int(row["artist_id"]), []).append(row)
+            entries: list[dict[str, Any]] = []
+            for key, (count, latest) in raw.items():
+                if key == UNASSIGNED_AUTHOR_KEY:
+                    if not include_unassigned or count <= 0:
+                        continue
+                    values: list[Any] = ["无画师", "none", "未标注", "unassigned"]
+                    name = "无画师"
+                    handle = ""
+                    members: list[dict[str, Any]] = []
+                    is_unassigned = True
+                else:
+                    artist_id = int(key)
+                    row = artist_rows.get(artist_id)
+                    if row is None:
+                        continue
+                    identity_rows = identities.get(artist_id, [])
+                    view = self._author_view(row, identity_rows)
+                    name = str(view["name"] or view["handle"] or key)
+                    handle = str(view["handle"] or "")
+                    members = self._member_views(row, identity_rows)
+                    values = [name, key, *[
+                        item
+                        for identity in view["identities"]
+                        for item in (identity["display"], identity["identity"])
+                    ]]
+                    is_unassigned = False
+                score = self._author_score(needle, *values) if needle else 1.0
+                if needle and score <= 0:
+                    continue
+                entries.append(
+                    {
+                        "key": key,
+                        "name": name,
+                        "handle": handle,
+                        "members": members,
+                        "image_count": count,
+                        "latest_mtime": latest,
+                        "score": round(score, 3),
+                        "_unassigned": is_unassigned,
+                    }
+                )
+        if order in {"name_asc", "name_desc"}:
+            entries.sort(
+                key=lambda item: (_author_text(item["name"] or item["key"]), item["key"]),
+                reverse=order == "name_desc",
+            )
+        elif order in {"latest_asc", "latest_desc"}:
+            entries.sort(
+                key=lambda item: (
+                    item["latest_mtime"],
+                    _author_text(item["name"] or item["key"]),
+                    item["key"],
+                ),
+                reverse=order == "latest_desc",
+            )
+        else:
+            entries.sort(
+                key=lambda item: (
+                    item["image_count"],
+                    _author_text(item["name"] or item["key"]),
+                    item["key"],
+                ),
+                reverse=order == "count_desc",
+            )
+        if needle:
+            entries.sort(key=lambda item: -item["score"])
+        entries.sort(key=lambda item: not item["_unassigned"])
+        total = len(entries)
+        page = entries[start : start + page_size]
+        for entry in page:
+            entry.pop("_unassigned", None)
+        return {"authors": page, "total": total}
+
+    def _artist_views_locked(
+        self, connection: sqlite3.Connection, ids: Sequence[int]
+    ) -> dict[int, dict[str, Any]]:
+        clean = sorted({int(value) for value in ids})
+        if not clean:
+            return {}
+        placeholders = ",".join("?" for _ in clean)
+        rows = connection.execute(
+            f"SELECT * FROM artist WHERE id IN ({placeholders})", clean
+        ).fetchall()
+        identity_rows = connection.execute(
+            "SELECT * FROM artist_identity WHERE artist_id IN "
+            f"({placeholders}) ORDER BY artist_id, kind, identity",
+            clean,
+        ).fetchall()
+        by_artist: dict[int, list[sqlite3.Row]] = {}
+        for row in identity_rows:
+            by_artist.setdefault(int(row["artist_id"]), []).append(row)
+        return {
+            int(row["id"]): self._author_view(row, by_artist.get(int(row["id"]), []))
+            for row in rows
+        }
+
+    def count_authors(self) -> int:
+        with self._read() as connection:
+            return int(connection.execute("SELECT COUNT(*) FROM artist").fetchone()[0])
 
     # -------------------------------------------------------------- fetch state
 
@@ -1356,7 +2552,7 @@ class ProvenanceStore:
                 "GROUP BY platform, status"
             ).fetchall()
             total = connection.execute("SELECT COUNT(*) FROM image_source").fetchone()[0]
-            authors = connection.execute("SELECT COUNT(*) FROM author").fetchone()[0]
+            authors = connection.execute("SELECT COUNT(*) FROM artist").fetchone()[0]
             with_metadata = connection.execute(
                 "SELECT COUNT(*) FROM image_source "
                 "WHERE title IS NOT NULL OR author_key IS NOT NULL"
@@ -1385,11 +2581,6 @@ class ProvenanceStore:
         record["candidates"] = _loads(record.pop("candidates_json", None), [])
         record["manual_fields"] = _loads(record.pop("manual_fields", None), [])
         return record
-
-    def _row_to_author(self, row: sqlite3.Row) -> dict[str, Any]:
-        author = dict(row)
-        author["social"] = _loads(author.pop("social_json", None), {})
-        return author
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -1432,12 +2623,4 @@ def valid_source_url(platform: str, source_id: str, page: int | None) -> str:
     if platform == "twitter":
         return twitter_photo_url(source_id, page)
     return ""
-
-
-def manual_author_key(name: str, handle: str | None = None) -> str:
-    normalized_handle = _normalized_handle(handle)
-    if normalized_handle:
-        return f"twitter:{normalized_handle}"
-    digest = hashlib.sha1(str(name or "").strip().casefold().encode("utf-8")).hexdigest()
-    return f"manual:{digest[:16]}"
 
