@@ -287,6 +287,15 @@ class ArtistIdentityRequest(BaseModel):
     label: str = ""
 
 
+class ArtistIdentityRemoveRequest(BaseModel):
+    kind: str = "link"
+    value: str = ""
+
+
+class ArtistNameRequest(BaseModel):
+    name: str = ""
+
+
 class ArtistMergeRequest(BaseModel):
     source: str = ""
 
@@ -3056,29 +3065,63 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         base_seed = request.image_seed
         if image_sort == "random" and base_seed is None:
             base_seed = random.SystemRandom().randrange(1 << 53)
-        authors: list[dict[str, Any]] = []
-        for entry in page["authors"]:
+        entries = [dict(item) for item in page["authors"]]
+        id_map = store.point_ids_for_authors([str(item["key"]) for item in entries])
+        rank = (
+            {point_id: index for index, point_id in enumerate(order_ids)}
+            if order_ids is not None
+            else None
+        )
+        previews: dict[str, list[str]] = {}
+        totals: dict[str, int] = {}
+        seeds: dict[str, int | None] = {}
+        all_ids: list[str] = []
+        for entry in entries:
+            key = str(entry["key"])
             row_seed = base_seed
             if image_sort == "random" and base_seed is not None:
-                row_seed = random.Random(f"{base_seed}:{entry['key']}").randrange(1 << 53)
-            summary, results, _, _, total, has_more = scoped_author_images(
-                str(entry["key"]),
-                scope,
-                sort=image_sort,
-                seed=row_seed,
-                offset=0,
-                limit=request.image_limit,
-                order_ids=order_ids,
-            )
-            entry = dict(entry)
-            entry["images"] = results
-            entry["images_has_more"] = has_more
-            entry["images_offset"] = len(results)
-            entry["images_total"] = total
-            entry["image_seed"] = row_seed
-            entry["pixiv_ids"] = summary.get("pixiv_ids") or []
-            entry["x_handles"] = summary.get("x_handles") or []
-            authors.append(entry)
+                row_seed = random.Random(f"{base_seed}:{key}").randrange(1 << 53)
+            ids = id_map.get(key, [])
+            if scope is not None:
+                ids = [point_id for point_id in ids if point_id in scope]
+            if rank is not None:
+                ids.sort(key=lambda point_id: rank.get(point_id, len(rank)))
+                used_seed = None
+            else:
+                ids, _, used_seed = sort_gallery_ids(ids, image_sort, row_seed)
+            previews[key] = ids[: request.image_limit]
+            totals[key] = len(ids)
+            seeds[key] = used_seed
+            all_ids.extend(previews[key])
+        payloads = retrieve_collection_payloads(list(dict.fromkeys(all_ids)))
+        result_rows = attach_provenance(
+            [
+                gallery_result(point_id, payloads[point_id])
+                for point_id in dict.fromkeys(all_ids)
+                if isinstance(payloads.get(point_id), dict)
+            ]
+        )
+        by_id = {str(item["id"]): item for item in result_rows}
+        for entry in entries:
+            key = str(entry["key"])
+            images = [by_id[point_id] for point_id in previews[key] if point_id in by_id]
+            entry["images"] = images
+            entry["images_has_more"] = totals[key] > len(previews[key])
+            entry["images_offset"] = len(images)
+            entry["images_total"] = totals[key]
+            entry["image_seed"] = seeds[key]
+            members = entry.get("members") or []
+            entry["pixiv_ids"] = [
+                str(member.get("platform_id") or "")
+                for member in members
+                if member.get("platform") == "pixiv"
+            ]
+            entry["x_handles"] = [
+                str(member.get("handle") or "")
+                for member in members
+                if member.get("platform") == "twitter"
+            ]
+        authors = entries
         page["authors"] = authors
         page["image_sort"] = image_sort
         page["image_seed"] = base_seed
@@ -3151,6 +3194,34 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         except ValueError as exc:
             status = 409 if "已属于" in str(exc) else 400
             raise HTTPException(status, str(exc)) from exc
+        invalidate_author_cache()
+        summary = store.author_summary(author_key)
+        if summary is None:
+            raise HTTPException(404, "作者不存在")
+        return {"author": summary}
+
+    @app.post("/api/authors/{author_key}/name")
+    def rename_author(author_key: str, request: ArtistNameRequest) -> dict[str, Any]:
+        store: ProvenanceStore = app.state.provenance
+        try:
+            store.set_author_name(author_key, request.name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        invalidate_author_cache()
+        summary = store.author_summary(author_key)
+        if summary is None:
+            raise HTTPException(404, "作者不存在")
+        return {"author": summary}
+
+    @app.post("/api/authors/{author_key}/identities/remove")
+    def remove_author_identity(
+        author_key: str, request: ArtistIdentityRemoveRequest
+    ) -> dict[str, Any]:
+        store: ProvenanceStore = app.state.provenance
+        try:
+            store.remove_identity(author_key, request.kind, request.value)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         invalidate_author_cache()
         summary = store.author_summary(author_key)
         if summary is None:

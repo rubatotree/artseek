@@ -1769,6 +1769,101 @@ class ProvenanceStore:
             connection.commit()
         return base
 
+    def set_author_name(self, artist_key: str, name: str) -> str:
+        """Set the display name for an artist without merging other artists."""
+        if self._is_unassigned_key(artist_key):
+            raise ValueError("无画师不能改名")
+        label = str(name or "").strip()
+        if not label:
+            raise ValueError("作者名不能为空")
+        name_key = _author_text(label)
+        with self._read() as connection:
+            base = self._canonical_locked(connection, artist_key)
+            if not base.isdigit():
+                raise ValueError("作者不存在")
+            artist_id = int(base)
+            connection.execute(
+                "UPDATE artist SET name = ?, name_key = ?, name_source = 'manual', "
+                "updated_at = ? WHERE id = ?",
+                (label, name_key or None, _now(), artist_id),
+            )
+            connection.execute(
+                "DELETE FROM artist_identity WHERE artist_id = ? AND kind = ?",
+                (artist_id, IDENTITY_NAME),
+            )
+            if name_key:
+                owner = connection.execute(
+                    "SELECT artist_id FROM artist_identity WHERE kind = ? AND identity = ?",
+                    (IDENTITY_NAME, name_key),
+                ).fetchone()
+                if owner is None:
+                    connection.execute(
+                        "INSERT INTO artist_identity"
+                        "(kind, identity, display, profile_url, source, artist_id, updated_at) "
+                        "VALUES (?, ?, ?, NULL, 'manual', ?, ?)",
+                        (IDENTITY_NAME, name_key, label, artist_id, _now()),
+                    )
+            connection.commit()
+        return base
+
+    def remove_identity(self, artist_key: str, platform: str, value: str) -> str:
+        """Remove one social identity from an artist without touching images."""
+        if self._is_unassigned_key(artist_key):
+            raise ValueError("无画师没有社交身份")
+        platform = str(platform or "").strip().casefold()
+        with self._read() as connection:
+            base = self._canonical_locked(connection, artist_key)
+            if not base.isdigit():
+                raise ValueError("作者不存在")
+            artist_id = int(base)
+            clauses: list[tuple[str, str]] = []
+            if platform == "link":
+                normalized = normalize_social_link(value)
+                if not normalized:
+                    raise ValueError("链接无效")
+                clauses.append((IDENTITY_LINK, normalized))
+            elif platform == "pixiv":
+                normalized = normalize_pixiv_user_id(value)
+                if not normalized:
+                    raise ValueError("Pixiv ID 无效")
+                clauses.append((IDENTITY_PIXIV, normalized))
+            elif platform == "twitter":
+                handle = normalize_twitter_handle(value)
+                if not handle:
+                    raise ValueError("X handle 无效")
+                if handle.isdigit():
+                    clauses.append((IDENTITY_TWITTER, handle))
+                else:
+                    normalized_handle = _normalized_handle(handle)
+                    if normalized_handle:
+                        clauses.append((IDENTITY_HANDLE, normalized_handle))
+            else:
+                raise ValueError("不支持的社交平台")
+            removed = 0
+            for kind, identity in clauses:
+                cursor = connection.execute(
+                    "DELETE FROM artist_identity "
+                    "WHERE artist_id = ? AND kind = ? AND identity = ?",
+                    (artist_id, kind, identity),
+                )
+                removed += cursor.rowcount
+            if platform == "twitter":
+                handle = normalize_twitter_handle(value)
+                if handle and not handle.isdigit():
+                    cursor = connection.execute(
+                        "DELETE FROM artist_identity "
+                        "WHERE artist_id = ? AND kind = ? "
+                        "AND LOWER(COALESCE(display, '')) = LOWER(?)",
+                        (artist_id, IDENTITY_TWITTER, handle),
+                    )
+                    removed += cursor.rowcount
+            if removed:
+                connection.execute(
+                    "UPDATE artist SET updated_at = ? WHERE id = ?", (_now(), artist_id)
+                )
+            connection.commit()
+        return base
+
     def get_author(self, key: str) -> dict[str, Any] | None:
         with self._read() as connection:
             artist_id = self._canonical_locked(connection, key)
@@ -1862,6 +1957,42 @@ class ProvenanceStore:
                 (artist_id,),
             ).fetchall()
         return [str(row["point_id"]) for row in rows]
+
+    def point_ids_for_authors(self, keys: Sequence[str]) -> dict[str, list[str]]:
+        """Return per-author image IDs for many authors in one read.
+
+        The result preserves each author's newest-first default order; callers
+        that need another order sort their own page slice.
+        """
+        clean = list(dict.fromkeys(str(key) for key in keys if key))
+        result: dict[str, list[str]] = {key: [] for key in clean}
+        numeric = sorted({key for key in clean if key.isdigit()})
+        with self._read() as connection:
+            for start in range(0, len(numeric), 400):
+                batch = numeric[start : start + 400]
+                placeholders = ",".join("?" for _ in batch)
+                rows = connection.execute(
+                    "SELECT author_key, point_id FROM image_source "
+                    f"WHERE author_key IN ({placeholders}) "
+                    "ORDER BY author_key, mtime_ns IS NULL, mtime_ns DESC, "
+                    "updated_at DESC, point_id",
+                    batch,
+                ).fetchall()
+                for row in rows:
+                    key = str(row["author_key"])
+                    if key in result:
+                        result[key].append(str(row["point_id"]))
+            if any(self._is_unassigned_key(key) for key in clean):
+                rows = connection.execute(
+                    "SELECT point_id FROM image_source "
+                    "WHERE author_key IS NULL OR author_key = '' "
+                    "ORDER BY mtime_ns IS NULL, mtime_ns DESC, updated_at DESC, point_id"
+                ).fetchall()
+                unassigned = [str(row["point_id"]) for row in rows]
+                for key in clean:
+                    if self._is_unassigned_key(key):
+                        result[key] = list(unassigned)
+        return result
 
     @staticmethod
     def _is_unassigned_key(key: str | None) -> bool:

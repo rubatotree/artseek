@@ -812,20 +812,41 @@
       stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8;
     }
     .artist-strip {
-      display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden;
+      display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden;
       padding-bottom: 4px; scroll-snap-type: x proximity;
-      overscroll-behavior-x: contain; scrollbar-width: thin;
+      overscroll-behavior-x: contain;
+      scrollbar-width: none; scrollbar-color: transparent transparent;
     }
+    .artist-strip::-webkit-scrollbar { height: 6px; background: transparent; }
+    .artist-strip::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; }
+    .artist-strip:hover { scrollbar-width: thin; scrollbar-color: #d7aab9 transparent; }
+    .artist-strip:hover::-webkit-scrollbar-thumb { background: #d7aab9; }
     .artist-thumb {
-      position: relative; flex: 0 0 auto; width: 112px; height: 112px; min-height: 0; padding: 0;
-      overflow: hidden; border-radius: 12px; background: #f1edf2;
-      scroll-snap-align: start; cursor: zoom-in;
+      position: relative; flex: 0 0 auto;
+      width: var(--artist-thumb-size, 200px); height: var(--artist-thumb-size, 200px);
+      min-height: 0; padding: 0; overflow: hidden; border-radius: 16px;
+      background: #f1edf2; scroll-snap-align: start; cursor: zoom-in;
+      outline: 1px solid transparent; outline-offset: 2px;
+      transition: outline-color .15s ease, box-shadow .15s ease;
     }
     .artist-thumb img {
       width: 100%; height: 100%; object-fit: cover; display: block;
-      transition: transform .18s ease;
     }
-    .artist-thumb:hover img { transform: scale(1.04); }
+    .artist-thumb .card-summary { left: 10px; right: 58px; bottom: 10px; }
+    .artist-thumb .card-favorite { opacity: 0; pointer-events: none; }
+    .artist-thumb.is-action-active .card-favorite { opacity: 1; pointer-events: auto; }
+    .artist-thumb:focus-within .card-summary,
+    .artist-thumb:focus-within .card-action-gradient,
+    .artist-thumb.is-action-active .card-summary,
+    .artist-thumb.is-action-active .card-action-gradient {
+      opacity: 1; visibility: visible; transform: none;
+    }
+    @media (hover: hover) and (pointer: fine) {
+      .artist-thumb:hover .card-favorite { opacity: 1; pointer-events: auto; }
+      .artist-thumb:hover .card-summary,
+      .artist-thumb:hover .card-action-gradient { opacity: 1; visibility: visible; transform: none; }
+      .artist-thumb:hover { outline-color: #ddb2c2; box-shadow: 0 8px 18px rgba(69, 51, 76, .12); }
+    }
     .artist-thumb:focus-visible { outline: 2px solid #ddb2c2; outline-offset: 2px; }
     .artist-strip-sentinel { flex: 0 0 1px; align-self: stretch; }
     .artist-strip-loading {
@@ -834,23 +855,38 @@
     }
     .artist-empty { padding: 24px 8px; color: var(--muted); font-size: 13px; text-align: center; }
     .artist-dialog {
-      width: min(460px, calc(100vw - 24px)); max-height: min(80vh, 720px);
-      padding: 0; border: 1px solid #e2d6dd; border-radius: 18px;
+      position: fixed; inset: 0; margin: auto;
+      inline-size: min(460px, calc(100vw - 24px));
+      block-size: auto; max-inline-size: calc(100vw - 24px);
+      max-block-size: min(80dvh, 720px);
+      width: min(460px, calc(100vw - 24px)); height: auto;
+      padding: 0; overflow: hidden;
+      border: 1px solid #e2d6dd; border-radius: 18px;
       background: #fff; color: var(--ink); box-shadow: 0 24px 60px rgba(43, 33, 50, .26);
     }
     .artist-dialog::backdrop { background: rgba(36, 28, 42, .42); backdrop-filter: blur(2px); }
     .artist-dialog-body {
-      display: grid; gap: 14px; max-height: min(80vh, 720px); overflow-y: auto;
-      padding: 16px;
+      display: grid; gap: 14px; max-height: calc(min(80dvh, 720px) - 70px);
+      overflow-y: auto; padding: 16px;
     }
     .artist-dialog-head {
-      display: flex; align-items: center; gap: 8px; padding: 14px 16px;
+      display: flex; align-items: flex-start; gap: 8px; padding: 14px 16px;
       border-bottom: 1px solid var(--line);
     }
+    .artist-dialog-title-wrap { flex: 1; min-width: 0; display: grid; gap: 5px; }
     .artist-dialog-head strong {
-      flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
       font-size: 15px;
     }
+    .artist-dialog-meta {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
+      color: var(--muted); font-size: 11px; line-height: 1.3;
+    }
+    .artist-meta-item { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+    .artist-meta-item .platform-icon { width: 16px; height: 16px; }
+    .artist-meta-item .platform-icon svg { width: 9px; height: 9px; }
+    .artist-meta-item .platform-icon.pixiv svg { width: 10px; height: 10px; }
+    .artist-meta-uid { padding: 2px 7px; border-radius: 999px; background: #f6f1f5; color: #665866; font-variant-numeric: tabular-nums; }
     .artist-dialog-close {
       width: 30px; height: 30px; min-height: 0; padding: 0; border-radius: 9px;
       background: #f6f1f5; color: #665866; font-size: 17px; line-height: 1;
@@ -876,7 +912,14 @@
       color: #8a5268; text-decoration: none;
     }
     .artist-link-row a:hover { text-decoration: underline; }
-    .artist-link-row span { flex: 0 0 auto; color: var(--muted); font-size: 10px; }
+    .artist-link-row .platform-icon { flex: 0 0 auto; width: 20px; height: 20px; }
+    .artist-link-row .platform-icon svg { width: 11px; height: 11px; }
+    .artist-link-remove {
+      flex: 0 0 auto; width: 22px; height: 22px; min-height: 0; padding: 0;
+      border-radius: 7px; background: transparent; color: #a06b80;
+      font-size: 14px; line-height: 1;
+    }
+    .artist-link-remove:hover { transform: none; background: #f3e1e8; color: #8a3f5b; }
     .artist-form { display: grid; gap: 6px; }
     .artist-form-row { display: flex; gap: 6px; min-width: 0; }
     .artist-form-row select {
@@ -898,7 +941,10 @@
       .artist-mode-bar { flex-wrap: wrap; }
       .artist-search { flex: 1 1 100%; margin-left: 0; }
       .artist-row { padding: 10px 8px 8px; border-radius: 15px; }
-      .artist-thumb { width: 92px; height: 92px; }
+      .artist-thumb { width: 92px; height: 92px; border-radius: 12px; }
+      .artist-thumb .card-summary,
+      .artist-thumb .card-action-gradient,
+      .artist-thumb .card-favorite { display: none; }
       .artist-name { max-width: 52%; font-size: 13px; }
       .artist-strip { gap: 4px; }
     }
@@ -2015,7 +2061,10 @@
   </dialog>
   <dialog id="artist-dialog" class="artist-dialog" aria-label="画师设置">
     <div class="artist-dialog-head">
-      <strong id="artist-dialog-title">画师设置</strong>
+      <div class="artist-dialog-title-wrap">
+        <strong id="artist-dialog-title">画师设置</strong>
+        <div id="artist-dialog-meta" class="artist-dialog-meta"></div>
+      </div>
       <button class="artist-dialog-close" id="artist-dialog-close" type="button" aria-label="关闭">×</button>
     </div>
     <div class="artist-dialog-body" id="artist-dialog-body"><div class="artist-dialog-status" id="artist-dialog-status" aria-live="polite"></div></div>
@@ -7142,9 +7191,9 @@
           sort: view.sort,
           include_unassigned: artistIncludeUnassigned(),
           offset: reset ? 0 : view.authors.length,
-          limit: 30,
+          limit: 20,
           image_sort: view.imageSort,
-          image_limit: 20,
+          image_limit: 12,
           image_seed: view.imageSeed,
         };
         const data = await parseResponse(await fetch('/api/artists/gallery', {
@@ -7177,30 +7226,40 @@
       for (const observer of state.artistObservers) observer.disconnect();
       state.artistObservers = [];
     }
+    function artistThumbSize() {
+      if (window.matchMedia('(max-width: 720px)').matches) return 92;
+      const width = $('gallery').clientWidth || window.innerWidth;
+      const columns = width < 520 ? 2 : width < 1100 ? 4 : 5;
+      return Math.max(120, Math.floor((width - (columns - 1) * 10) / columns));
+    }
+    function updateArtistThumbSizes() {
+      if (!artistViewActive()) return;
+      const size = artistThumbSize();
+      document.querySelectorAll('.artist-row').forEach((row) => {
+        row.style.setProperty('--artist-thumb-size', `${size}px`);
+      });
+    }
     function artistThumbElement(item, artistKey) {
-      const thumb = document.createElement('button');
-      thumb.type = 'button';
+      const thumb = document.createElement('article');
       thumb.className = 'artist-thumb';
+      thumb.tabIndex = 0;
+      thumb.setAttribute('role', 'button');
       thumb.dataset.artistThumb = '1';
       thumb.dataset.artistKey = artistKey;
       thumb.dataset.pointId = item.id;
       thumb.setAttribute('aria-label', `查看原图：${item.name || item.path || item.id}`);
       thumb.title = item.name || item.path || '';
-      const img = document.createElement('img');
-      img.loading = 'lazy';
-      img.decoding = 'async';
-      img.draggable = false;
-      img.alt = item.name || '';
-      img.src = `/thumb/${item.id}`;
-      thumb.append(img);
+      const summary = cardSummaryHTML(item);
+      thumb.innerHTML = `<img loading="lazy" decoding="async" draggable="false" alt="${escapeHtml(item.name || '')}" src="/thumb/${item.id}">${summary ? `<div class="card-action-gradient" aria-hidden="true"></div>${summary}` : ''}<button class="card-favorite" type="button" data-artist-favorite draggable="false" aria-label="收藏：${escapeHtml(item.name || item.id)}" aria-haspopup="dialog" aria-expanded="false" aria-controls="card-collection-menu">${CARD_HEART_ICON}</button>`;
       return thumb;
     }
-    function artistRowElement(author) {
+    function artistRowElement(author, thumbSize) {
       const key = String(author.key || '');
       const name = String(author.name || author.handle || key || '未命名画师');
       const section = document.createElement('section');
       section.className = 'artist-row';
       section.dataset.artistKey = key;
+      section.style.setProperty('--artist-thumb-size', `${thumbSize || artistThumbSize()}px`);
       const head = document.createElement('header');
       head.className = 'artist-head';
       const link = document.createElement('a');
@@ -7283,7 +7342,7 @@
               sort: state.artistView.imageSort,
               seed: row.seed,
               offset: row.offset,
-              limit: 20,
+              limit: 12,
             }),
           },
         ));
@@ -7339,10 +7398,11 @@
       const existing = new Set(
         [...list.querySelectorAll('.artist-row')].map((row) => row.dataset.artistKey),
       );
+      const thumbSize = artistThumbSize();
       for (const author of state.artistView.authors) {
         const key = String(author.key || '');
         if (existing.has(key)) continue;
-        list.append(artistRowElement(author));
+        list.append(artistRowElement(author, thumbSize));
         const row = state.artistRows.get(key);
         if (row) observeArtistRow(row);
       }
@@ -7362,6 +7422,24 @@
         }
         const thumb = event.target.closest('[data-artist-thumb]');
         if (!thumb) return;
+        const key = thumb.dataset.artistKey;
+        const row = state.artistRows.get(key);
+        const item = row?.images.find((entry) => entry.id === thumb.dataset.pointId);
+        if (!item) return;
+        const favorite = event.target.closest('[data-artist-favorite]');
+        if (favorite) {
+          event.preventDefault();
+          event.stopPropagation();
+          openCardCollectionMenu(item, favorite);
+          return;
+        }
+        openViewer(item, { playlist: row.images, rowKey: key });
+      });
+      gallery.addEventListener('keydown', (event) => {
+        const thumb = event.target.closest?.('[data-artist-thumb]');
+        if (!thumb || event.target.closest('[data-artist-favorite]')) return;
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
         const key = thumb.dataset.artistKey;
         const row = state.artistRows.get(key);
         const item = row?.images.find((entry) => entry.id === thumb.dataset.pointId);
@@ -7386,22 +7464,37 @@
       const key = String(author.key || '');
       const name = String(author.name || author.handle || key || '未命名画师');
       $('artist-dialog-title').textContent = name;
-      const uids = [];
-      if (key) uids.push(`作者 ID：${key}`);
-      for (const value of author.pixiv_ids || []) uids.push(`Pixiv：${value}`);
-      for (const value of author.x_handles || []) uids.push(`X：@${value}`);
       const members = Array.isArray(author.members) ? author.members : [];
+      const metaItems = members.map((member) => {
+        const text = member.platform === 'pixiv'
+          ? String(member.platform_id || '')
+          : member.platform === 'twitter'
+            ? `@${member.handle || member.platform_id || ''}`
+            : String(member.handle || member.platform_id || '');
+        return `<span class="artist-meta-item"><span class="platform-icon ${escapeHtml(member.platform)}">${platformIconSvg(member.platform)}</span><span>${escapeHtml(text)}</span></span>`;
+      });
+      metaItems.push(`<span class="artist-meta-uid">ArtSeek #${escapeHtml(key)}</span>`);
+      $('artist-dialog-meta').innerHTML = metaItems.join('');
       const links = members.map((member) => {
         const url = member.profile_url || '';
         const label = member.platform === 'link'
           ? (member.handle || url)
           : `${member.platform}${member.handle ? ` · ${member.handle}` : ''}`;
-        return `<div class="artist-link-row">${platformIconSvg(member.platform)}<a href="${escapeHtml(url)}" target="_blank" rel="noopener" title="${escapeHtml(url)}">${escapeHtml(label)}</a><span>${escapeHtml(member.platform)}</span></div>`;
+        const removeValue = member.platform === 'twitter'
+          ? (member.handle || member.platform_id || '')
+          : (member.platform_id || '');
+        const removable = ['pixiv', 'twitter', 'link'].includes(member.platform);
+        return `<div class="artist-link-row"><span class="platform-icon ${escapeHtml(member.platform)}">${platformIconSvg(member.platform)}</span><a href="${escapeHtml(url)}" target="_blank" rel="noopener" title="${escapeHtml(url)}">${escapeHtml(label)}</a>${removable ? `<button class="artist-link-remove" type="button" data-remove-kind="${escapeHtml(member.platform)}" data-remove-value="${escapeHtml(removeValue)}" data-remove-label="${escapeHtml(label)}" aria-label="移除 ${escapeHtml(label)}" title="移除">×</button>` : ''}</div>`;
       }).join('');
       $('artist-dialog-body').innerHTML = `
         <section class="artist-dialog-section">
-          <h4>UID</h4>
-          <div class="artist-uid-list">${uids.map((value) => `<span class="artist-uid">${escapeHtml(value)}</span>`).join('') || '<span class="artist-uid">未登记</span>'}</div>
+          <h4>作者名</h4>
+          <form class="artist-form" id="artist-name-form" autocomplete="off">
+            <div class="artist-form-row">
+              <input name="name" type="text" value="${escapeHtml(name)}" aria-label="作者名">
+              <button type="submit">应用</button>
+            </div>
+          </form>
         </section>
         <section class="artist-dialog-section">
           <h4>社交链接</h4>
@@ -7434,6 +7527,46 @@
           </form>
         </section>
         <div class="artist-dialog-status" id="artist-dialog-status" aria-live="polite"></div>`;
+      const nameForm = $('artist-name-form');
+      nameForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const nextName = nameForm.elements.name.value.trim();
+        if (!nextName) {
+          artistDialogStatus('作者名不能为空。', 'error');
+          return;
+        }
+        artistDialogStatus('正在保存作者名…');
+        try {
+          await parseResponse(await fetch(`/api/authors/${encodeURIComponent(key)}/name`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: nextName }),
+          }));
+          await refreshArtistDialog(key, '已更新作者名。');
+        } catch (error) {
+          artistDialogStatus(error.message, 'error');
+        }
+      });
+      $('artist-dialog-body').querySelectorAll('[data-remove-kind]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const label = button.dataset.removeLabel || button.dataset.removeValue || '';
+          if (!window.confirm(`从画师中移除「${label}」？\n作品不会被删除。`)) return;
+          artistDialogStatus('正在移除…');
+          try {
+            await parseResponse(await fetch(`/api/authors/${encodeURIComponent(key)}/identities/remove`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                kind: button.dataset.removeKind,
+                value: button.dataset.removeValue,
+              }),
+            }));
+            await refreshArtistDialog(key, '已移除社交身份。');
+          } catch (error) {
+            artistDialogStatus(error.message, 'error');
+          }
+        });
+      });
       const addForm = $('artist-add-form');
       addForm.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -10009,7 +10142,10 @@
       syncScrollTopVisibility();
       clearTimeout(galleryResizeTimer);
       galleryResizeTimer = setTimeout(() => {
-        if (state.galleryView === 'artists') return;
+        if (state.galleryView === 'artists') {
+          updateArtistThumbSizes();
+          return;
+        }
         const gallery = $('gallery');
         if (!gallery || !state.results.length) return;
         if (gallery.dataset.cols === String(galleryColumnCount())) return;
