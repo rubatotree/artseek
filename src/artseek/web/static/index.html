@@ -2267,7 +2267,7 @@
       artistView: {
         authors: [], offset: 0, total: 0, hasMore: false, loading: false, seq: 0,
         sort: loadArtistSort(), includeUnassigned: false, query: '',
-        scope: null, imageSort: 'mtime_desc', imageSeed: null,
+        scope: null, imageSort: 'mtime_desc', imageSeed: null, scrollTarget: null,
       },
       artistRows: new Map(),
       artistObservers: [],
@@ -5686,10 +5686,20 @@
       const delta = nextCenter - targetCenter;
       if (Math.abs(delta) > 1) window.scrollBy({ top: delta, behavior: 'auto' });
     }
+    function restoreGalleryScroll(top) {
+      const apply = () => {
+        if (Math.abs(window.scrollY - top) > 1) {
+          window.scrollTo({ top, behavior: 'auto' });
+        }
+      };
+      apply();
+      requestAnimationFrame(apply);
+      setTimeout(apply, 120);
+    }
     function applyGalleryView(value) {
       if (!GALLERY_VIEW_LABELS[value]) return;
       if (state.galleryView === value) return;
-      const anchor = captureGalleryCenterAnchor();
+      const scrollY = window.scrollY;
       const wasArtists = state.galleryView === 'artists';
       state.galleryView = value;
       try {
@@ -5699,7 +5709,9 @@
       }
       renderGalleryView();
       if (value === 'artists') {
+        state.artistView.scrollTarget = scrollY;
         void fetchArtistGallery({ reset: true });
+        restoreGalleryScroll(scrollY);
         return;
       }
       if (wasArtists) {
@@ -5707,8 +5719,7 @@
         $('gallery').classList.remove('view-artists');
       }
       renderGallery(state.results, { append: false });
-      restoreGalleryCenterAnchor(anchor);
-      requestAnimationFrame(() => restoreGalleryCenterAnchor(anchor));
+      restoreGalleryScroll(scrollY);
     }
     function applySidebarCollapsed(collapsed, { persist = true, rerender = true } = {}) {
       const anchor = rerender ? captureGalleryCenterAnchor() : null;
@@ -7212,6 +7223,11 @@
         renderArtistGallery({ append: !reset });
         $('load-more').hidden = !view.hasMore;
         $('load-more').textContent = '正在载入更多画师…';
+        if (reset && view.scrollTarget != null) {
+          const target = view.scrollTarget;
+          view.scrollTarget = null;
+          restoreGalleryScroll(target);
+        }
       } catch (error) {
         if (seq !== view.seq) return;
         $('gallery').innerHTML = `<div class="artist-empty">画师列表载入失败：${escapeHtml(error.message)}</div>`;
