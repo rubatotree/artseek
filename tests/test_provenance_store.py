@@ -455,6 +455,34 @@ class ProvenanceStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get("p1")["status"], "stale")
         self.assertEqual(self.store.stale_points({"p1": "a" * 64}), [])
 
+    def test_platform_and_former_names_are_searchable(self) -> None:
+        alice = self.store.ensure_author("pixiv", "1", name="Pixiv Name")
+        self.store.attach_identity(alice, "twitter", "alice_x", name="X Display")
+        self.store.ensure_author("pixiv", "1", name="New Pixiv Name")
+        for query in ("Pixiv Name", "X Display", "New Pixiv Name"):
+            matches = self.store.list_authors(query, limit=10)
+            self.assertTrue(matches, query)
+            self.assertEqual(
+                {self.store.canonical_author_key(str(item["key"])) for item in matches},
+                {alice},
+            )
+        summary = self.store.author_summary(alice)
+        assert summary is not None
+        aliases = {
+            item["identity"]
+            for item in summary["identities"]
+            if item["kind"] == "name_alias"
+        }
+        self.assertIn("pixiv name", aliases)
+        self.assertIn("x display", aliases)
+
+    def test_merge_tolerates_duplicate_name_aliases(self) -> None:
+        first = self.store.ensure_author("pixiv", "1", name="Shared Name")
+        second = self.store.ensure_author("pixiv", "2", name="Shared Name")
+        merged = self.store.merge_authors(second, first)
+        self.assertEqual(merged, first)
+        self.assertEqual(self.store.canonical_author_key(second), first)
+
     def test_social_links_are_normalized_and_conflicts_surface(self) -> None:
         first = self.store.ensure_author("pixiv", "1", name="Alice")
         second = self.store.ensure_author("pixiv", "2", name="Bob")

@@ -31,6 +31,7 @@ IDENTITY_PIXIV = "pixiv_id"
 IDENTITY_TWITTER = "x_id"
 IDENTITY_HANDLE = "handle"
 IDENTITY_NAME = "name"
+IDENTITY_NAME_ALIAS = "name_alias"
 IDENTITY_LINK = "link"
 IDENTITY_COVER = "cover"
 IDENTITY_XIAOHONGSHU = "xhs_uid"
@@ -133,6 +134,7 @@ def _identity_kind_platform(kind: str) -> str:
         IDENTITY_TWITTER: "twitter",
         IDENTITY_HANDLE: "twitter",
         IDENTITY_NAME: "manual",
+        IDENTITY_NAME_ALIAS: "name",
         IDENTITY_LINK: "link",
         IDENTITY_COVER: "cover",
         IDENTITY_XIAOHONGSHU: "xiaohongshu",
@@ -1490,6 +1492,36 @@ class ProvenanceStore:
 
     _NAME_SOURCE_RANK = {"manual": 3, "pixiv": 2, "xiaohongshu": 2, "twitter": 1}
 
+    def _record_name_alias_locked(
+        self,
+        connection: sqlite3.Connection,
+        artist_id: int,
+        name: str | None,
+        source: str | None,
+        now: int,
+    ) -> None:
+        label = str(name or "").strip()
+        key = _author_text(label)
+        if not label or not key:
+            return
+        row = connection.execute(
+            "SELECT artist_id FROM artist_identity WHERE kind = ? AND identity = ?",
+            (IDENTITY_NAME_ALIAS, key),
+        ).fetchone()
+        if row is None:
+            connection.execute(
+                "INSERT INTO artist_identity"
+                "(kind, identity, display, profile_url, source, artist_id, updated_at) "
+                "VALUES (?, ?, ?, NULL, ?, ?, ?)",
+                (IDENTITY_NAME_ALIAS, key, label, source or "manual", int(artist_id), now),
+            )
+        elif int(row["artist_id"]) == int(artist_id):
+            connection.execute(
+                "UPDATE artist_identity SET display = ?, source = ?, updated_at = ? "
+                "WHERE kind = ? AND identity = ? AND artist_id = ?",
+                (label, source or "manual", now, IDENTITY_NAME_ALIAS, key, int(artist_id)),
+            )
+
     def _update_artist_locked(
         self,
         connection: sqlite3.Connection,
@@ -1514,6 +1546,10 @@ class ProvenanceStore:
         incoming = str(name or "").strip()
         incoming_source = str(name_source or "")
         current_source = str(row["name_source"] or "")
+        if current_name and incoming and current_name != incoming:
+            self._record_name_alias_locked(
+                connection, artist_id, current_name, current_source, now
+            )
         if incoming and (
             (
                 overwrite_name
@@ -1601,8 +1637,12 @@ class ProvenanceStore:
             ),
         )
         connection.execute(
-            "UPDATE artist_identity SET artist_id = ?, updated_at = ? WHERE artist_id = ?",
+            "UPDATE OR IGNORE artist_identity SET artist_id = ?, updated_at = ? "
+            "WHERE artist_id = ?",
             (target_id, now, source_id),
+        )
+        connection.execute(
+            "DELETE FROM artist_identity WHERE artist_id = ?", (source_id,)
         )
         connection.execute(
             "UPDATE image_source SET author_key = ?, updated_at = ? WHERE author_key = ?",
@@ -1695,6 +1735,9 @@ class ProvenanceStore:
                 overwrite_name=overwrite_name,
                 now=now,
             )
+        self._record_name_alias_locked(
+            connection, artist_id, name, name_source, now
+        )
         for kind, identity, display, url, source in specs:
             connection.execute(
                 """
@@ -1929,6 +1972,39 @@ class ProvenanceStore:
             connection.commit()
         return base
 
+    def add_alias(self, artist_key: str, alias: str) -> str:
+        """Attach a searchable former/platform name to an artist."""
+        if self._is_unassigned_key(artist_key):
+            raise ValueError("无画师不能添加别名")
+        label = str(alias or "").strip()
+        key = _author_text(label)
+        if not key:
+            raise ValueError("作者别名不能为空")
+        with self._read() as connection:
+            base = self._canonical_locked(connection, artist_key)
+            if not base.isdigit():
+                raise ValueError("作者不存在")
+            owner = connection.execute(
+                "SELECT artist_id FROM artist_identity WHERE kind = ? AND identity = ?",
+                (IDENTITY_NAME_ALIAS, key),
+            ).fetchone()
+            if owner is not None and str(owner["artist_id"]) != base:
+                owner_row = connection.execute(
+                    "SELECT name FROM artist WHERE id = ?", (int(owner["artist_id"]),)
+                ).fetchone()
+                owner_name = (
+                    str(owner_row["name"] or owner["artist_id"])
+                    if owner_row is not None
+                    else str(owner["artist_id"])
+                )
+                raise ValueError(f"该别名已属于画师「{owner_name}」")
+            self._record_name_alias_locked(connection, int(base), label, "manual", _now())
+            connection.execute(
+                "UPDATE artist SET updated_at = ? WHERE id = ?", (_now(), int(base))
+            )
+            connection.commit()
+        return base
+
     def set_artist_cover(self, artist_key: str, point_id: str) -> str:
         """Mark one of the artist's images as their explicit representative."""
         if self._is_unassigned_key(artist_key):
@@ -1993,10 +2069,23 @@ class ProvenanceStore:
             if not base.isdigit():
                 raise ValueError("作者不存在")
             artist_id = int(base)
+            current = connection.execute(
+                "SELECT name, name_source FROM artist WHERE id = ?", (artist_id,)
+            ).fetchone()
+            now = _now()
+            if current is not None:
+                self._record_name_alias_locked(
+                    connection,
+                    artist_id,
+                    str(current["name"] or ""),
+                    str(current["name_source"] or ""),
+                    now,
+                )
+            self._record_name_alias_locked(connection, artist_id, label, "manual", now)
             connection.execute(
                 "UPDATE artist SET name = ?, name_key = ?, name_source = 'manual', "
                 "updated_at = ? WHERE id = ?",
-                (label, name_key or None, _now(), artist_id),
+                (label, name_key or None, now, artist_id),
             )
             connection.execute(
                 "DELETE FROM artist_identity WHERE artist_id = ? AND kind = ?",
@@ -2038,6 +2127,11 @@ class ProvenanceStore:
                 if not normalized:
                     raise ValueError("Pixiv ID 无效")
                 clauses.append((IDENTITY_PIXIV, normalized))
+            elif platform in {"alias", "name_alias"}:
+                normalized = _author_text(value)
+                if not normalized:
+                    raise ValueError("作者别名无效")
+                clauses.append((IDENTITY_NAME_ALIAS, normalized))
             elif platform == "twitter":
                 handle = normalize_twitter_handle(value)
                 if not handle:
@@ -2150,8 +2244,16 @@ class ProvenanceStore:
             if not artist_id.isdigit():
                 return []
             rows = connection.execute(
-                "SELECT kind, identity FROM artist_identity WHERE artist_id = ?",
-                (int(artist_id),),
+                "SELECT kind, identity FROM artist_identity WHERE artist_id = ? "
+                "AND kind IN (?, ?, ?, ?, ?)",
+                (
+                    int(artist_id),
+                    IDENTITY_PIXIV,
+                    IDENTITY_TWITTER,
+                    IDENTITY_HANDLE,
+                    IDENTITY_LINK,
+                    IDENTITY_XIAOHONGSHU,
+                ),
             ).fetchall()
         return sorted(f"{row['kind']}:{row['identity']}" for row in rows)
 

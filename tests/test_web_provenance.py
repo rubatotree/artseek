@@ -1004,6 +1004,31 @@ class ProvenanceApiTests(unittest.TestCase):
             json={"kind": "twitter", "value": "alice_x"},
         )
         self.assertEqual(removed_x.json()["author"]["x_handles"], [])
+        alias_added = self.client.post(
+            f"/api/authors/{alice}/identities",
+            json={"kind": "alias", "value": "Alice Old Name"},
+        )
+        self.assertEqual(alias_added.status_code, 200)
+        self.assertTrue(
+            any(
+                item["kind"] == "name_alias"
+                and item["display"] == "Alice Old Name"
+                for item in alias_added.json()["author"]["identities"]
+            )
+        )
+        matches = self.client.post("/api/authors", json={"q": "Alice Old Name"}).json()
+        self.assertIn(alice, [item["key"] for item in matches["authors"]])
+        alias_removed = self.client.post(
+            f"/api/authors/{alice}/identities/remove",
+            json={"kind": "alias", "value": "Alice Old Name"},
+        )
+        self.assertFalse(
+            any(
+                item["kind"] == "name_alias"
+                and item["display"] == "Alice Old Name"
+                for item in alias_removed.json()["author"]["identities"]
+            )
+        )
         merged = self.client.post(
             f"/api/authors/{alice}/merge", json={"source": "2"}
         )

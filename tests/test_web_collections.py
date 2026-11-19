@@ -609,7 +609,7 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn("const CARD_ASPECT_MIN = 0.6;", html)
         self.assertIn("const CARD_ASPECT_MAX = 3;", html)
         self.assertIn(
-            "if (state.galleryView === 'square' || state.galleryView === 'compact') return 1;",
+            "if (view === 'square' || view === 'compact') return 1;",
             html,
         )
         self.assertIn("if (view === 'list') return 1;", html)
@@ -774,8 +774,8 @@ class CollectionsApiTests(unittest.TestCase):
             html,
         )
         self.assertIn("function cardDisplayAspect(item)", html)
-        self.assertIn("return columnWidth / cardLayoutAspect(item);", html)
-        self.assertIn("if (state.galleryView === 'list') return 96;", html)
+        self.assertIn("return columnWidth / cardLayoutAspect(item, view);", html)
+        self.assertIn("if (view === 'list') return 96;", html)
 
     def test_missing_qdrant_collection_returns_an_empty_page_without_pruning_membership(
         self,

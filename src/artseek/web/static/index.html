@@ -545,6 +545,16 @@
       stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.9;
     }
     .query-info { flex: 1 1 auto; min-width: 0; min-height: 24px; color: var(--muted); font-size: 13px; }
+    .query-author-settings {
+      display: inline-grid; place-items: center; width: 22px; height: 22px;
+      min-height: 0; margin: 0 3px; padding: 0; border-radius: 7px;
+      background: #f6f1f5; color: #8a5268; vertical-align: -5px;
+    }
+    .query-author-settings:hover { transform: none; background: #efd6e0; }
+    .query-author-settings svg {
+      width: 14px; height: 14px; fill: none; stroke: currentColor;
+      stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8;
+    }
     .collection-sort { position: relative; flex: 0 0 auto; display: flex; gap: 4px; }
     .collection-sort[hidden], .collection-sort-pin[hidden] { display: none; }
     .collection-sort-toggle, .collection-sort-pin {
@@ -836,6 +846,16 @@
       flex: 0 0 auto; display: inline-grid; place-items: center;
       width: 30px; height: 30px; min-height: 0; padding: 0; border-radius: 9px;
       background: #f6f1f5; color: #665866;
+      opacity: 0; pointer-events: none; transition: opacity .15s ease;
+    }
+    .artist-row:hover .artist-settings,
+    .artist-row:focus-within .artist-settings,
+    .artist-card:hover .artist-settings,
+    .artist-card:focus-within .artist-settings {
+      opacity: 1; pointer-events: auto;
+    }
+    @media (hover: none), (pointer: coarse) {
+      .artist-settings { opacity: 1; pointer-events: auto; }
     }
     .artist-head .artist-self-favorite {
       position: static; flex: 0 0 auto; width: 30px; height: 30px;
@@ -852,11 +872,11 @@
       display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden;
       padding-bottom: 4px; scroll-snap-type: x proximity;
       overscroll-behavior-x: contain;
-      scrollbar-width: none; scrollbar-color: transparent transparent;
+      scrollbar-width: thin; scrollbar-color: transparent transparent;
     }
     .artist-strip::-webkit-scrollbar { height: 6px; background: transparent; }
     .artist-strip::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; }
-    .artist-strip:hover { scrollbar-width: thin; scrollbar-color: #d7aab9 transparent; }
+    .artist-strip:hover { scrollbar-color: #d7aab9 transparent; }
     .artist-strip:hover::-webkit-scrollbar-thumb { background: #d7aab9; }
     .artist-thumb {
       position: relative; flex: 0 0 auto;
@@ -894,21 +914,25 @@
     .artist-card {
       position: relative; overflow: hidden; border: 1px solid #eee9ef; border-radius: 16px;
       background: #fff; box-shadow: 0 7px 22px rgba(58, 47, 64, .055);
-      cursor: pointer; outline: 1px solid transparent;
+      cursor: default; outline: 1px solid transparent;
+      user-select: text;
       transition: outline-color .15s ease, box-shadow .15s ease;
     }
     .artist-card:hover { outline-color: #ddb2c2; box-shadow: 0 9px 24px rgba(69,51,76,.13); }
     .artist-card-cover {
       position: relative; overflow: hidden; background: #f1edf2;
+      cursor: pointer; user-select: none;
     }
     .artist-card-cover img { display: block; width: 100%; height: 100%; object-fit: cover; }
     .artist-card-label {
       display: grid; gap: 3px; padding: 9px 10px 10px; min-width: 0;
     }
     .artist-card-name {
-      min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-      color: var(--ink); font-size: 13px; font-weight: 700;
+      display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      color: var(--ink); font-size: 13px; font-weight: 700; text-decoration: none;
+      cursor: pointer;
     }
+    .artist-card-name:hover { color: #8a5268; text-decoration: underline; }
     .artist-card-meta {
       display: flex; align-items: center; gap: 5px; min-width: 0;
       color: var(--muted); font-size: 11px;
@@ -918,7 +942,14 @@
     .artist-card .card-favorite { top: 7px; left: 7px; right: auto; bottom: auto; opacity: 0; }
     .artist-card:hover .card-favorite { opacity: 1; pointer-events: auto; }
     .artist-card .card-order-handle, .artist-card .card-remove { z-index: 5; }
-    .artist-card.card-list { display: grid; grid-template-columns: 84px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 6px; cursor: pointer; }
+    .artist-collection-card.is-square {
+      display: flex; flex-direction: column; aspect-ratio: 1;
+    }
+    .artist-collection-card.is-square .image-wrap {
+      flex: 1 1 auto; min-height: 0; aspect-ratio: auto !important;
+    }
+    .artist-collection-card.is-square .artist-card-label { flex: 0 0 auto; }
+    .artist-card.card-list { display: grid; grid-template-columns: 84px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 6px; }
     .artist-card.card-list .artist-card-cover { width: 84px; height: 84px; border-radius: 11px; }
     .artist-card.card-list .artist-card-label { padding: 0; }
     .artist-card.card-list .artist-settings { position: static; margin-left: 0; background: #f6f1f5; }
@@ -986,6 +1017,14 @@
       color: #8a5268; text-decoration: none;
     }
     .artist-link-row a:hover { text-decoration: underline; }
+    .artist-alias-badge {
+      flex: 0 0 auto; padding: 2px 6px; border-radius: 999px;
+      background: #eef3fa; color: #557089; font-size: 10px; font-weight: 650;
+    }
+    .artist-alias-name {
+      flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      color: var(--ink);
+    }
     .artist-link-row .platform-icon { flex: 0 0 auto; width: 20px; height: 20px; }
     .artist-link-row .platform-icon svg { width: 11px; height: 11px; }
     .artist-link-remove {
@@ -2224,6 +2263,15 @@
         return 'images';
       }
     }
+    const ARTIST_LAYOUT_STORAGE_KEY = 'artseek.artistLayout';
+    function loadArtistLayout() {
+      try {
+        const value = localStorage.getItem(ARTIST_LAYOUT_STORAGE_KEY);
+        return GALLERY_VIEW_LABELS[value] ? value : 'list';
+      } catch (_) {
+        return 'list';
+      }
+    }
     const ARTIST_SORT_STORAGE_KEY = 'artseek.artistSort';
     const ARTIST_SORT_OPTIONS = [
       { value: 'name_asc', label: '作者名 · A→Z' },
@@ -2323,6 +2371,7 @@
     }
     const CARD_ORDER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01"/></svg>';
     const CARD_HEART_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10Z"/></svg>';
+    const ARTIST_GEAR_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></svg>';
     const CARD_CLOSE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m7 7 10 10M17 7 7 17"/></svg>';
     const routeCtl = { applying: false, seq: 0, dismissAll: false, restoreViewer: false };
     const state = {
@@ -2349,6 +2398,7 @@
       collectionHistory: { canUndo: false, canRedo: false, undoLabel: '', redoLabel: '' },
       collectionViewSort: '', collectionSortTemp: false, collectionSortBusy: false,
       galleryView: loadGalleryView(),
+      artistLayout: loadArtistLayout(),
       libraryView: loadLibraryView(),
       sidebarCollapsed: loadSidebarCollapsed(),
       artistView: {
@@ -5868,7 +5918,8 @@
     }
     function cycleGalleryView() {
       const options = galleryViewChoices();
-      const index = options.findIndex((option) => option.value === state.galleryView);
+      const current = activeGalleryView();
+      const index = options.findIndex((option) => option.value === current);
       const next = options[(index + 1) % options.length] || options[0];
       applyGalleryView(next.value);
     }
@@ -5880,7 +5931,7 @@
         renderArtistBar();
         return;
       }
-      const view = state.galleryView;
+      const view = activeGalleryView();
       const options = galleryViewChoices();
       const index = options.findIndex((option) => option.value === view);
       const nextLabel = options[(index + 1) % options.length]?.label || options[0].label;
@@ -5930,8 +5981,17 @@
     }
     function applyGalleryView(value) {
       if (!GALLERY_VIEW_LABELS[value]) return;
-      if (state.galleryView === value) return;
+      if (activeGalleryView() === value) return;
       const scrollY = window.scrollY;
+      if (artistViewActive()) {
+        state.artistLayout = value;
+        try { localStorage.setItem(ARTIST_LAYOUT_STORAGE_KEY, value); }
+        catch (_) { /* keep the in-memory choice */ }
+        renderGalleryView();
+        renderArtistGallery({ append: false });
+        restoreGalleryScroll(scrollY);
+        return;
+      }
       state.galleryView = value;
       try {
         localStorage.setItem(GALLERY_VIEW_STORAGE_KEY, value);
@@ -5939,11 +5999,6 @@
         // Keep the in-memory choice when storage is unavailable.
       }
       renderGalleryView();
-      if (artistViewActive()) {
-        renderArtistGallery({ append: false });
-        restoreGalleryScroll(scrollY);
-        return;
-      }
       $('gallery').classList.remove('view-artists');
       renderGallery(state.results, { append: false });
       restoreGalleryScroll(scrollY);
@@ -6541,6 +6596,12 @@
         if (session === state.cardMenuSession) setCollectionStatus(`无法读取收藏夹：${error.message}`);
       });
     }
+    $('query-info').addEventListener('click', (event) => {
+      const button = event.target.closest('[data-author-settings]');
+      if (!button) return;
+      event.preventDefault();
+      void openArtistDialog(button.dataset.authorSettings);
+    });
     $('sidebar-toggle').addEventListener('click', () => applySidebarCollapsed(!state.sidebarCollapsed));
     document.querySelectorAll('[data-library-view]').forEach((button) => {
       button.addEventListener('click', () => applyLibraryView(button.dataset.libraryView));
@@ -6950,6 +7011,16 @@
         state.loadingMore = false;
       }
     }
+    function renderAuthorQueryInfo() {
+      const name = state.authorName || state.authorKey;
+      const sortLabel = FOLDER_SORT_LABELS[state.authorSort] || state.authorSort;
+      const gear = state.authorKey && state.authorKey !== 'none'
+        ? `<button class="query-author-settings" type="button" data-author-settings="${escapeHtml(state.authorKey)}" aria-label="画师设置：${escapeHtml(name)}" title="画师设置">${ARTIST_GEAR_ICON}</button>`
+        : '';
+      $('query-info').innerHTML = compactInfo()
+        ? `${escapeHtml(name)}${gear} · ${state.results.length} / ${state.authorTotal} 张图 · ${escapeHtml(sortLabel)}`
+        : `作者「${escapeHtml(name)}」${gear} · ${state.results.length} / ${state.authorTotal} 张图 · ${escapeHtml(sortLabel)}`;
+    }
     async function fetchAuthorImages({ reset }) {
       if (!state.authorKey) return;
       if (!reset && (state.loadingMore || !state.hasMore)) return;
@@ -6992,9 +7063,7 @@
         }
         state.hasMore = Boolean(data.has_more) && incoming.length > 0;
         $('load-more').hidden = !state.hasMore;
-        $('query-info').textContent = compactInfo()
-          ? `${state.results.length} / ${state.authorTotal} 张图 · ${FOLDER_SORT_LABELS[state.authorSort] || state.authorSort}`
-          : `作者「${state.authorName || state.authorKey}」· ${state.results.length} / ${state.authorTotal} 张图 · ${FOLDER_SORT_LABELS[state.authorSort] || state.authorSort}`;
+        renderAuthorQueryInfo();
         if ($('viewer').open) {
           updateViewerNav();
           updateProvenanceButton();
@@ -7205,6 +7274,9 @@
 
     function artistViewActive() {
       return state.libraryView === 'artists' && state.mode !== 'idle';
+    }
+    function activeGalleryView() {
+      return state.libraryView === 'artists' ? state.artistLayout : state.galleryView;
     }
     function renderLibraryViewSwitch() {
       document.querySelectorAll('[data-library-view]').forEach((button) => {
@@ -7511,6 +7583,14 @@
       const strip = document.createElement('div');
       strip.className = 'artist-strip';
       strip.dataset.artistStrip = key;
+      strip.addEventListener('wheel', (event) => {
+        if (!event.shiftKey) return;
+        if (strip.scrollWidth <= strip.clientWidth) return;
+        const raw = event.deltaY || event.deltaX;
+        if (!raw) return;
+        strip.scrollLeft += event.deltaMode === 1 ? raw * 16 : raw;
+        event.preventDefault();
+      }, { passive: false });
       const images = Array.isArray(author.images) ? author.images : [];
       for (const item of images) strip.append(artistThumbElement(item, key));
       const sentinel = document.createElement('span');
@@ -7592,13 +7672,6 @@
       loading.remove();
       row.loading = false;
     }
-    function navigateToAuthorPage(key) {
-      if (!key) return;
-      closeCardCollectionMenu({ restoreFocus: false });
-      const route = { kind: 'author', key: String(key) };
-      commitRoute(route, { replace: false, overlay: 0 });
-      void applyAppRoute(route);
-    }
     function artistPageItem(author) {
       const key = String(author.key || '');
       return {
@@ -7619,19 +7692,16 @@
       const coverItem = cover
         ? { width: Number(cover.width || 0), height: Number(cover.height || 0) }
         : { width: 1, height: 1 };
-      const aspect = state.galleryView === 'square' || state.galleryView === 'compact'
+      const aspect = state.artistLayout === 'square' || state.artistLayout === 'compact'
         ? 1
         : cardDisplayAspect(coverItem);
       const card = document.createElement('article');
       card.className = 'artist-card';
       card.dataset.artistCard = '1';
       card.dataset.artistKey = key;
-      card.tabIndex = 0;
-      card.setAttribute('role', 'button');
-      card.setAttribute('aria-label', `打开画师：${name}`);
-      card.innerHTML = `<div class="artist-card-cover" style="aspect-ratio: ${aspect}">${cover ? `<img loading="lazy" decoding="async" draggable="false" alt="${escapeHtml(name)}" src="/thumb/${cover.id}">` : ''}</div>
+      card.innerHTML = `<div class="artist-card-cover" style="aspect-ratio: ${aspect}" data-artist-cover-link tabindex="0" role="link" aria-label="打开画师：${escapeHtml(name)}">${cover ? `<img loading="lazy" decoding="async" draggable="false" alt="${escapeHtml(name)}" src="/thumb/${cover.id}">` : ''}</div>
         <div class="artist-card-label">
-          <div class="artist-card-name">${escapeHtml(name)}</div>
+          <a class="artist-card-name" href="/author/${encodeURIComponent(key)}" target="_blank" rel="noopener">${escapeHtml(name)}</a>
           <div class="artist-card-meta">
             <span class="artist-sub">${author.handle ? `@${escapeHtml(author.handle)}` : `UID ${escapeHtml(key)}`} · ${Number(author.image_count || 0)} 张</span>
             <span class="artist-socials">${platformIconLinks(author.members || [])}</span>
@@ -7645,8 +7715,8 @@
     function renderArtistCardGrid({ append } = { append: false }) {
       const gallery = $('gallery');
       gallery.classList.remove('view-artists', 'view-list');
-      gallery.classList.toggle('view-square', state.galleryView === 'square');
-      gallery.classList.toggle('view-compact', state.galleryView === 'compact');
+      gallery.classList.toggle('view-square', state.artistLayout === 'square');
+      gallery.classList.toggle('view-compact', state.artistLayout === 'compact');
       if (!append) {
         disconnectArtistObservers();
         gallery.replaceChildren();
@@ -7676,10 +7746,15 @@
     }
     function galleryColumnAppend(card) {
       const item = card._layoutItem || { width: 1, height: 1 };
-      placeCard(card, item, 54);
+      placeCard(
+        card,
+        item,
+        state.artistLayout === 'natural' ? 54 : 0,
+        state.artistLayout,
+      );
     }
     function renderArtistGallery({ append } = { append: false }) {
-      if (state.galleryView !== 'list') {
+      if (state.artistLayout !== 'list') {
         renderArtistCardGrid({ append });
         return;
       }
@@ -7738,9 +7813,10 @@
           if (author) openCardCollectionMenu(artistPageItem(author), selfFavorite);
           return;
         }
-        const card = event.target.closest('[data-artist-card]');
-        if (card) {
-          navigateToAuthorPage(card.dataset.artistKey);
+        const coverLink = event.target.closest('[data-artist-cover-link]');
+        if (coverLink) {
+          const card = coverLink.closest('[data-artist-card]');
+          if (card) window.open(`/author/${encodeURIComponent(card.dataset.artistKey)}`, '_blank', 'noopener');
           return;
         }
         const thumb = event.target.closest('[data-artist-thumb]');
@@ -7761,10 +7837,11 @@
       gallery.addEventListener('keydown', (event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
         if (event.target.closest('[data-artist-favorite], [data-artist-favorite-self], [data-artist-settings]')) return;
-        const card = event.target.closest?.('[data-artist-card]');
-        if (card) {
+        const coverLink = event.target.closest?.('[data-artist-cover-link]');
+        if (coverLink) {
           event.preventDefault();
-          navigateToAuthorPage(card.dataset.artistKey);
+          const card = coverLink.closest('[data-artist-card]');
+          if (card) window.open(`/author/${encodeURIComponent(card.dataset.artistKey)}`, '_blank', 'noopener');
           return;
         }
         const thumb = event.target.closest?.('[data-artist-thumb]');
@@ -7775,13 +7852,6 @@
         const item = row?.images.find((entry) => entry.id === thumb.dataset.pointId);
         if (item) openViewer(item, { playlist: row.images, rowKey: key });
       });
-      gallery.addEventListener('wheel', (event) => {
-        if (!event.shiftKey) return;
-        const strip = event.target.closest('.artist-strip');
-        if (!strip || strip.scrollWidth <= strip.clientWidth) return;
-        strip.scrollLeft += event.deltaY || event.deltaX;
-        event.preventDefault();
-      }, { passive: false });
     }
 
     function artistDialogStatus(message, kind = '') {
@@ -7807,7 +7877,16 @@
       });
       metaItems.push(`<span class="artist-meta-uid">ArtSeek #${escapeHtml(key)}</span>`);
       $('artist-dialog-meta').innerHTML = metaItems.join('');
-      const links = members.map((member) => {
+      const aliasRows = (Array.isArray(author.identities) ? author.identities : [])
+        .filter((identity) => (
+          identity.kind === 'name_alias'
+          && String(identity.display || identity.identity || '').casefold() !== name.casefold()
+        ))
+        .map((identity) => {
+          const label = identity.display || identity.identity;
+          return `<div class="artist-link-row artist-alias-row"><span class="artist-alias-badge">别名</span><span class="artist-alias-name">${escapeHtml(label)}</span><button class="artist-link-remove" type="button" data-remove-kind="alias" data-remove-value="${escapeHtml(identity.identity)}" data-remove-label="${escapeHtml(label)}" aria-label="移除别名 ${escapeHtml(label)}" title="移除">×</button></div>`;
+        });
+      const links = aliasRows.concat(members.map((member) => {
         const url = member.profile_url || '';
         const label = member.platform === 'link'
           ? (member.handle || url)
@@ -7819,7 +7898,7 @@
           : (member.platform_id || '');
         const removable = ['pixiv', 'twitter', 'xiaohongshu', 'link'].includes(member.platform);
         return `<div class="artist-link-row"><span class="platform-icon ${escapeHtml(member.platform)}">${platformIconSvg(member.platform)}</span><a href="${escapeHtml(url)}" target="_blank" rel="noopener" title="${escapeHtml(url)}">${escapeHtml(label)}</a>${removable ? `<button class="artist-link-remove" type="button" data-remove-kind="${escapeHtml(member.platform)}" data-remove-value="${escapeHtml(removeValue)}" data-remove-label="${escapeHtml(label)}" aria-label="移除 ${escapeHtml(label)}" title="移除">×</button>` : ''}</div>`;
-      }).join('');
+      })).join('');
       $('artist-dialog-body').innerHTML = `
         <section class="artist-dialog-section">
           <h4>作者名</h4>
@@ -7831,20 +7910,21 @@
           </form>
         </section>
         <section class="artist-dialog-section">
-          <h4>社交链接</h4>
-          <div class="artist-link-list">${links || '<div class="artist-dialog-note">还没有社交链接。</div>'}</div>
+          <h4>别名与社交账号</h4>
+          <div class="artist-link-list">${links || '<div class="artist-dialog-note">还没有别名或社交账号。</div>'}</div>
         </section>
         <section class="artist-dialog-section">
-          <h4>添加社交账号</h4>
+          <h4>添加别名或社交账号</h4>
           <form class="artist-form" id="artist-add-form" autocomplete="off">
             <div class="artist-form-row">
               <select name="kind" aria-label="身份类型">
+                <option value="alias">作者别名</option>
                 <option value="link">社交链接</option>
                 <option value="pixiv">Pixiv ID</option>
                 <option value="twitter">X handle</option>
                 <option value="xiaohongshu">小红书主页</option>
               </select>
-              <input name="value" type="text" placeholder="链接 / 数字 ID / @handle / 小红书 UID" aria-label="社交账号或链接">
+              <input name="value" type="text" placeholder="作者别名 / 链接 / 数字 ID / @handle / 小红书 UID" aria-label="作者别名或社交账号">
             </div>
             <div class="artist-form-row">
               <input name="label" type="text" placeholder="备注（可选，用于社交链接）" aria-label="社交链接备注">
@@ -7896,7 +7976,7 @@
                 value: button.dataset.removeValue,
               }),
             }));
-            await refreshArtistDialog(key, '已移除社交身份。');
+            await refreshArtistDialog(key, '已移除别名或社交账号。');
           } catch (error) {
             artistDialogStatus(error.message, 'error');
           }
@@ -7919,7 +7999,7 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ kind, value, label }),
           }));
-          await refreshArtistDialog(key, '已添加社交账号。');
+          await refreshArtistDialog(key, '已添加别名或社交账号。');
         } catch (error) {
           artistDialogStatus(error.message, 'error');
         }
@@ -8720,7 +8800,7 @@
     }
 
     function galleryColumnCount() {
-      const view = state.galleryView;
+      const view = activeGalleryView();
       if (view === 'list') return 1;
       const phone = window.matchMedia('(max-width: 720px)').matches;
       const width = $('gallery').clientWidth || window.innerWidth;
@@ -8732,13 +8812,13 @@
       const natural = item.width > 0 && item.height > 0 ? item.width / item.height : 0.8;
       return Math.min(CARD_ASPECT_MAX, Math.max(CARD_ASPECT_MIN, natural));
     }
-    function cardLayoutAspect(item) {
-      if (state.galleryView === 'square' || state.galleryView === 'compact') return 1;
+    function cardLayoutAspect(item, view = state.galleryView) {
+      if (view === 'square' || view === 'compact') return 1;
       return cardDisplayAspect(item);
     }
-    function estimateCardHeight(item, columnWidth) {
-      if (state.galleryView === 'list') return 96;
-      return columnWidth / cardLayoutAspect(item);
+    function estimateCardHeight(item, columnWidth, view = activeGalleryView()) {
+      if (view === 'list') return 96;
+      return columnWidth / cardLayoutAspect(item, view);
     }
     function cardTitleModel(item) {
       const fromSource = viewerTitleModelFromItem(item);
@@ -8776,13 +8856,13 @@
       gallery.dataset.cols = String(count);
       state.colHeights = Array(count).fill(0);
     }
-    function placeCard(element, item, extraHeight = 0) {
+    function placeCard(element, item, extraHeight = 0, view = activeGalleryView()) {
       const cols = [...$('gallery').querySelectorAll('.gallery-col')];
       if (!cols.length) return;
       const index = shortestColumnIndex();
       cols[index].appendChild(element);
       const width = cols[index].clientWidth || (($('gallery').clientWidth - 14 * (cols.length - 1)) / cols.length);
-      state.colHeights[index] += estimateCardHeight(item, width) + extraHeight;
+      state.colHeights[index] += estimateCardHeight(item, width, view) + extraHeight;
     }
     function artistCollectionCardHTML(item, index) {
       const view = state.galleryView;
@@ -8791,7 +8871,8 @@
       const manualOrder = inCollection && effectiveCollectionSort() === 'manual';
       const cover = item.cover || null;
       const coverItem = cover ? { width: cover.width || 0, height: cover.height || 0 } : { width: 1, height: 1 };
-      const ratio = listMode ? '' : ` style="aspect-ratio: ${view === 'square' || view === 'compact' ? 1 : cardDisplayAspect(coverItem)}"`;
+      const squareCard = view === 'square' || view === 'compact';
+      const ratio = listMode || squareCard ? '' : ` style="aspect-ratio: ${cardDisplayAspect(coverItem)}"`;
       const orderHandle = manualOrder
         ? `<button class="card-order-handle" type="button" data-card-action="order" draggable="false" aria-label="调整「${escapeHtml(item.name)}」的顺序" aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight">${CARD_ORDER_ICON}</button>`
         : '';
@@ -8801,19 +8882,19 @@
       const image = cover ? `<img src="/thumb/${cover.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">` : '';
       const meta = `${item.handle ? `@${escapeHtml(item.handle)}` : `UID ${escapeHtml(item.artist_key)}`} · ${Number(item.image_count || 0)} 张`;
       if (listMode) {
-        return `<article class="card card-list artist-collection-card" data-index="${index}" data-point-id="${escapeHtml(item.id)}" data-artist-collection tabindex="0" role="button" aria-label="打开画师：${escapeHtml(item.name)}">
-          <div class="image-wrap" draggable="true" data-gallery-drag>${cover ? `<img src="/thumb/${cover.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">` : ''}</div>
+        return `<article class="card card-list artist-collection-card" data-index="${index}" data-point-id="${escapeHtml(item.id)}" data-artist-collection>
+          <div class="image-wrap" draggable="true" data-gallery-drag data-artist-collection-cover tabindex="0" role="link" aria-label="打开画师：${escapeHtml(item.name)}">${cover ? `<img src="/thumb/${cover.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">` : ''}</div>
           <div class="list-body">
-            <div class="list-title">${escapeHtml(item.name)}</div>
+            <a class="list-title list-title-link" href="/author/${encodeURIComponent(item.artist_key)}" target="_blank" rel="noopener">${escapeHtml(item.name)}</a>
             <div class="list-sub"><span class="list-author">${escapeHtml(item.name)}</span><span class="list-sep">·</span><span class="list-tags">${meta}</span></div>
           </div>
           <div class="card-list-actions">${orderHandle}${removeAction}</div>
         </article>`;
       }
-      return `<article class="card artist-collection-card" data-index="${index}" data-point-id="${escapeHtml(item.id)}" data-artist-collection tabindex="0" role="button" aria-label="打开画师：${escapeHtml(item.name)}">
-        <div class="image-wrap"${ratio} draggable="true" data-gallery-drag>${orderHandle}${removeAction}${image}</div>
+      return `<article class="card artist-collection-card${squareCard ? ' is-square' : ''}" data-index="${index}" data-point-id="${escapeHtml(item.id)}" data-artist-collection>
+        <div class="image-wrap"${ratio} draggable="true" data-gallery-drag data-artist-collection-cover tabindex="0" role="link" aria-label="打开画师：${escapeHtml(item.name)}">${orderHandle}${removeAction}${image}</div>
         <div class="artist-card-label">
-          <div class="artist-card-name">${escapeHtml(item.name)}</div>
+          <a class="artist-card-name" href="/author/${encodeURIComponent(item.artist_key)}" target="_blank" rel="noopener">${escapeHtml(item.name)}</a>
           <div class="artist-card-meta"><span class="artist-sub">${meta}</span></div>
         </div>
       </article>`;
@@ -8946,7 +9027,11 @@
       results.forEach((item, index) => {
         const wrap = document.createElement('div');
         wrap.innerHTML = cardHTML(item, start + index);
-        placeCard(wrap.firstElementChild, item, item.kind === 'artist' ? 54 : 0);
+        placeCard(
+          wrap.firstElementChild,
+          item,
+          item.kind === 'artist' && state.galleryView === 'natural' ? 54 : 0,
+        );
       });
       bindGalleryCards();
       settleGalleryScroll();
@@ -8980,7 +9065,9 @@
           }
           if (item.kind === 'artist') {
             hideCardActionReveal();
-            navigateToAuthorPage(item.artist_key);
+            if (event.target.closest('[data-artist-collection-cover]')) {
+              window.open(`/author/${encodeURIComponent(item.artist_key)}`, '_blank', 'noopener');
+            }
             return;
           }
           if (handleCardBottomTap(event, card)) return;
@@ -8995,8 +9082,13 @@
           const item = state.results[Number(card.dataset.index)];
           if (!item) return;
           event.preventDefault();
-          if (item.kind === 'artist') navigateToAuthorPage(item.artist_key);
-          else openViewer(item);
+          if (item.kind === 'artist') {
+            if (event.target.closest('[data-artist-collection-cover]')) {
+              window.open(`/author/${encodeURIComponent(item.artist_key)}`, '_blank', 'noopener');
+            }
+          } else {
+            openViewer(item);
+          }
         });
         card.addEventListener('pointerdown', (event) => startCardActionPress(event, card));
         card.addEventListener('contextmenu', (event) => {

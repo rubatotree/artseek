@@ -3476,6 +3476,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 if not normalize_social_link(request.value):
                     raise ValueError("请输入有效的 http(s) 链接")
                 store.add_link(author_key, request.value, label=request.label)
+            elif kind in {"alias", "name_alias"}:
+                store.add_alias(author_key, request.value)
             elif kind in {"pixiv", "pixiv_id"}:
                 store.attach_identity(author_key, "pixiv", request.value)
             elif kind in {"twitter", "x", "x_id"}:
