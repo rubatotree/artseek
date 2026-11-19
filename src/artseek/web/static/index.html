@@ -4523,10 +4523,6 @@
       event.preventDefault();
       toggleViewerZoom();
     });
-    $('viewer').querySelector('.modal-bar').addEventListener('click', (event) => {
-      if (event.target.closest('button, a, input, label, select')) return;
-      setViewerUiHidden(!state.viewerUiHidden);
-    });
     $('viewer-close').addEventListener('click', () => dismissViewer());
     $('viewer').addEventListener('cancel', (event) => {
       event.preventDefault();
