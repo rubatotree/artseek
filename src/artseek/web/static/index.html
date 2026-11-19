@@ -7912,7 +7912,8 @@
       const aliasRows = (Array.isArray(author.identities) ? author.identities : [])
         .filter((identity) => (
           identity.kind === 'name_alias'
-          && String(identity.display || identity.identity || '').casefold() !== name.casefold()
+          && String(identity.display || identity.identity || '').toLocaleLowerCase()
+            !== name.toLocaleLowerCase()
         ))
         .map((identity) => {
           const label = identity.display || identity.identity;
