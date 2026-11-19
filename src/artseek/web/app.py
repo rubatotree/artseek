@@ -651,6 +651,11 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         del collection_id
         return spa_page()
 
+    @app.get("/similar/{point_id}", response_class=HTMLResponse)
+    def spa_similar(point_id: str) -> HTMLResponse:
+        del point_id
+        return spa_page()
+
     @app.get("/author/{author_key}", response_class=HTMLResponse)
     def spa_author(author_key: str) -> HTMLResponse:
         del author_key
@@ -2912,6 +2917,32 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             job.paused = False
             job.message = "正在停止来源任务…"
         return provenance_job_payload()
+
+    @app.get("/api/images/{point_id}/similar")
+    def similar_images(
+        point_id: str,
+        limit: int = Query(default=40, ge=1, le=200),
+        offset: int = Query(default=0, ge=0, le=50_000),
+    ) -> dict[str, Any]:
+        if app.state.index_job.running:
+            raise HTTPException(409, "正在索引图片，请稍后再检索")
+        _payload, path = resolve_item(point_id)
+        try:
+            response = app.state.engine.search(
+                "",
+                image=path,
+                limit=limit,
+                offset=offset,
+                expand=False,
+                exclude_ids=[point_id],
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        data = dataclasses.asdict(response)
+        data["source_id"] = point_id
+        data["applied_filters"] = {"author_keys": [], "tags": []}
+        attach_provenance(data.get("results") or [])
+        return data
 
     @app.get("/api/images/{point_id}/provenance")
     def image_provenance(point_id: str) -> dict[str, Any]:

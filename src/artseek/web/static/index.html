@@ -2416,6 +2416,7 @@
       galleryDragItem: null,
       authorKey: '', authorName: '', authorTotal: 0,
       tagName: '', tagTotal: 0,
+      similarSourceId: '', similarSourceName: '', similarTotal: 0,
       provenance: { open: false, imageId: '', data: null, seq: 0, loading: false },
       provenancePoll: 0, provenanceIdlePolls: 0,
       viewerTitleCache: new Map(), viewerTitlePending: new Set(), viewerTitleTimer: 0,
@@ -3086,6 +3087,7 @@
             ${postButton}
             <button type="button" data-prov-action="saucenao">SauceNAO</button>
             <button type="button" data-prov-action="ascii2d">ascii2d</button>
+            <button type="button" data-prov-action="local-similar">本地相似</button>
             <button type="button" data-prov-action="copy-path">复制原图路径</button>
           </div>
         </div>
@@ -3145,6 +3147,13 @@
       });
       body.querySelector('[data-prov-action="saucenao"]')?.addEventListener('click', () => openReverseSearch('saucenao'));
       body.querySelector('[data-prov-action="ascii2d"]')?.addEventListener('click', () => openReverseSearch('ascii2d'));
+      body.querySelector('[data-prov-action="local-similar"]')?.addEventListener('click', () => {
+        const pointId = currentImageId();
+        if (!pointId) return;
+        const route = { kind: 'similar', id: pointId };
+        commitRoute(route, { replace: false, overlay: 0 });
+        void applyAppRoute(route);
+      });
       body.querySelector('[data-prov-action="copy-path"]')?.addEventListener('click', async () => {
         try { await navigator.clipboard.writeText(data.path || ''); }
         catch (_) { /* clipboard may be unavailable */ }
@@ -3374,6 +3383,7 @@
       if (state.mode === 'random') return fetchRandomBrowse({ reset: true });
       if (state.mode === 'scope') return fetchScopeImages({ reset: true });
       if (state.mode === 'author') return fetchAuthorImages({ reset: true });
+      if (state.mode === 'similar') return fetchSimilarImages({ reset: true });
       if (state.mode === 'tag') return fetchTagImages({ reset: true });
       return Promise.resolve();
     }
@@ -7081,6 +7091,65 @@
       }
     }
 
+    async function fetchSimilarImages({ reset }) {
+      if (!state.similarSourceId) return;
+      if (!reset && (state.loadingMore || !state.hasMore)) return;
+      const seq = reset ? ++state.searchSeq : state.searchSeq;
+      if (reset) {
+        state.hasMore = false;
+        $('panel').classList.add('loading');
+        $('query-info').textContent = '正在本地查找相似图…';
+        $('load-more').hidden = true;
+      } else {
+        state.loadingMore = true;
+        $('load-more').textContent = '正在载入更多相似图…';
+        $('load-more').hidden = false;
+      }
+      try {
+        const params = new URLSearchParams({
+          limit: String(Number($('limit').value) || 40),
+          offset: String(reset ? 0 : state.results.length),
+        });
+        const data = await parseResponse(await fetch(
+          `/api/images/${encodeURIComponent(state.similarSourceId)}/similar?${params}`,
+        ));
+        if (seq !== state.searchSeq) return;
+        const incoming = data.results || [];
+        if (reset) {
+          state.results = incoming;
+          renderGallery(state.results, { append: false });
+        } else {
+          const seen = new Set(state.results.map((item) => item.id));
+          const fresh = incoming.filter((item) => !seen.has(item.id));
+          state.results = state.results.concat(fresh);
+          renderGallery(fresh, { append: true });
+        }
+        state.similarTotal = state.results.length;
+        state.hasMore = Boolean(data.has_more) && incoming.length > 0;
+        $('load-more').hidden = !state.hasMore;
+        $('query-info').textContent = compactInfo()
+          ? `本地相似 · ${state.results.length}${state.hasMore ? '+' : ''} 张图`
+          : `本地相似 · ${state.results.length}${state.hasMore ? '+' : ''} 张图 · 按视觉相似度`;
+        if ($('viewer').open) {
+          updateViewerNav();
+          updateProvenanceButton();
+          syncNeighborImages();
+          prefetchViewerAhead();
+        }
+      } catch (error) {
+        if (seq !== state.searchSeq) return;
+        if (reset) $('query-info').textContent = `相似图查找失败：${error.message}`;
+        else $('load-more').textContent = `继续载入失败：${error.message}`;
+        if (!reset) state.hasMore = false;
+      } finally {
+        if (seq === state.searchSeq) {
+          $('panel').classList.remove('loading');
+          state.loadingMore = false;
+          if (!state.hasMore && state.results.length) $('load-more').hidden = true;
+        }
+      }
+    }
+
     async function fetchTagImages({ reset }) {
       if (!state.tagName) return;
       if (!reset && (state.loadingMore || !state.hasMore)) return;
@@ -7263,6 +7332,7 @@
       if (state.mode === 'random') return fetchRandomBrowse({ reset: false });
       if (state.mode === 'collection') return fetchCollectionImages({ reset: false });
       if (state.mode === 'author') return fetchAuthorImages({ reset: false });
+      if (state.mode === 'similar') return fetchSimilarImages({ reset: false });
       if (state.mode === 'tag') return fetchTagImages({ reset: false });
       if (state.mode === 'scope') return fetchScopeImages({ reset: false });
       if (state.mode === 'search') return fetchResults({ reset: false });
@@ -10887,6 +10957,9 @@
       if (parts[0] === 'random') {
         return { kind: 'random', seed: params.get('seed') || '', author: params.get('author') || '' };
       }
+      if (parts[0] === 'similar' && parts[1]) {
+        return { kind: 'similar', id: decodeURIComponent(parts[1]) };
+      }
       if (parts[0] === 'c' && parts[1]) {
         return { kind: 'collection', id: parts[1], author: params.get('author') || '' };
       }
@@ -10928,6 +11001,9 @@
         if (route.author) params.set('author', route.author);
         const query = params.toString();
         return query ? `/random?${query}` : '/random';
+      }
+      if (route.kind === 'similar') {
+        return `/similar/${encodeURIComponent(route.id || '')}`;
       }
       if (route.kind === 'collection') {
         const author = route.author ? `?author=${encodeURIComponent(route.author)}` : '';
@@ -10975,6 +11051,9 @@
       if (state.mode === 'random' && state.randomSeed != null) {
         return { kind: 'random', seed: String(state.randomSeed), author: state.authorKey || '' };
       }
+      if (state.mode === 'similar' && state.similarSourceId) {
+        return { kind: 'similar', id: state.similarSourceId };
+      }
       if (state.mode === 'author' && state.authorKey) {
         return { kind: 'author', key: state.authorKey };
       }
@@ -10984,6 +11063,10 @@
       return { kind: 'home' };
     }
     function syncDocumentTitle(route = parseAppRoute()) {
+      if (route.kind === 'similar') {
+        document.title = '本地相似图 · ArtSeek';
+        return;
+      }
       if (route.kind === 'notes' || route.kind === 'image') {
         const imageName = (state.current && state.current.name) || '图片';
         if (route.kind === 'notes') {
@@ -11335,6 +11418,24 @@
             if (collection) await selectCollection(collection, { skipRoute: true });
             else $('query-info').textContent = '收藏夹不存在或尚未载入。';
           }
+        } else if (route.kind === 'similar' && route.id) {
+          state.mode = 'similar';
+          state.similarSourceId = route.id;
+          state.similarSourceName = '';
+          state.browseKey = '';
+          state.browseName = '';
+          state.browseTotal = 0;
+          state.collectionId = '';
+          state.collectionName = '';
+          state.collectionTotal = null;
+          state.authorKey = '';
+          state.authorName = '';
+          state.authorTotal = 0;
+          state.tagName = '';
+          state.tagTotal = 0;
+          renderTree();
+          renderCollectionList();
+          await fetchSimilarImages({ reset: true });
         } else if (route.kind === 'author' && route.key) {
           state.authorKey = route.key;
           state.mode = 'author';

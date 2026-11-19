@@ -124,6 +124,19 @@ class ProvenanceApiTests(unittest.TestCase):
         self.client.close()
         self._temporary.cleanup()
 
+    def test_local_similar_endpoint_reuses_image_search(self) -> None:
+        before = len(self.engine.search_calls)
+        response = self.client.get("/api/images/p1/similar", params={"limit": 7})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["source_id"], "p1")
+        call = self.engine.search_calls[before]
+        self.assertEqual(call["image"], self.image)
+        self.assertEqual(call["limit"], 7)
+        self.assertEqual(call["exclude_ids"], ["p1"])
+        page = self.client.get("/similar/p1")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("ArtSeek", page.text)
+
     def test_viewer_payload_parses_filename_on_demand(self) -> None:
         response = self.client.get("/api/images/p1/provenance")
         self.assertEqual(response.status_code, 200)
