@@ -79,8 +79,10 @@ from ..provenance import (
     normalize_pixiv_user_id,
     normalize_social_link,
     normalize_twitter_handle,
+    normalize_xiaohongshu_user_id,
     parse_payload_path,
     parse_source_text,
+    record_unresolved,
     scan_payloads,
 )
 from ..query import QueryPlan
@@ -494,6 +496,8 @@ class ProvenanceManualRequest(BaseModel):
     author_handle: str | None = Field(default=None, max_length=100)
     pixiv_id: str | None = Field(default=None, max_length=200)
     x_handle: str | None = Field(default=None, max_length=200)
+    author_key: str | None = Field(default=None, max_length=200)
+    author_query: str | None = Field(default=None, max_length=200)
     tags: list[str] | None = None
     manual_tags: list[str] | None = None
     clear_manual: bool = False
@@ -1992,6 +1996,50 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             },
         )
 
+    def resolve_author_reference(value: str) -> str:
+        """Resolve an exact artist UID, Pixiv ID, X handle, or unique name."""
+        store: ProvenanceStore = app.state.provenance
+        token = str(value or "").strip().lstrip("@")
+        if not token:
+            raise HTTPException(400, "请填写作者 UID、Pixiv ID 或 X handle")
+        if token.casefold() in {
+            UNASSIGNED_AUTHOR_KEY,
+            "unassigned",
+            "无画师",
+            "未标注",
+            "作者未标注",
+            "无作者",
+        }:
+            raise HTTPException(400, "无画师不能作为标注作者")
+        summary = store.author_summary(token)
+        if summary is not None:
+            return str(summary["key"])
+        owner = store.identity_owner("pixiv", token)
+        if owner:
+            return owner
+        owner = store.identity_owner("twitter", token)
+        if owner:
+            return owner
+        matches = store.list_authors(token, limit=3)
+        if len(matches) == 1:
+            return store.canonical_author_key(str(matches[0]["key"]))
+        if not matches:
+            raise HTTPException(400, f"没有找到作者：{value}")
+        candidates = [
+            {
+                "key": str(item["key"]),
+                "name": item.get("name") or item.get("handle") or str(item["key"]),
+            }
+            for item in matches
+        ]
+        raise HTTPException(
+            400,
+            detail={
+                "message": "作者不唯一，请选择列表中的作者。",
+                "author_candidates": candidates,
+            },
+        )
+
     def restricted_ids(
         *,
         author_key: str | None = None,
@@ -2175,8 +2223,12 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 origin=parsed.primary.origin,
             )
         elif record is None:
-            store.upsert_unresolved(
-                point_id, payload, path_key=str(payload.get("path_key") or "")
+            record_unresolved(
+                store,
+                point_id,
+                payload,
+                path_key=str(payload.get("path_key") or ""),
+                path=path,
             )
         return store.get(point_id)
 
@@ -2668,7 +2720,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         if request.url:
             ref = parse_source_text(request.url)
             if ref is None:
-                raise HTTPException(400, "请输入 Pixiv/X 作品 URL 或任意 http(s) 来源 URL")
+                raise HTTPException(400, "请输入 Pixiv/X/小红书作品 URL 或任意 http(s) 来源 URL")
         if request.title is not None:
             fields["title"] = request.title.strip() or None
         if request.description is not None:
@@ -2679,7 +2731,11 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             fields["manual_tags"] = [
                 tag.strip() for tag in request.manual_tags if tag.strip()
             ]
-        if (
+        author_key = (request.author_key or "").strip()
+        author_query = (request.author_query or "").strip()
+        if author_key or author_query:
+            fields["author_key"] = resolve_author_reference(author_key or author_query)
+        elif (
             request.author_name is not None
             or request.author_handle is not None
             or request.pixiv_id is not None
@@ -2759,7 +2815,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         ensure_provenance_record(point_id, payload, path)
         store.set_manual(point_id, {}, ref=ref)
         record = store.get(point_id)
-        if record is not None:
+        if record is not None and ref.platform in {"pixiv", "twitter"}:
             domain = PIXIV_DOMAIN if ref.platform == "pixiv" else TWITTER_DOMAIN
             state = store.domain_state(domain)
             if int(state.get("blocked_until") or 0) <= int(time.time()):
@@ -3189,6 +3245,10 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 store.attach_identity(author_key, "pixiv", request.value)
             elif kind in {"twitter", "x", "x_id"}:
                 store.attach_identity(author_key, "twitter", request.value)
+            elif kind in {"xiaohongshu", "xhs", "rednote"}:
+                if not normalize_xiaohongshu_user_id(request.value):
+                    raise ValueError("小红书主页链接或 UID 无效")
+                store.attach_identity(author_key, "xiaohongshu", request.value)
             else:
                 raise HTTPException(400, "不支持的身份类型")
         except ValueError as exc:
@@ -3253,6 +3313,10 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 source_key = owner
         if not source_key:
             owner = store.identity_owner("twitter", token)
+            if owner:
+                source_key = owner
+        if not source_key:
+            owner = store.identity_owner("xiaohongshu", token)
             if owner:
                 source_key = owner
         if not source_key:

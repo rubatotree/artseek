@@ -422,6 +422,75 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(record["platform"], "twitter")
         self.assertEqual(record["source_id"], "1905879515315732000")
 
+    def test_xiaohongshu_name_groups_author_and_profile_is_editable(self) -> None:
+        path = self.root / "衣架兔！！_1_李岫荇_来自小红书网页版.jpg"
+        Image.new("RGB", (8, 8), (20, 30, 40)).save(path)
+        payload = {
+            **self.payload,
+            "path": str(path),
+            "path_key": str(path).casefold(),
+            "name": path.name,
+            "width": 8,
+            "height": 8,
+        }
+        self.engine.store.payloads["p1"] = payload
+        response = self.client.get("/api/images/p1/provenance")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        record = data["record"]
+        self.assertEqual(record["platform"], "xiaohongshu")
+        self.assertEqual(record["status"], "unresolved")
+        self.assertEqual(record["title"], "衣架兔！！")
+        self.assertEqual(record["page"], 1)
+        author_key = data["author"]["key"]
+
+        uid = "5f1c2d3e000000000101abcd"
+        added = self.client.post(
+            f"/api/authors/{author_key}/identities",
+            json={
+                "kind": "xiaohongshu",
+                "value": f"https://www.xiaohongshu.com/user/profile/{uid}",
+            },
+        )
+        self.assertEqual(added.status_code, 200)
+        self.assertEqual(added.json()["author"]["xiaohongshu_ids"], [uid])
+        self.assertEqual(added.json()["author"]["members"][0]["platform"], "xiaohongshu")
+
+        note = self.client.post(
+            "/api/images/p1/provenance/resolve",
+            json={
+                "url": (
+                    "https://www.xiaohongshu.com/explore/"
+                    "69ce329d000000002301523d?xsec_token=abc"
+                )
+            },
+        )
+        self.assertEqual(note.status_code, 200)
+        resolved = note.json()["record"]
+        self.assertEqual(resolved["source_id"], "69ce329d000000002301523d")
+        self.assertEqual(resolved["status"], "ok")
+        self.assertIn("xsec_token=abc", resolved["url"])
+
+        other_uid = "6a2b3c4d000000000202beef"
+        other = self.store.ensure_xhs_author("李岫荇（旧号）")
+        self.store.attach_identity(other, "xiaohongshu", other_uid)
+        merged = self.client.post(
+            f"/api/authors/{author_key}/merge", json={"source": other_uid}
+        )
+        self.assertEqual(merged.status_code, 200)
+        self.assertEqual(merged.json()["author"]["image_count"], 1)
+        self.assertEqual(
+            self.client.get(f"/api/authors/{other}").json()["author"]["key"],
+            author_key,
+        )
+
+        removed = self.client.post(
+            f"/api/authors/{author_key}/identities/remove",
+            json={"kind": "xiaohongshu", "value": uid},
+        )
+        self.assertEqual(removed.status_code, 200)
+        self.assertEqual(removed.json()["author"]["xiaohongshu_ids"], [other_uid])
+
     def test_provenance_tag_aliases_are_returned_for_tooltips(self) -> None:
         self.store.upsert_scan(
             "p1", self.payload, ParsedSource(parse_filename(self.image.name))
@@ -487,6 +556,27 @@ class ProvenanceApiTests(unittest.TestCase):
         )
         self.assertEqual(search.status_code, 200)
         self.assertEqual(self.engine.search_calls[-1]["restrict_ids"], ["p1"])
+
+    def test_manual_author_query_accepts_uid_pixiv_and_handle(self) -> None:
+        self.store.upsert_scan("p1", self.payload, ParsedSource(parse_filename(self.image.name)))
+        alice = self.store.ensure_author("pixiv", "100", name="Alice")
+        bob = self.store.ensure_author("twitter", "bob_handle", name="Bob", handle="bob_handle")
+        for query, expected in (
+            ("100", alice),
+            ("@bob_handle", bob),
+            (str(alice), alice),
+        ):
+            response = self.client.put(
+                "/api/images/p1/provenance",
+                json={"author_query": query},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["record"]["author_key"], expected)
+        selected = self.client.put(
+            "/api/images/p1/provenance",
+            json={"author_key": bob},
+        )
+        self.assertEqual(selected.json()["record"]["author_key"], bob)
 
     def test_manual_handle_attaches_to_current_artist(self) -> None:
         pixiv = self.store.ensure_author("pixiv", "100", name="Pixiv Name")

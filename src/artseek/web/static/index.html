@@ -599,6 +599,7 @@
     }
     .platform-icon.pixiv { background: #0096fa; }
     .platform-icon.twitter { background: #17151a; }
+    .platform-icon.xiaohongshu { background: #ff2442; }
     .platform-icon.manual, .platform-icon.other { background: #a79daa; }
     .platform-icon svg { display: block; width: 12px; height: 12px; }
     .platform-icon.pixiv svg { width: 13px; height: 13px; }
@@ -645,6 +646,29 @@
       font: inherit; font-size: 12px;
     }
     .provenance-form input:focus { outline: 2px solid #ddb2c2; outline-offset: 1px; }
+    .provenance-author-picker { display: grid; gap: 4px; min-width: 0; }
+    .provenance-author-picker > label {
+      color: var(--muted); font-size: 11px; font-weight: 650;
+    }
+    .provenance-author-search { position: relative; min-width: 0; }
+    .provenance-author-results {
+      position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; right: 0;
+      display: grid; gap: 2px; max-height: 150px; overflow-y: auto; padding: 4px;
+      border: 1px solid var(--line); border-radius: 10px; background: #fff;
+      box-shadow: 0 8px 18px rgba(69, 51, 76, .1);
+    }
+    .provenance-author-results[hidden] { display: none; }
+    .provenance-author-result {
+      display: flex; align-items: center; gap: 7px; width: 100%; min-height: 0;
+      padding: 6px 8px; border-radius: 8px; background: transparent;
+      color: var(--ink); font: 600 12px/1.25 inherit; text-align: left;
+    }
+    .provenance-author-result:hover { transform: none; background: #f8f2f6; }
+    .provenance-author-result small {
+      margin-left: auto; color: var(--muted); font-size: 10px; font-weight: 400;
+    }
+    .provenance-author-result .platform-icon { flex: 0 0 auto; width: 16px; height: 16px; }
+    .provenance-author-result .platform-icon svg { width: 9px; height: 9px; }
     .provenance-hint { color: var(--muted); font-size: 11px; line-height: 1.45; }
     .provenance-dialog {
       inset: 0; margin: auto;
@@ -2591,6 +2615,9 @@
       if (platform === 'twitter') {
         return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z"/></svg>';
       }
+      if (platform === 'xiaohongshu') {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="2.6" y="4.2" width="18.8" height="15.6" rx="4.4" fill="none" stroke="currentColor" stroke-width="2"/><path fill="currentColor" d="M12 16.4s-4.1-2.4-4.1-5a2.4 2.4 0 0 1 4.1-1.7 2.4 2.4 0 0 1 4.1 1.7c0 2.6-4.1 5-4.1 5z"/></svg>';
+      }
       return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.07 0l1.42-1.42a5 5 0 0 0-7.07-7.07L10 5.93"/><path d="M14 11a5 5 0 0 0-7.07 0L5.5 12.42a5 5 0 0 0 7.07 7.07L13.99 18"/></svg>';
     }
     function platformIconLinks(members) {
@@ -2873,7 +2900,7 @@
       const body = $('provenance-body');
       const record = (data && data.record) || {};
       const author = data && data.author;
-      const platform = { pixiv: 'Pixiv', twitter: 'X/Twitter', other: '其他来源' }[record.platform] || '未识别';
+      const platform = { pixiv: 'Pixiv', twitter: 'X/Twitter', xiaohongshu: '小红书', other: '其他来源' }[record.platform] || '未识别';
       const hasAuthor = Boolean(
         (author && (author.key || author.name || author.handle))
         || record.author_key
@@ -2883,7 +2910,9 @@
         ? '无题'
         : (missing
           ? (data.path || '未识别来源')
-          : (record.platform === 'other' ? '其他来源' : '无题'));
+          : (record.platform === 'xiaohongshu'
+            ? '小红书笔记（未关联）'
+            : (record.platform === 'other' ? '其他来源' : '无题')));
       const title = record.title || provenancePlainText(record.description).slice(0, 80) || emptyTitle;
       const tagAliasMap = record.tag_aliases || {};
       const tagLinks = (values, extraClass = '') => (values || [])
@@ -2911,9 +2940,11 @@
       const platformIcons = platformIconLinks(members);
       const pixivIds = author && Array.isArray(author.pixiv_ids) ? author.pixiv_ids : [];
       const xHandles = author && Array.isArray(author.x_handles) ? author.x_handles : [];
+      const xhsNames = author && Array.isArray(author.xiaohongshu_names) ? author.xiaohongshu_names : [];
       const associations = [
         ...pixivIds.map((id) => `Pixiv ${id}`),
         ...xHandles.map((handle) => `@${handle}`),
+        ...xhsNames.map((name) => `小红书 ${name}`),
       ].join(' · ');
       const postButton = url
         ? '<button type="button" data-prov-action="open-post">打开原帖</button>'
@@ -2945,8 +2976,17 @@
         </div>
         <form class="provenance-form" id="provenance-form">
           <strong>编辑来源</strong>
-          <input id="prov-url" placeholder="Pixiv/X 作品 URL，或任意来源 URL" value="${escapeHtml(url)}">
+          <input id="prov-url" placeholder="Pixiv/X/小红书作品 URL，或任意来源 URL" value="${escapeHtml(url)}">
           <input id="prov-title" placeholder="标题" value="${escapeHtml(record.title || '')}">
+          <div class="provenance-author-picker">
+            <label for="prov-author-query">标注作者</label>
+            <div class="provenance-author-search">
+              <input id="prov-author-query" placeholder="搜索作者名、UID、Pixiv ID 或 X handle" value="${escapeHtml(author ? (author.name || author.handle || author.key || '') : '')}" autocomplete="off">
+              <div id="prov-author-results" class="provenance-author-results" hidden></div>
+            </div>
+            <input id="prov-author-key" type="hidden" value="${escapeHtml(author && author.key ? author.key : '')}">
+            <div class="provenance-hint">可从列表选择，也可直接填写确认过的 UID、Pixiv ID 或 X handle。</div>
+          </div>
           <div class="provenance-row">
             <input id="prov-author-name" placeholder="作者名" value="${escapeHtml(author ? (author.name || '') : '')}" style="flex:1">
           </div>
@@ -2983,6 +3023,82 @@
       body.querySelector('#provenance-form')?.addEventListener('submit', (event) => {
         event.preventDefault();
         saveProvenanceForm(false);
+      });
+      const authorQueryInput = body.querySelector('#prov-author-query');
+      const authorKeyInput = body.querySelector('#prov-author-key');
+      const authorResults = body.querySelector('#prov-author-results');
+      let authorSearchSeq = 0;
+      let authorSearchTimer = 0;
+      const hideAuthorResults = () => {
+        if (authorResults) authorResults.hidden = true;
+      };
+      const searchAuthors = async (query) => {
+        if (!authorResults) return;
+        const seq = ++authorSearchSeq;
+        try {
+          const data = await parseResponse(await fetch('/api/authors', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ q: query, limit: 6 }),
+          }));
+          if (seq !== authorSearchSeq || !authorResults.isConnected) return;
+          const items = data.authors || [];
+          authorResults.replaceChildren();
+          if (!items.length) {
+            authorResults.innerHTML = '<div class="provenance-hint">没有匹配作者</div>';
+            authorResults.hidden = false;
+            return;
+          }
+          for (const item of items) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'provenance-author-result';
+            const label = item.name || item.handle || item.key;
+            button.innerHTML = `<span>${escapeHtml(label)}</span><small>${escapeHtml(item.handle ? `@${item.handle}` : `UID ${item.key}`)} · ${Number(item.image_count || 0)} 张</small>`;
+            button.addEventListener('click', () => {
+              if (authorKeyInput) authorKeyInput.value = String(item.key || '');
+              if (authorQueryInput) authorQueryInput.value = label;
+              const nameInput = body.querySelector('#prov-author-name');
+              if (nameInput) nameInput.value = item.name || '';
+              const pixivInput = body.querySelector('#prov-pixiv-id');
+              if (pixivInput) pixivInput.value = (item.pixiv_ids || [])[0] || '';
+              const xInput = body.querySelector('#prov-x-handle');
+              if (xInput) xInput.value = (item.x_handles || [])[0] || '';
+              hideAuthorResults();
+            });
+            authorResults.append(button);
+          }
+          authorResults.hidden = false;
+        } catch (error) {
+          if (seq !== authorSearchSeq || !authorResults.isConnected) return;
+          authorResults.innerHTML = `<div class="provenance-hint">作者列表读取失败：${escapeHtml(error.message)}</div>`;
+          authorResults.hidden = false;
+        }
+      };
+      if (authorQueryInput && authorKeyInput && authorResults) {
+        authorResults.addEventListener('pointerdown', (event) => event.preventDefault());
+        authorQueryInput.addEventListener('input', () => {
+          authorKeyInput.value = '';
+          clearTimeout(authorSearchTimer);
+          authorSearchTimer = setTimeout(() => searchAuthors(authorQueryInput.value.trim()), 180);
+        });
+        authorQueryInput.addEventListener('focus', () => {
+          if (!authorResults.hidden) return;
+          searchAuthors(authorQueryInput.value.trim());
+        });
+        authorQueryInput.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') hideAuthorResults();
+        });
+        authorQueryInput.addEventListener('blur', () => {
+          setTimeout(() => {
+            if (!authorResults.contains(document.activeElement)) hideAuthorResults();
+          }, 140);
+        });
+      }
+      ['prov-author-name', 'prov-pixiv-id', 'prov-x-handle'].forEach((id) => {
+        body.querySelector(`#${id}`)?.addEventListener('input', () => {
+          if (authorKeyInput) authorKeyInput.value = '';
+        });
       });
       body.querySelector('#prov-resolve')?.addEventListener('click', () => {
         const value = $('prov-url').value.trim();
@@ -3065,6 +3181,10 @@
         x_handle: $('prov-x-handle').value,
         manual_tags: $('prov-tags').value.split(',').map((item) => item.trim()).filter(Boolean),
       };
+      const authorKey = $('prov-author-key')?.value.trim() || '';
+      const authorQuery = $('prov-author-query')?.value.trim() || '';
+      if (authorKey) body.author_key = authorKey;
+      else if (authorQuery) body.author_query = authorQuery;
       const url = $('prov-url').value.trim();
       if (url) body.url = url;
       try {
@@ -3138,7 +3258,9 @@
       const job = data.job || {};
       const platforms = data.by_platform || {};
       const count = (platform) => Object.values(platforms[platform] || {}).reduce((sum, value) => sum + Number(value || 0), 0);
-      const unresolved = Number((platforms.other || {}).unresolved || 0);
+      const unresolved = Object.values(platforms).reduce(
+        (sum, statuses) => sum + Number((statuses || {}).unresolved || 0), 0
+      );
       const done = Number(job.done || 0);
       const total = Number(job.total || 0);
       const percent = total > 0 ? Math.min(100, Math.round(done * 100 / total)) : 0;
@@ -3165,6 +3287,7 @@
           <div class="provenance-stat"><b>${unresolved.toLocaleString()}</b>未识别，需反向搜图</div>
           <div class="provenance-stat"><b>${count('pixiv').toLocaleString()}</b>Pixiv 文件</div>
           <div class="provenance-stat"><b>${count('twitter').toLocaleString()}</b>X/Twitter 文件</div>
+          <div class="provenance-stat"><b>${count('xiaohongshu').toLocaleString()}</b>小红书文件</div>
           <div class="provenance-stat"><b>${Number(data.authors || 0).toLocaleString()}</b>作者组</div>
           <div class="provenance-stat"><b>${Number(data.with_metadata || 0).toLocaleString()}</b>已有标题/作者</div>
         </div>
@@ -7494,7 +7617,9 @@
           ? String(member.platform_id || '')
           : member.platform === 'twitter'
             ? `@${member.handle || member.platform_id || ''}`
-            : String(member.handle || member.platform_id || '');
+            : member.platform === 'xiaohongshu'
+              ? `小红书 · ${String(member.handle || member.platform_id || '')}`
+              : String(member.handle || member.platform_id || '');
         return `<span class="artist-meta-item"><span class="platform-icon ${escapeHtml(member.platform)}">${platformIconSvg(member.platform)}</span><span>${escapeHtml(text)}</span></span>`;
       });
       metaItems.push(`<span class="artist-meta-uid">ArtSeek #${escapeHtml(key)}</span>`);
@@ -7503,11 +7628,13 @@
         const url = member.profile_url || '';
         const label = member.platform === 'link'
           ? (member.handle || url)
-          : `${member.platform}${member.handle ? ` · ${member.handle}` : ''}`;
+          : member.platform === 'xiaohongshu'
+            ? `小红书${member.handle ? ` · ${member.handle}` : ''}`
+            : `${member.platform}${member.handle ? ` · ${member.handle}` : ''}`;
         const removeValue = member.platform === 'twitter'
           ? (member.handle || member.platform_id || '')
           : (member.platform_id || '');
-        const removable = ['pixiv', 'twitter', 'link'].includes(member.platform);
+        const removable = ['pixiv', 'twitter', 'xiaohongshu', 'link'].includes(member.platform);
         return `<div class="artist-link-row"><span class="platform-icon ${escapeHtml(member.platform)}">${platformIconSvg(member.platform)}</span><a href="${escapeHtml(url)}" target="_blank" rel="noopener" title="${escapeHtml(url)}">${escapeHtml(label)}</a>${removable ? `<button class="artist-link-remove" type="button" data-remove-kind="${escapeHtml(member.platform)}" data-remove-value="${escapeHtml(removeValue)}" data-remove-label="${escapeHtml(label)}" aria-label="移除 ${escapeHtml(label)}" title="移除">×</button>` : ''}</div>`;
       }).join('');
       $('artist-dialog-body').innerHTML = `
@@ -7532,8 +7659,9 @@
                 <option value="link">社交链接</option>
                 <option value="pixiv">Pixiv ID</option>
                 <option value="twitter">X handle</option>
+                <option value="xiaohongshu">小红书主页</option>
               </select>
-              <input name="value" type="text" placeholder="链接 / 数字 ID / @handle" aria-label="社交账号或链接">
+              <input name="value" type="text" placeholder="链接 / 数字 ID / @handle / 小红书 UID" aria-label="社交账号或链接">
             </div>
             <div class="artist-form-row">
               <input name="label" type="text" placeholder="备注（可选，用于社交链接）" aria-label="社交链接备注">
@@ -7545,7 +7673,7 @@
           <h4>合并另一位画师</h4>
           <form class="artist-form" id="artist-merge-form" autocomplete="off">
             <div class="artist-form-row">
-              <input name="source" type="text" placeholder="另一个 UID / Pixiv ID / X handle" aria-label="要合并的作者">
+              <input name="source" type="text" placeholder="另一个 UID / Pixiv ID / X handle / 小红书 UID 或昵称" aria-label="要合并的作者">
               <button class="danger-soft" type="submit">合并</button>
             </div>
           </form>
