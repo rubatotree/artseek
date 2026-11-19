@@ -5,7 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from artseek.provenance.parser import ParsedSource, SourceRef, parse_filename
+from artseek.provenance.parser import (
+    ParsedSource,
+    SourceRef,
+    parse_filename,
+    parse_xiaohongshu_filename,
+)
 from artseek.provenance.store import ProvenanceStore
 
 
@@ -462,6 +467,61 @@ class ProvenanceStoreTests(unittest.TestCase):
             self.store.add_link(second, "https://example.com/Artist")
         with self.assertRaises(ValueError):
             self.store.add_link(first, "ftp://example.com/a")
+
+    def test_xiaohongshu_name_groups_artists_and_profile_is_attachable(self) -> None:
+        key = self.store.ensure_xhs_author("李岫荇")
+        self.assertEqual(key, self.store.ensure_xhs_author(" 李岫荇 "))
+        self.store.upsert_unresolved(
+            "p1",
+            self.payload,
+            path_key="p1",
+            hint=parse_xiaohongshu_filename("衣架兔！！_1_李岫荇_来自小红书网页版.jpg"),
+            author_key=key,
+        )
+        record = self.store.get("p1")
+        assert record is not None
+        self.assertEqual(record["platform"], "xiaohongshu")
+        self.assertEqual(record["status"], "unresolved")
+        self.assertEqual(record["title"], "衣架兔！！")
+        self.assertEqual(record["page"], 1)
+        self.assertEqual(record["author_key"], key)
+
+        uid = "5f1c2d3e000000000101abcd"
+        attached = self.store.attach_identity(
+            key, "xiaohongshu", f"https://www.xiaohongshu.com/user/profile/{uid}"
+        )
+        self.assertEqual(attached, key)
+        self.assertEqual(self.store.identity_owner("xiaohongshu", uid), key)
+        summary = self.store.author_summary(key)
+        assert summary is not None
+        self.assertEqual(summary["xiaohongshu_ids"], [uid])
+        self.assertEqual(summary["members"][0]["platform"], "xiaohongshu")
+        with self.assertRaises(ValueError):
+            self.store.attach_identity(key, "xiaohongshu", "not-a-link")
+
+        self.store.remove_identity(key, "xiaohongshu", uid)
+        summary = self.store.author_summary(key)
+        assert summary is not None
+        self.assertEqual(summary["xiaohongshu_ids"], [])
+
+    def test_renamed_xiaohongshu_author_merges_without_losing_images(self) -> None:
+        old = self.store.ensure_xhs_author("旧昵称")
+        new = self.store.ensure_xhs_author("新昵称")
+        self.assertNotEqual(old, new)
+        self.store.upsert_unresolved(
+            "p1",
+            self.payload,
+            path_key="p1",
+            hint=parse_xiaohongshu_filename("标题_1_旧昵称_来自小红书网页版.jpg"),
+            author_key=old,
+        )
+        merged = self.store.merge_authors(new, old)
+        self.assertEqual(merged, old)
+        self.assertEqual(self.store.canonical_author_key(new), old)
+        summary = self.store.author_summary(old)
+        assert summary is not None
+        self.assertEqual(summary["image_count"], 1)
+        self.assertEqual(self.store.get("p1")["author_key"], old)
 
     def test_unassigned_author_is_a_pseudo_author(self) -> None:
         author = self.store.ensure_author("pixiv", "1", name="Alice")

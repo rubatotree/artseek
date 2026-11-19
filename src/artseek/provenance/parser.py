@@ -15,7 +15,7 @@ from typing import Literal
 
 from PIL import Image, UnidentifiedImageError
 
-Platform = Literal["pixiv", "twitter", "other"]
+Platform = Literal["pixiv", "twitter", "xiaohongshu", "other"]
 Origin = Literal["filename", "embedded", "manual", "saucy", "ascii2d"]
 
 PIXIV_FILENAME_RE = re.compile(
@@ -25,6 +25,13 @@ PIXIV_FILENAME_RE = re.compile(
     r"(?:[ _](?:master\d+|square\d+|.*))?$"
 )
 TWITTER_FILENAME_RE = re.compile(r"^(?P<id>\d{15,19})_(?P<index>\d+)(?:[ _].*)?$")
+# The Xiaohongshu web downloader names files
+# ``{note title}_{1-based image index}_{author nickname}_来自小红书网页版.jpg``.
+# No note ID is present, so the match yields an author/title hint instead of a
+# usable source reference.
+XIAOHONGSHU_FILENAME_RE = re.compile(
+    r"^(?P<title>.+)_(?P<index>\d+)_(?P<author>[^_]+?)_来自小红书(?:网页版)?$"
+)
 PIXIV_NAMED_RE = re.compile(r"pixiv[\s_-]*id[\s_-]*(?P<id>\d+)", re.IGNORECASE)
 DUPLICATE_SUFFIX_RE = re.compile(r"\s*\(\d+\)$")
 
@@ -53,6 +60,15 @@ _PIXIV_USER_RE = re.compile(
     r"https?://(?:www\.)?pixiv\.net/(?:en/)?users/(?P<id>\d+)",
     re.IGNORECASE,
 )
+_XIAOHONGSHU_NOTE_URL_RE = re.compile(
+    r"https?://(?:www\.)?xiaohongshu\.com/(?:explore|discovery/item)/(?P<id>[0-9a-f]{24})",
+    re.IGNORECASE,
+)
+_XIAOHONGSHU_USER_URL_RE = re.compile(
+    r"https?://(?:www\.)?xiaohongshu\.com/user/profile/(?P<id>[0-9a-f]{24})",
+    re.IGNORECASE,
+)
+_XIAOHONGSHU_ID_RE = re.compile(r"^[0-9a-f]{24}$", re.IGNORECASE)
 _HASHTAG_RE = re.compile(r"(?<!\w)#([^\s#.,，。;；:：!?！？()（）\[\]【】]+)")
 
 
@@ -90,6 +106,14 @@ def canonical_twitter_url(source_id: str) -> str:
     return f"https://x.com/i/status/{source_id}"
 
 
+def canonical_xiaohongshu_url(note_id: str) -> str:
+    return f"https://www.xiaohongshu.com/explore/{note_id}"
+
+
+def xiaohongshu_user_url(user_id: str) -> str:
+    return f"https://www.xiaohongshu.com/user/profile/{user_id}"
+
+
 def twitter_photo_url(source_id: str, photo: int | None) -> str:
     if photo:
         return f"https://x.com/i/status/{source_id}/photo/{photo}"
@@ -103,6 +127,28 @@ def strip_duplicate_suffix(stem: str) -> str:
 def _stem(value: str | Path) -> str:
     text = value.name if isinstance(value, Path) else str(value)
     return strip_duplicate_suffix(Path(text).stem)
+
+
+@dataclass(frozen=True, slots=True)
+class XiaohongshuName:
+    """What a Xiaohongshu download name still tells us, without a note ID."""
+
+    title: str
+    index: int
+    author: str
+
+
+def parse_xiaohongshu_filename(value: str | Path) -> XiaohongshuName | None:
+    """Parse the Xiaohongshu web downloader's ``title_index_author`` name."""
+    stem = _stem(value)
+    match = XIAOHONGSHU_FILENAME_RE.match(stem)
+    if not match:
+        return None
+    title = match.group("title").strip()
+    author = match.group("author").strip()
+    if not title or not author:
+        return None
+    return XiaohongshuName(title=title, index=int(match.group("index")), author=author)
 
 
 def parse_filename(value: str | Path) -> SourceRef | None:
@@ -179,6 +225,17 @@ def parse_url(value: str) -> SourceRef | None:
             origin="embedded",
             confidence=0.95,
         )
+    match = _XIAOHONGSHU_NOTE_URL_RE.search(text)
+    if match:
+        source_id = match.group("id")
+        return SourceRef(
+            platform="xiaohongshu",
+            source_id=source_id,
+            page=None,
+            url=canonical_xiaohongshu_url(source_id),
+            origin="embedded",
+            confidence=0.95,
+        )
     return None
 
 
@@ -193,7 +250,7 @@ def parse_source_text(value: str, *, origin: Origin = "manual") -> SourceRef | N
             platform=ref.platform,
             source_id=ref.source_id,
             page=ref.page,
-            url=text if ref.platform == "other" else ref.url,
+            url=text if ref.platform in {"other", "xiaohongshu"} else ref.url,
             origin=origin,
             confidence=1.0,
         )
@@ -224,6 +281,15 @@ def parse_source_text(value: str, *, origin: Origin = "manual") -> SourceRef | N
             source_id=source_id,
             page=photo,
             url=twitter_photo_url(source_id, photo),
+            origin=origin,
+            confidence=1.0,
+        )
+    if _XIAOHONGSHU_ID_RE.fullmatch(text):
+        return SourceRef(
+            platform="xiaohongshu",
+            source_id=text.casefold(),
+            page=None,
+            url=canonical_xiaohongshu_url(text.casefold()),
             origin=origin,
             confidence=1.0,
         )
@@ -266,6 +332,23 @@ def twitter_authors_from_metadata(
 def pixiv_user_id_from_url(value: str) -> str | None:
     match = _PIXIV_USER_RE.search(html.unescape(str(value or "")))
     return match.group("id") if match else None
+
+
+def xiaohongshu_user_id(value: str | None) -> str | None:
+    """Return the 24-hex user ID from a bare ID or profile URL."""
+    text = html.unescape(str(value or "")).strip()
+    match = _XIAOHONGSHU_USER_URL_RE.search(text)
+    if match:
+        return match.group("id").casefold()
+    return text.casefold() if _XIAOHONGSHU_ID_RE.fullmatch(text) else None
+
+
+def xiaohongshu_note_id(value: str | None) -> str | None:
+    text = html.unescape(str(value or "")).strip()
+    match = _XIAOHONGSHU_NOTE_URL_RE.search(text)
+    if match:
+        return match.group("id").casefold()
+    return text.casefold() if _XIAOHONGSHU_ID_RE.fullmatch(text) else None
 
 
 def hashtags(value: str) -> list[str]:
@@ -408,4 +491,9 @@ def parsed_sources(
 
 
 def platform_label(platform: str) -> str:
-    return {"pixiv": "Pixiv", "twitter": "X/Twitter", "other": "其他"}.get(platform, platform)
+    return {
+        "pixiv": "Pixiv",
+        "twitter": "X/Twitter",
+        "xiaohongshu": "小红书",
+        "other": "其他",
+    }.get(platform, platform)

@@ -20,19 +20,24 @@ from .fetch import (
 from .parser import (
     ParsedSource,
     SourceRef,
+    XiaohongshuName,
     extract_embedded_refs,
     parse_filename,
     parse_source_text,
     parse_url,
+    parse_xiaohongshu_filename,
     parsed_sources,
+    xiaohongshu_note_id,
+    xiaohongshu_user_id,
 )
-from .scan import parse_payload_path, scan_payloads
+from .scan import parse_payload_path, record_unresolved, scan_payloads
 from .store import (
     UNASSIGNED_AUTHOR_KEY,
     ProvenanceStore,
     normalize_pixiv_user_id,
     normalize_social_link,
     normalize_twitter_handle,
+    normalize_xiaohongshu_user_id,
 )
 
 __all__ = [
@@ -57,14 +62,20 @@ __all__ = [
     "RateLimitError",
     "RateLimiter",
     "SourceRef",
+    "XiaohongshuName",
     "extract_embedded_refs",
     "normalize_pixiv_user_id",
     "normalize_social_link",
     "normalize_twitter_handle",
+    "normalize_xiaohongshu_user_id",
     "parse_filename",
     "parse_payload_path",
     "parse_source_text",
     "parse_url",
+    "parse_xiaohongshu_filename",
     "parsed_sources",
+    "record_unresolved",
     "scan_payloads",
+    "xiaohongshu_note_id",
+    "xiaohongshu_user_id",
 ]

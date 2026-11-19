@@ -76,6 +76,37 @@ class ProvenanceScanTests(unittest.TestCase):
         self.assertEqual(record["status"], "unresolved")
         self.assertEqual(record["platform"], "other")
 
+    def test_xiaohongshu_names_keep_title_index_and_author_group(self) -> None:
+        first = self.root / "衣架兔！！_1_李岫荇_来自小红书网页版.jpg"
+        second = self.root / "衣架兔！！_2_李岫荇_来自小红书网页版.jpg"
+        Image.new("RGB", (10, 12), (1, 2, 3)).save(first)
+        Image.new("RGB", (10, 12), (4, 5, 6)).save(second)
+        payloads = {
+            "x1": self._payload(first, "e" * 64),
+            "x2": self._payload(second, "f" * 64),
+        }
+        summary = scan_payloads(self.store, payloads.items(), total=2)
+        self.assertEqual(summary["unresolved"], 2)
+        self.assertEqual(summary["identified"], 0)
+        record = self.store.get("x1")
+        self.assertEqual(record["platform"], "xiaohongshu")
+        self.assertEqual(record["status"], "unresolved")
+        self.assertEqual(record["title"], "衣架兔！！")
+        self.assertEqual(record["page"], 1)
+        self.assertEqual(record["source_id"], "")
+        author = self.store.author_summary(str(record["author_key"]))
+        self.assertIsNotNone(author)
+        assert author is not None
+        self.assertEqual(author["name"], "李岫荇")
+        self.assertEqual(author["image_count"], 2)
+        self.assertEqual(
+            self.store.get("x2")["author_key"], record["author_key"]
+        )
+
+        again = scan_payloads(self.store, payloads.items(), total=2)
+        self.assertEqual(again["unresolved"], 2)
+        self.assertEqual(self.store.count_authors(), 1)
+
     def test_content_hash_replacement_drops_stale_metadata(self) -> None:
         payload = self._payload(self.pixiv, "a" * 64)
         self.store.upsert_scan("p1", payload, ParsedSource(parse_filename(self.pixiv)))

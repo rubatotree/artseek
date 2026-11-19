@@ -8,6 +8,8 @@
 - 因此「一键补全所有图」必须做成 **有预算、可暂停、可续跑的任务队列**，而不是一个同步按钮。
 
 > **实施状态（2026-11-16）**：解析器、`provenance.sqlite3`、Pixiv/FxTwitter 抓取、按域名限速与预算、查看器来源面板、作者筛选、索引后自动补全、CLI 与 API 均已实现。SauceNAO/ascii2d 不配置 API key、不做服务端代理；查看器用浏览器表单直接上传 ≤1200px JPEG 并打开结果页，之后手动粘贴 URL。不使用 Pixiv 登录 Cookie。
+>
+> **小红书（2026-11-19）**：网页版默认下载名可离线解析出标题、1 起序号与作者昵称，按昵称自动建立/复用画师组；笔记 ID 不在文件里，记录保持 `unresolved`，只能靠粘贴笔记 URL 或人工确认补齐。作者主页 `xhs_uid` 仅支持手动添加，不做任何默认抓取。
 
 ---
 
@@ -38,7 +40,19 @@ TWITTER = re.compile(
     r"^(?P<id>\d{15,19})_(?P<index>\d+)(?:[ _].*)?$"
 )
 PIXIV_NAMED = re.compile(r"pixiv[\s_-]*id[\s_-]*(?P<id>\d+)", re.I)
+
+# 小红书网页版下载名：{标题}_{序号}_ {作者昵称}_来自小红书网页版.jpg
+# 没有任何 note ID，只能作为作者/标题提示，不能生成可抓取的来源。
+XIAOHONGSHU = re.compile(
+    r"^(?P<title>.+)_(?P<index>\d+)_(?P<author>[^_]+?)_来自小红书(?:网页版)?$"
+)
 ```
+
+小红书下载名不产生 `SourceRef`，而是产生 `XiaohongshuName(title, index, author)` 提示：
+
+- 落库为 `platform='xiaohongshu'`、`source_id=''`、`status='unresolved'`、`confidence=0.5`、`page=序号`、`title=标题`；
+- `author_key` 指向按**昵称**建立/复用的画师组（`artist_identity(kind='name')`），同昵称的图自动归到同一画师；
+- 不做任何网络请求；用户之后粘贴笔记 URL（`/explore/{24hex}` 或 `/discovery/item/{24hex}`）才写入 `source_id` 并置为 `ok`。
 
 解析前先做一次「展示名清洗」：
 
@@ -61,6 +75,10 @@ URL 归一化：
 | `https://twitter.com/user/status/123` | `twitter:123`, photo=unknown |
 | `https://vxtwitter.com/...` / `fxtwitter.com/...` | 按 `x.com` 处理 |
 | `https://mobile.twitter.com/...` | 按 `x.com` 处理 |
+| `https://www.xiaohongshu.com/explore/{24hex}` | `xiaohongshu:{24hex}`，保留原始 query（`xsec_token`） |
+| `https://www.xiaohongshu.com/discovery/item/{24hex}` | 同上 |
+| 裸 24 位 hex（笔记 ID） | `xiaohongshu:{24hex}` |
+| `https://www.xiaohongshu.com/user/profile/{24hex}` | 画师身份 `xhs_uid:{24hex}`，不经笔记解析 |
 | 其他 `http(s)://...` | `other`，原样保存，不自动补全 |
 
 X 的嵌入备注通常只写 `.../status/{id}`，不写 `/photo/N`。实测样本中的备注 URL 普遍没有 photo 序号，因此：
@@ -188,10 +206,13 @@ CREATE TABLE fetch_state (
   - `pixiv_id`：Pixiv 用户 ID；
   - `x_id`：X 数字用户 ID（抓取可用时，handle 改名不影响）；
   - `handle`：X screen name 或 Pixiv `userAccount`，归一化后共享同一命名空间；
-  - `name`：仅手动创建、无平台身份的显示名。
-- 一个画师可以有多个 Pixiv ID / X 账号 / 历史 handle；X handle 可以为空（仅 Pixiv 画师）。
+  - `xhs_uid`：小红书用户 UID（24 位 hex），来自作者主页链接；只能手动添加，不做抓取；
+  - `name`：仅手动创建、无平台身份的显示名；小红书昵称也走这个命名空间。
+- 一个画师可以有多个 Pixiv ID / X 账号 / 小红书 UID / 历史 handle；X handle 可以为空（仅 Pixiv 画师）。
 - 写入新身份时，如果同一 `kind + identity` 已属于另一个画师，两个画师自动合并：身份、图片、旧 key 全部迁移到较小 ID；被合并的 ID 写入 `artist_legacy`，旧 URL / 搜索过滤器仍可解析。
-- 不自动按「同名」合并；手动填写 `pixiv_id` 或 `x_handle` 时才建立跨平台关联。
+- 除小红书昵称外，不自动按「同名」合并；手动填写 `pixiv_id` / `x_handle` / 小红书主页时才建立跨平台关联。
+- **小红书昵称是例外**：下载名里没有 UID，昵称是唯一可用的身份，因此同名昵称自动归入同一画师组（`artist_identity(kind='name', source='xiaohongshu')`，与手动画师共用一个命名空间）。
+- 昵称改名后，新名字会建立新的画师组；在画师弹窗里把旧组合并到新组即可（`merge_authors` 会迁移全部图片、身份与旧 key），两个 UID 指向同一人时同理。
 - 只填写一个新的 X handle 时，优先挂到当前图片所属画师；如果该 handle 已属于别的画师，则把图片改挂到该画师，而不强行合并两个已有画师。同时填写 Pixiv ID 与 X handle 视为明确声明二者同一人，冲突时合并。
 - Pixiv `userAccount` 与 X handle 相同会合并，因为两者共享 `handle` 身份命名空间；这修复了历史上同一 X handle 出现在两个画师下的问题。
 - `artist.image_count` 由 `image_source` 的 INSERT/UPDATE/DELETE 触发器维护；作者建议列表直接读取该列，不再每次聚合全部图片。

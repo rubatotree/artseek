@@ -12,7 +12,15 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from .parser import ParsedSource, SourceRef, canonical_pixiv_url, twitter_photo_url
+from .parser import (
+    ParsedSource,
+    SourceRef,
+    XiaohongshuName,
+    canonical_pixiv_url,
+    twitter_photo_url,
+    xiaohongshu_user_id,
+    xiaohongshu_user_url,
+)
 
 SCHEMA_VERSION = 5
 ORIGIN_PRIORITY = {"filename": 1, "embedded": 2, "manual": 3, "saucy": 4, "ascii2d": 4}
@@ -24,6 +32,7 @@ IDENTITY_TWITTER = "x_id"
 IDENTITY_HANDLE = "handle"
 IDENTITY_NAME = "name"
 IDENTITY_LINK = "link"
+IDENTITY_XIAOHONGSHU = "xhs_uid"
 UNASSIGNED_AUTHOR_KEY = "none"
 _STATUSES = frozenset(
     {"pending", "ok", "not_found", "protected", "rate_limited", "error", "unresolved", "stale"}
@@ -87,6 +96,11 @@ def normalize_twitter_handle(value: str | None) -> str:
     return text.lstrip("@").strip()
 
 
+def normalize_xiaohongshu_user_id(value: str | None) -> str:
+    """Accept a bare 24-hex Xiaohongshu user ID or a profile URL."""
+    return xiaohongshu_user_id(value) or ""
+
+
 def normalize_social_link(value: str | None) -> str:
     """Return a canonical http(s) URL, or an empty string when invalid."""
     from urllib.parse import urlsplit, urlunsplit
@@ -119,6 +133,7 @@ def _identity_kind_platform(kind: str) -> str:
         IDENTITY_HANDLE: "twitter",
         IDENTITY_NAME: "manual",
         IDENTITY_LINK: "link",
+        IDENTITY_XIAOHONGSHU: "xiaohongshu",
     }.get(kind, "other")
 
 
@@ -673,8 +688,16 @@ class ProvenanceStore:
         payload: dict[str, Any],
         *,
         path_key: str | None = None,
+        hint: XiaohongshuName | None = None,
+        author_key: str | None = None,
     ) -> dict[str, Any] | None:
-        """Create a visible "unidentified" row without guessing a source."""
+        """Create a visible "unidentified" row without guessing a source.
+
+        A Xiaohongshu download name carries a title, a 1-based image index and
+        the author nickname but no note ID.  Those fields are recorded as an
+        unresolved Xiaohongshu row so the author group is still usable; the
+        note itself stays unidentified until a URL or reverse search resolves it.
+        """
         now = _now()
         digest = str(payload.get("content_hash") or "") or None
         width = _int_or_none(payload.get("width"))
@@ -682,21 +705,100 @@ class ProvenanceStore:
         mtime_ns = _int_or_none(payload.get("mtime_ns"))
         with self._read() as connection:
             existing = connection.execute(
-                "SELECT platform FROM image_source WHERE point_id = ?", (point_id,)
+                "SELECT * FROM image_source WHERE point_id = ?", (point_id,)
             ).fetchone()
             if existing is not None:
+                manual = set(_loads(existing["manual_fields"], []))
+                anonymous = str(existing["platform"] or "") in {"other", "xiaohongshu"} and (
+                    not str(existing["source_id"] or "")
+                    or str(existing["source_origin"] or "") != "manual"
+                )
+                adopt_hint = (
+                    hint is not None
+                    and anonymous
+                    and str(existing["status"] or "") in {"unresolved", "pending", "error"}
+                    and not manual & {"platform", "source_id", "url", "title", "author_key"}
+                )
+                if adopt_hint:
+                    connection.execute(
+                        """
+                        UPDATE image_source
+                        SET content_hash = COALESCE(?, content_hash),
+                            path_key = COALESCE(?, path_key),
+                            platform = 'xiaohongshu',
+                            source_id = '',
+                            page = ?,
+                            url = '',
+                            title = ?,
+                            author_key = COALESCE(?, author_key),
+                            status = 'unresolved',
+                            confidence = 0.5,
+                            source_origin = 'filename',
+                            error = NULL,
+                            width = COALESCE(?, width),
+                            height = COALESCE(?, height),
+                            mtime_ns = COALESCE(?, mtime_ns),
+                            updated_at = ?
+                        WHERE point_id = ?
+                        """,
+                        (
+                            digest,
+                            path_key,
+                            hint.index,
+                            hint.title,
+                            author_key,
+                            width,
+                            height,
+                            mtime_ns,
+                            now,
+                            point_id,
+                        ),
+                    )
+                else:
+                    connection.execute(
+                        """
+                        UPDATE image_source
+                        SET content_hash = COALESCE(?, content_hash),
+                            path_key = COALESCE(?, path_key),
+                            width = COALESCE(?, width),
+                            height = COALESCE(?, height),
+                            mtime_ns = COALESCE(?, mtime_ns),
+                            status = CASE
+                                WHEN status = 'pending'
+                                 AND platform IN ('other', 'xiaohongshu')
+                                THEN 'unresolved'
+                                ELSE status
+                            END,
+                            updated_at = ?
+                        WHERE point_id = ?
+                        """,
+                        (digest, path_key, width, height, mtime_ns, now, point_id),
+                    )
+            elif hint is not None:
                 connection.execute(
                     """
-                    UPDATE image_source
-                    SET content_hash = COALESCE(?, content_hash),
-                        path_key = COALESCE(?, path_key),
-                        width = COALESCE(?, width),
-                        height = COALESCE(?, height),
-                        mtime_ns = COALESCE(?, mtime_ns),
-                        updated_at = ?
-                    WHERE point_id = ?
+                    INSERT INTO image_source (
+                        point_id, content_hash, path_key, platform, source_id,
+                        page, url, status, confidence, title, author_key,
+                        width, height, mtime_ns, source_origin, updated_at
+                    ) VALUES (
+                        ?, ?, ?, 'xiaohongshu', ?, ?, '', 'unresolved', 0.5, ?, ?,
+                        ?, ?, ?, 'filename', ?
+                    )
                     """,
-                    (digest, path_key, width, height, mtime_ns, now, point_id),
+                    (
+                        point_id,
+                        digest,
+                        path_key,
+                        "",
+                        hint.index,
+                        hint.title,
+                        author_key,
+                        width,
+                        height,
+                        mtime_ns,
+                        now,
+                    ),
                 )
             else:
                 connection.execute(
@@ -824,7 +926,7 @@ class ProvenanceStore:
                     ref.source_id,
                     ref.page,
                     ref.url,
-                    "ok" if ref.platform == "other" else "pending",
+                    "ok" if ref.platform in {"other", "xiaohongshu"} else "pending",
                 ]
             )
             manual.update({"platform", "source_id", "page", "url"})
@@ -1277,6 +1379,24 @@ class ProvenanceStore:
                         "twitter",
                     )
                 )
+        elif platform == "xiaohongshu":
+            uid = normalize_xiaohongshu_user_id(raw)
+            label = str(name or display or "").strip()
+            if uid:
+                specs.append(
+                    (
+                        IDENTITY_XIAOHONGSHU,
+                        uid,
+                        label or uid,
+                        profile_url or xiaohongshu_user_url(uid),
+                        "xiaohongshu",
+                    )
+                )
+            name_key = _author_text(name or display)
+            if name_key:
+                specs.append(
+                    (IDENTITY_NAME, name_key, label or None, None, "xiaohongshu")
+                )
         elif platform == "manual":
             label = str(name or raw or handle or "").strip()
             name_key = _author_text(label)
@@ -1366,7 +1486,7 @@ class ProvenanceStore:
             (key, int(artist_id), _now()),
         )
 
-    _NAME_SOURCE_RANK = {"manual": 3, "pixiv": 2, "twitter": 1}
+    _NAME_SOURCE_RANK = {"manual": 3, "pixiv": 2, "xiaohongshu": 2, "twitter": 1}
 
     def _update_artist_locked(
         self,
@@ -1644,6 +1764,29 @@ class ProvenanceStore:
             raise ValueError("作者名不能为空")
         return self.ensure_author("manual", label, name=label)
 
+    def ensure_xhs_author(self, name: str) -> str:
+        """Group Xiaohongshu images by the nickname written into file names.
+
+        The download name has no user ID, so the normalized nickname is the only
+        identity we can offer.  It shares the ``name`` namespace with manual
+        artists, which is what makes same-named files land in one group.
+        """
+        label = str(name or "").strip()
+        if not label:
+            raise ValueError("作者名不能为空")
+        specs = [(IDENTITY_NAME, _author_text(label), label, None, "xiaohongshu")]
+        with self._read() as connection:
+            artist_id = self._ensure_artist_locked(
+                connection,
+                specs,
+                name=label,
+                name_source="xiaohongshu",
+                avatar_url=None,
+                profile_fetched=False,
+                overwrite_name=True,
+            )
+        return str(artist_id)
+
     def ensure_linked_author(
         self,
         *,
@@ -1678,11 +1821,14 @@ class ProvenanceStore:
         return str(artist_id)
 
     def identity_owner(self, platform: str, value: str) -> str | None:
-        """Return the artist ID that already owns a Pixiv ID or handle."""
+        """Return the artist ID that already owns a Pixiv ID, handle, or XHS UID."""
         platform = str(platform or "").strip().casefold()
         if platform == "pixiv":
             kind = IDENTITY_PIXIV
             identity = normalize_pixiv_user_id(value)
+        elif platform in {"xiaohongshu", "xhs", "rednote"}:
+            kind = IDENTITY_XIAOHONGSHU
+            identity = normalize_xiaohongshu_user_id(value)
         else:
             kind = IDENTITY_HANDLE
             identity = _normalized_handle(normalize_twitter_handle(value))
@@ -1703,7 +1849,7 @@ class ProvenanceStore:
         *,
         name: str | None = None,
     ) -> str:
-        """Attach an unowned Pixiv ID or X handle to an existing artist."""
+        """Attach an unowned Pixiv ID, X handle, or Xiaohongshu UID."""
         platform = str(platform or "").strip().casefold()
         if platform == "pixiv":
             pixiv_id = normalize_pixiv_user_id(value)
@@ -1711,12 +1857,20 @@ class ProvenanceStore:
                 raise ValueError("Pixiv ID 无效")
             specs = self._identity_specs("pixiv", pixiv_id)
             legacy = [f"pixiv:{pixiv_id}"]
-        else:
+        elif platform in {"xiaohongshu", "xhs", "rednote"}:
+            uid = normalize_xiaohongshu_user_id(value)
+            if not uid:
+                raise ValueError("小红书主页链接或 UID 无效")
+            specs = self._identity_specs("xiaohongshu", uid, name=name)
+            legacy = [f"xiaohongshu:{uid}"]
+        elif platform in {"twitter", "x", "x_id"}:
             handle = normalize_twitter_handle(value)
             if not handle:
                 raise ValueError("X handle 无效")
             specs = self._identity_specs("twitter", handle, handle=handle)
             legacy = [f"twitter:{handle}", f"twitter:{handle.casefold()}"]
+        else:
+            raise ValueError("不支持的社交平台")
         with self._read() as connection:
             base = self._canonical_locked(connection, artist_key)
             if not base.isdigit():
@@ -1725,7 +1879,11 @@ class ProvenanceStore:
                 connection,
                 specs,
                 name=name,
-                name_source="manual" if name else None,
+                name_source=(
+                    "xiaohongshu"
+                    if platform in {"xiaohongshu", "xhs", "rednote"}
+                    else ("manual" if name else None)
+                ),
                 avatar_url=None,
                 profile_fetched=False,
                 overwrite_name=bool(name),
@@ -1837,6 +1995,11 @@ class ProvenanceStore:
                     normalized_handle = _normalized_handle(handle)
                     if normalized_handle:
                         clauses.append((IDENTITY_HANDLE, normalized_handle))
+            elif platform in {"xiaohongshu", "xhs", "rednote"}:
+                uid = normalize_xiaohongshu_user_id(value)
+                if not uid:
+                    raise ValueError("小红书主页链接或 UID 无效")
+                clauses.append((IDENTITY_XIAOHONGSHU, uid))
             else:
                 raise ValueError("不支持的社交平台")
             removed = 0
@@ -2148,6 +2311,8 @@ class ProvenanceStore:
                 "pixiv_ids": [],
                 "x_handles": [],
                 "handles": [],
+                "xiaohongshu_ids": [],
+                "xiaohongshu_names": [],
                 "links": [],
             }
         with self._read() as connection:
@@ -2232,9 +2397,18 @@ class ProvenanceStore:
             key=str.casefold,
         )
         links = [item for item in identity_dicts if item["kind"] == IDENTITY_LINK]
+        xhs_names = sorted(
+            {
+                item["display"]
+                for item in identity_dicts
+                if item["kind"] == IDENTITY_XIAOHONGSHU
+            },
+            key=str.casefold,
+        )
         primary = (
             (x_handles[0] if x_handles else "")
             or (handles[0] if handles else "")
+            or (xhs_names[0] if xhs_names else "")
             or str(row["name"] or "")
         )
         return {
@@ -2252,6 +2426,14 @@ class ProvenanceStore:
             "pixiv_ids": pixiv_ids,
             "x_handles": x_handles,
             "handles": handles,
+            "xiaohongshu_ids": sorted(
+                {
+                    item["identity"]
+                    for item in identity_dicts
+                    if item["kind"] == IDENTITY_XIAOHONGSHU
+                }
+            ),
+            "xiaohongshu_names": xhs_names,
             "links": links,
         }
 
@@ -2284,6 +2466,12 @@ class ProvenanceStore:
                 handle = display
                 profile = str(row["profile_url"] or f"https://x.com/{display}")
                 key = (platform, display.casefold())
+            elif kind == IDENTITY_XIAOHONGSHU:
+                platform = "xiaohongshu"
+                platform_id = identity
+                handle = display
+                profile = str(row["profile_url"] or xiaohongshu_user_url(identity))
+                key = (platform, identity)
             elif kind == IDENTITY_LINK:
                 platform = "link"
                 platform_id = identity

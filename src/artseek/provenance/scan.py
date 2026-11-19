@@ -8,13 +8,39 @@ from typing import Any
 
 from .parser import (
     ParsedSource,
+    XiaohongshuName,
     extract_embedded_refs,
     parse_filename,
+    parse_xiaohongshu_filename,
     twitter_authors_from_metadata,
 )
 from .store import ProvenanceStore
 
 ProgressCallback = Callable[[int, int, str], None]
+
+
+def record_unresolved(
+    store: ProvenanceStore,
+    point_id: str,
+    payload: dict[str, Any],
+    *,
+    path_key: str | None = None,
+    path: Path | None = None,
+) -> dict[str, Any] | None:
+    """Store an unidentified image, keeping a Xiaohongshu name hint if present.
+
+    The hint never fabricates a note ID: it records the title, image index and
+    author nickname so the file joins the right author group immediately.
+    """
+    hint: XiaohongshuName | None = parse_xiaohongshu_filename(path) if path else None
+    author_key = store.ensure_xhs_author(hint.author) if hint is not None else None
+    return store.upsert_unresolved(
+        point_id,
+        payload,
+        path_key=path_key,
+        hint=hint,
+        author_key=author_key,
+    )
 
 
 def parse_payload_path(path: Path, *, deep: bool) -> ParsedSource | None:
@@ -108,7 +134,13 @@ def scan_payloads(
             store.reset_for_replacement(point_id)
             before = store.get(point_id)
         if parsed is None:
-            store.upsert_unresolved(point_id, payload, path_key=_path_key(payload))
+            record_unresolved(
+                store,
+                point_id,
+                payload,
+                path_key=_path_key(payload),
+                path=path,
+            )
             summary["unresolved"] += 1
         else:
             store.upsert_scan(

@@ -12,8 +12,10 @@ from artseek.provenance.parser import (
     parse_filename,
     parse_source_text,
     parse_url,
+    parse_xiaohongshu_filename,
     parsed_sources,
     strip_duplicate_suffix,
+    xiaohongshu_user_id,
 )
 
 
@@ -69,6 +71,22 @@ class FilenameParsingTests(unittest.TestCase):
         self.assertIsNone(parse_filename("少女与枪_1_阿斯莫代_来自小红书网页版.jpg"))
         self.assertIsNone(parse_filename("F1jQ358aIAATjmn.jpg"))
 
+    def test_xiaohongshu_download_names_yield_author_hint(self) -> None:
+        hint = parse_xiaohongshu_filename("衣架兔！！_1_李岫荇_来自小红书网页版.jpg")
+        self.assertIsNotNone(hint)
+        assert hint is not None
+        self.assertEqual((hint.title, hint.index, hint.author), ("衣架兔！！", 1, "李岫荇"))
+
+    def test_xiaohongshu_underscored_title_keeps_last_index(self) -> None:
+        hint = parse_xiaohongshu_filename("练习_第2版_3_阿斯莫代_来自小红书.jpg")
+        self.assertIsNotNone(hint)
+        assert hint is not None
+        self.assertEqual((hint.title, hint.index, hint.author), ("练习_第2版", 3, "阿斯莫代"))
+
+    def test_other_download_names_are_not_xiaohongshu(self) -> None:
+        self.assertIsNone(parse_xiaohongshu_filename("F1jQ358aIAATjmn.jpg"))
+        self.assertIsNone(parse_xiaohongshu_filename("12345678_p0.jpg"))
+
 
 class UrlParsingTests(unittest.TestCase):
     def test_pixiv_url_forms(self) -> None:
@@ -112,6 +130,32 @@ class UrlParsingTests(unittest.TestCase):
         assert ref is not None
         self.assertEqual(ref.platform, "other")
         self.assertEqual(ref.url, "https://example.com/art/123")
+
+    def test_xiaohongshu_note_urls_and_bare_ids_resolve(self) -> None:
+        note_id = "69ce329d000000002301523d"
+        for value in (
+            f"https://www.xiaohongshu.com/explore/{note_id}",
+            f"https://www.xiaohongshu.com/discovery/item/{note_id}?xsec_token=abc",
+            note_id,
+        ):
+            with self.subTest(value=value):
+                ref = parse_source_text(value)
+                self.assertIsNotNone(ref)
+                assert ref is not None
+                self.assertEqual((ref.platform, ref.source_id), ("xiaohongshu", note_id))
+        shared = parse_source_text(
+            f"https://www.xiaohongshu.com/explore/{note_id}?xsec_token=abc"
+        )
+        assert shared is not None
+        self.assertIn("xsec_token=abc", shared.url)
+
+    def test_xiaohongshu_profile_url_yields_user_id(self) -> None:
+        uid = "5f1c2d3e000000000101abcd"
+        self.assertEqual(
+            xiaohongshu_user_id(f"https://www.xiaohongshu.com/user/profile/{uid}"), uid
+        )
+        self.assertEqual(xiaohongshu_user_id(uid), uid)
+        self.assertIsNone(xiaohongshu_user_id("https://example.com/user/profile/1"))
 
     def test_manual_bare_ids(self) -> None:
         pixiv = parse_source_text("12345678_p2")
