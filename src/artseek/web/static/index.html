@@ -2251,6 +2251,7 @@
       }
     }
     const LIBRARY_VIEW_STORAGE_KEY = 'artseek.libraryView';
+    const ARTIST_SEEN_STORAGE_KEY = 'artseek.artistSeen';
     const LIBRARY_VIEWS = [
       { value: 'images', label: '图集视图' },
       { value: 'artists', label: '画师视图' },
@@ -7291,8 +7292,10 @@
       if (state.mode === 'author' && value === 'artists') return;
       const scrollY = window.scrollY;
       state.libraryView = value;
-      try { localStorage.setItem(LIBRARY_VIEW_STORAGE_KEY, value); }
-      catch (_) { /* keep in-memory */ }
+      try {
+        localStorage.setItem(LIBRARY_VIEW_STORAGE_KEY, value);
+        if (value === 'artists') localStorage.setItem(ARTIST_SEEN_STORAGE_KEY, '1');
+      } catch (_) { /* keep in-memory */ }
       renderLibraryViewSwitch();
       renderGalleryView();
       if (value === 'artists') {
@@ -7671,6 +7674,35 @@
       }
       loading.remove();
       row.loading = false;
+    }
+    let artistPrefetchTimer = 0;
+    function scheduleArtistPrefetch() {
+      clearTimeout(artistPrefetchTimer);
+      artistPrefetchTimer = setTimeout(() => {
+        artistPrefetchTimer = 0;
+        if (artistViewActive() || state.mode === 'idle') return;
+        try {
+          if (localStorage.getItem(ARTIST_SEEN_STORAGE_KEY) !== '1') return;
+        } catch (_) {
+          return;
+        }
+        const view = state.artistView;
+        void fetch('/api/artists/gallery', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...artistScopePayload(),
+            q: view.query,
+            sort: view.sort,
+            include_unassigned: artistIncludeUnassigned(),
+            offset: 0,
+            limit: 1,
+            image_sort: artistImageSort(),
+            image_limit: 1,
+            image_seed: view.imageSeed,
+          }),
+        }).catch(() => {});
+      }, 900);
     }
     function artistPageItem(author) {
       const key = String(author.key || '');
@@ -9035,6 +9067,7 @@
       });
       bindGalleryCards();
       settleGalleryScroll();
+      scheduleArtistPrefetch();
     }
 
     function bindGalleryCards() {

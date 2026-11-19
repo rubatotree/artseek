@@ -612,11 +612,16 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         tuple[Any, ...], tuple[float, dict[str, int]]
     ] = OrderedDict()
     app.state.author_scope_cache_lock = threading.RLock()
+    app.state.artist_catalog_cache: OrderedDict[
+        tuple[Any, ...],
+        tuple[float, list[dict[str, Any]], dict[str, list[dict[str, Any]]]],
+    ] = OrderedDict()
     static_path = Path(__file__).with_name("static") / "index.html"
 
     def invalidate_author_cache() -> None:
         with app.state.author_scope_cache_lock:
             app.state.author_scope_cache.clear()
+            app.state.artist_catalog_cache.clear()
 
     @app.on_event("shutdown")
     def shutdown() -> None:
@@ -3305,18 +3310,104 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             offset + len(page_ids) < total,
         )
 
+    artist_sort_keys = (
+        "name_asc",
+        "name_desc",
+        "latest_asc",
+        "latest_desc",
+        "count_asc",
+        "count_desc",
+    )
+
+    def artist_catalog_for(
+        request: ArtistGalleryRequest,
+        scope: set[str] | None,
+        sort: str,
+    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+        """Return one cached artist catalog; sort orders fill lazily/in background."""
+        store: ProvenanceStore = app.state.provenance
+        cache_key = (
+            tuple(sorted(request.folder_keys)) if request.folder_keys is not None else None,
+            request.mtime_after or "",
+            request.mtime_before or "",
+            tuple(sorted(request.author_keys)),
+            request.title_query,
+            tuple(request.text_tags),
+            request.tag_expression,
+            request.collection_id,
+            request.snapshot_id,
+        )
+        now = time.monotonic()
+        with app.state.author_scope_cache_lock:
+            cached = app.state.artist_catalog_cache.get(cache_key)
+            if cached is not None and now - cached[0] <= 120.0:
+                app.state.artist_catalog_cache.move_to_end(cache_key)
+                return cached[1], cached[2]
+        entries = store.artist_entries(list(scope) if scope is not None else None)
+        orders = {
+            sort: store.sort_artist_entries(entries, sort, include_unassigned=True)
+        }
+        with app.state.author_scope_cache_lock:
+            app.state.artist_catalog_cache[cache_key] = (now, entries, orders)
+            while len(app.state.artist_catalog_cache) > 8:
+                app.state.artist_catalog_cache.popitem(last=False)
+
+        def warm_orders() -> None:
+            for other in artist_sort_keys:
+                if other == sort:
+                    continue
+                ordered = store.sort_artist_entries(
+                    entries, other, include_unassigned=True
+                )
+                with app.state.author_scope_cache_lock:
+                    cached = app.state.artist_catalog_cache.get(cache_key)
+                    if cached is None or cached[1] is not entries:
+                        return
+                    cached[2].setdefault(other, ordered)
+
+        threading.Thread(
+            target=warm_orders, daemon=True, name="artseek-artist-sort-warm"
+        ).start()
+        return entries, orders
+
+    def public_artist_entry(entry: dict[str, Any]) -> dict[str, Any]:
+        clean = dict(entry)
+        clean.pop("_unassigned", None)
+        clean.pop("_search_values", None)
+        clean.pop("_search_text", None)
+        return clean
+
     @app.post("/api/artists/gallery")
     def artist_gallery(request: ArtistGalleryRequest) -> dict[str, Any]:
         store: ProvenanceStore = app.state.provenance
         scope = resolve_artist_scope(request)
-        page = store.artist_stats(
-            list(scope) if scope is not None else None,
-            query=request.q,
-            sort=request.sort,
-            include_unassigned=request.include_unassigned,
-            offset=request.offset,
-            limit=request.limit,
-        )
+        sort = request.sort if request.sort in artist_sort_keys else "latest_desc"
+        entries, orders = artist_catalog_for(request, scope, sort)
+        if request.q.strip():
+            ranked = store.search_artist_entries(
+                entries,
+                request.q,
+                sort,
+                include_unassigned=request.include_unassigned,
+            )
+        else:
+            ranked = orders.get(sort) or store.sort_artist_entries(
+                entries, sort, include_unassigned=True
+            )
+            if not request.include_unassigned:
+                ranked = [
+                    item for item in ranked if item["key"] != UNASSIGNED_AUTHOR_KEY
+                ]
+        total = len(ranked)
+        page = {
+            "authors": [
+                public_artist_entry(item)
+                for item in ranked[
+                    max(0, request.offset) : max(0, request.offset) + request.limit
+                ]
+            ],
+            "total": total,
+        }
         image_sort = {
             "name": "name_asc",
             "count": "mtime_desc",

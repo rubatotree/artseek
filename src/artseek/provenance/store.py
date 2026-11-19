@@ -160,6 +160,7 @@ class ProvenanceStore:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout = 15000")
         connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA temp_store = MEMORY")
         try:
             connection.execute("PRAGMA journal_mode = WAL")
             connection.execute("PRAGMA synchronous = NORMAL")
@@ -2853,30 +2854,11 @@ class ProvenanceStore:
             result.append(view)
         return result
 
-    def artist_stats(
+    def artist_entries(
         self,
         point_ids: Sequence[str] | None,
-        *,
-        query: str = "",
-        sort: str = "latest_desc",
-        include_unassigned: bool = False,
-        offset: int = 0,
-        limit: int = 30,
-    ) -> dict[str, Any]:
-        """Aggregate artists for one filter scope, ordered for the artist view."""
-        needle = _author_text(query)
-        order = str(sort or "latest_desc")
-        if order not in {
-            "name_asc",
-            "name_desc",
-            "latest_asc",
-            "latest_desc",
-            "count_asc",
-            "count_desc",
-        }:
-            order = "latest_desc"
-        page_size = max(1, int(limit))
-        start = max(0, int(offset))
+    ) -> list[dict[str, Any]]:
+        """Aggregate author counts/latest/covers for one scope, unsorted."""
         with self._read() as connection:
             if point_ids is None:
                 aggregate = connection.execute(
@@ -2919,12 +2901,12 @@ class ProvenanceStore:
             entries: list[dict[str, Any]] = []
             for key, (count, latest) in raw.items():
                 if key == UNASSIGNED_AUTHOR_KEY:
-                    if not include_unassigned or count <= 0:
+                    if count <= 0:
                         continue
-                    values: list[Any] = ["无画师", "none", "未标注", "unassigned"]
                     name = "无画师"
                     handle = ""
                     members: list[dict[str, Any]] = []
+                    search_values = ["无画师", "none", "未标注", "unassigned"]
                     is_unassigned = True
                 else:
                     artist_id = int(key)
@@ -2936,15 +2918,36 @@ class ProvenanceStore:
                     name = str(view["name"] or view["handle"] or key)
                     handle = str(view["handle"] or "")
                     members = self._member_views(row, identity_rows)
-                    values = [name, key, *[
-                        item
-                        for identity in view["identities"]
-                        for item in (identity["display"], identity["identity"])
-                    ]]
+                    search_values = [
+                        name,
+                        key,
+                        handle,
+                        *[
+                            value
+                            for member in members
+                            for value in (
+                                member.get("handle"),
+                                member.get("platform_id"),
+                            )
+                        ],
+                        *[
+                            value
+                            for identity in view["identities"]
+                            for value in (identity.get("display"), identity.get("identity"))
+                        ],
+                    ]
                     is_unassigned = False
-                score = self._author_score(needle, *values) if needle else 1.0
-                if needle and score <= 0:
-                    continue
+                clean_values: list[Any] = []
+                seen_values: set[str] = set()
+                for value in search_values:
+                    text = str(value or "").strip()
+                    if not text:
+                        continue
+                    folded = text.casefold()
+                    if folded in seen_values:
+                        continue
+                    seen_values.add(folded)
+                    clean_values.append(text)
                 entries.append(
                     {
                         "key": key,
@@ -2953,17 +2956,43 @@ class ProvenanceStore:
                         "members": members,
                         "image_count": count,
                         "latest_mtime": latest,
-                        "score": round(score, 3),
                         "_unassigned": is_unassigned,
+                        "_search_values": clean_values,
+                        "_search_text": "\n".join(value.casefold() for value in clean_values),
                     }
                 )
+        return entries
+
+    @classmethod
+    def sort_artist_entries(
+        cls,
+        entries: Sequence[dict[str, Any]],
+        sort: str = "latest_desc",
+        *,
+        include_unassigned: bool = True,
+    ) -> list[dict[str, Any]]:
+        order = str(sort or "latest_desc")
+        if order not in {
+            "name_asc",
+            "name_desc",
+            "latest_asc",
+            "latest_desc",
+            "count_asc",
+            "count_desc",
+        }:
+            order = "latest_desc"
+        ordered = [
+            item
+            for item in entries
+            if include_unassigned or item["key"] != UNASSIGNED_AUTHOR_KEY
+        ]
         if order in {"name_asc", "name_desc"}:
-            entries.sort(
+            ordered.sort(
                 key=lambda item: (_author_text(item["name"] or item["key"]), item["key"]),
                 reverse=order == "name_desc",
             )
         elif order in {"latest_asc", "latest_desc"}:
-            entries.sort(
+            ordered.sort(
                 key=lambda item: (
                     item["latest_mtime"],
                     _author_text(item["name"] or item["key"]),
@@ -2972,7 +3001,7 @@ class ProvenanceStore:
                 reverse=order == "latest_desc",
             )
         else:
-            entries.sort(
+            ordered.sort(
                 key=lambda item: (
                     item["image_count"],
                     _author_text(item["name"] or item["key"]),
@@ -2980,13 +3009,71 @@ class ProvenanceStore:
                 ),
                 reverse=order == "count_desc",
             )
-        if needle:
-            entries.sort(key=lambda item: -item["score"])
-        entries.sort(key=lambda item: not item["_unassigned"])
-        total = len(entries)
-        page = entries[start : start + page_size]
-        for entry in page:
-            entry.pop("_unassigned", None)
+        ordered.sort(key=lambda item: not item["_unassigned"])
+        return ordered
+
+    @classmethod
+    def search_artist_entries(
+        cls,
+        entries: Sequence[dict[str, Any]],
+        query: str,
+        sort: str = "latest_desc",
+        *,
+        include_unassigned: bool = True,
+    ) -> list[dict[str, Any]]:
+        needle = _author_text(query)
+        ordered = cls.sort_artist_entries(
+            entries, sort, include_unassigned=include_unassigned
+        )
+        if not needle:
+            return ordered
+        scored: list[dict[str, Any]] = []
+        for item in ordered:
+            if needle not in item.get("_search_text", ""):
+                continue
+            copy = dict(item)
+            copy["score"] = 1.0 if needle == str(item["name"] or "").casefold() else 0.9
+            scored.append(copy)
+        scored.sort(key=lambda item: -item["score"])
+        # Preserve the requested artist order for equal substring matches.
+        scored.sort(key=lambda item: not item["_unassigned"])
+        return scored
+
+    def artist_stats(
+        self,
+        point_ids: Sequence[str] | None,
+        *,
+        query: str = "",
+        sort: str = "latest_desc",
+        include_unassigned: bool = False,
+        offset: int = 0,
+        limit: int = 30,
+    ) -> dict[str, Any]:
+        """Aggregate artists for one filter scope, ordered for the artist view."""
+        entries = self.artist_entries(point_ids)
+        if query.strip():
+            ranked = self.search_artist_entries(
+                entries,
+                query,
+                sort,
+                include_unassigned=include_unassigned,
+            )
+        else:
+            ranked = self.sort_artist_entries(
+                entries,
+                sort,
+                include_unassigned=include_unassigned,
+            )
+        start = max(0, int(offset))
+        page_size = max(1, int(limit))
+        total = len(ranked)
+        page: list[dict[str, Any]] = []
+        for item in ranked[start : start + page_size]:
+            clean = dict(item)
+            clean.pop("_unassigned", None)
+            clean.pop("_search_values", None)
+            clean.pop("_search_text", None)
+            page.append(clean)
         return {"authors": page, "total": total}
 
     def _artist_views_locked(
