@@ -3239,6 +3239,7 @@
       if (state.viewerUiHidden) {
         closeMobileViewerDetails();
         closeViewerCollectionMenu({ restoreFocus: false });
+        if (state.provenance.open) void closeProvenancePane();
       }
       requestAnimationFrame(() => {
         if ($('viewer').open && typeof fitViewerFrame === 'function') fitViewerFrame();
@@ -5636,9 +5637,15 @@
       if ($('collection-sort-menu').hidden) openCollectionSortMenu();
       else closeCollectionSortMenu({ restoreFocus: true });
     }
+    function galleryViewChoices() {
+      return state.mode === 'author'
+        ? GALLERY_VIEWS.filter((option) => option.value !== 'artists')
+        : GALLERY_VIEWS;
+    }
     function cycleGalleryView() {
-      const index = GALLERY_VIEWS.findIndex((option) => option.value === state.galleryView);
-      const next = GALLERY_VIEWS[(index + 1) % GALLERY_VIEWS.length];
+      const options = galleryViewChoices();
+      const index = options.findIndex((option) => option.value === state.galleryView);
+      const next = options[(index + 1) % options.length] || options[0];
       applyGalleryView(next.value);
     }
     function renderGalleryView() {
@@ -5650,8 +5657,9 @@
         return;
       }
       const view = state.galleryView;
-      const index = GALLERY_VIEWS.findIndex((option) => option.value === view);
-      const nextLabel = GALLERY_VIEWS[(index + 1) % GALLERY_VIEWS.length].label;
+      const options = galleryViewChoices();
+      const index = options.findIndex((option) => option.value === view);
+      const nextLabel = options[(index + 1) % options.length]?.label || options[0].label;
       const toggle = $('gallery-view-toggle');
       toggle.innerHTML = galleryViewIcon(view);
       const title = `查看形式：${GALLERY_VIEW_LABELS[view] || view}（点击切换到${nextLabel}）`;
@@ -10857,6 +10865,12 @@
           state.mode = 'author';
           state.tagName = '';
           state.tagTotal = 0;
+          if (state.galleryView === 'artists') {
+            state.galleryView = 'natural';
+            try { localStorage.setItem(GALLERY_VIEW_STORAGE_KEY, 'natural'); }
+            catch (_) { /* keep the in-memory choice */ }
+            renderGalleryView();
+          }
           setAdvancedFilters({ authors: [route.key] });
           setFilterPanelOpen(true);
           updateFilterBadge();

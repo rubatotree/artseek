@@ -1994,6 +1994,39 @@ class ProvenanceStore:
                         result[key] = list(unassigned)
         return result
 
+    def point_ids_without_author(self, platform: str | None = None) -> list[str]:
+        with self._read() as connection:
+            if platform:
+                rows = connection.execute(
+                    "SELECT point_id FROM image_source "
+                    "WHERE platform = ? AND (author_key IS NULL OR author_key = '') "
+                    "ORDER BY point_id",
+                    (str(platform),),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT point_id FROM image_source "
+                    "WHERE author_key IS NULL OR author_key = '' "
+                    "ORDER BY point_id"
+                ).fetchall()
+        return [str(row["point_id"]) for row in rows]
+
+    def assign_author_if_missing(self, point_id: str, author_key: str) -> bool:
+        """Attach an artist only when the point has no author yet."""
+        if self._is_unassigned_key(author_key):
+            return False
+        with self._read() as connection:
+            artist = self._canonical_locked(connection, author_key)
+            if not artist.isdigit():
+                return False
+            cursor = connection.execute(
+                "UPDATE image_source SET author_key = ?, updated_at = ? "
+                "WHERE point_id = ? AND (author_key IS NULL OR author_key = '')",
+                (artist, _now(), point_id),
+            )
+            connection.commit()
+        return cursor.rowcount > 0
+
     @staticmethod
     def _is_unassigned_key(key: str | None) -> bool:
         return str(key or "").strip().casefold() == UNASSIGNED_AUTHOR_KEY

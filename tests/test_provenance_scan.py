@@ -59,6 +59,11 @@ class ProvenanceScanTests(unittest.TestCase):
         self.assertEqual(pixiv["platform"], "pixiv")
         self.assertEqual(embedded["platform"], "twitter")
         self.assertEqual(embedded["source_id"], "1872266114488828000")
+        self.assertEqual(summary["authors_backfilled"], 1)
+        author = self.store.author_summary(str(embedded["author_key"]))
+        self.assertIsNotNone(author)
+        assert author is not None
+        self.assertEqual(author["name"], "example_artist")
 
     def test_unresolved_row_is_visible(self) -> None:
         unknown = self.root / "unknown-name.png"

@@ -40,9 +40,11 @@ _PIXIV_URL_RES = (
 _TWITTER_URL_RE = re.compile(
     r"https?://(?:www\.|mobile\.)?"
     r"(?:x\.com|twitter\.com|vxtwitter\.com|fxtwitter\.com|fixupx\.com|fixvx\.com)"
-    r"/(?:[^/?#]+|i/web)/status/(?P<id>\d+)(?:/photo/(?P<photo>\d+))?",
+    r"/(?:(?P<author>[A-Za-z0-9_]{1,15})|i/web)/status/"
+    r"(?P<id>\d+)(?:/photo/(?P<photo>\d+))?",
     re.IGNORECASE,
 )
+_TWITTER_RESERVED_HANDLES = frozenset({"i", "home", "intent", "share", "search"})
 _TWITTER_HANDLE_RE = re.compile(
     r"https?://(?:www\.)?(?:twitter\.com|x\.com)/(?P<handle>[A-Za-z0-9_]{1,15})",
     re.IGNORECASE,
@@ -234,9 +236,31 @@ def twitter_handle_from_url(value: str) -> str | None:
     if not match:
         return None
     handle = match.group("handle")
-    if handle.casefold() in {"i", "home", "intent", "share", "search"}:
+    if handle.casefold() in _TWITTER_RESERVED_HANDLES:
         return None
     return handle
+
+
+def twitter_authors_from_metadata(
+    path: Path,
+) -> tuple[dict[str, set[str]], list[str]]:
+    """Extract status-ID→handle mappings and profile handles from metadata."""
+    status_handles: dict[str, set[str]] = {}
+    profile_handles: list[str] = []
+    seen_profiles: set[str] = set()
+    for text in _metadata_strings(path):
+        decoded = html.unescape(text)
+        for match in _TWITTER_URL_RE.finditer(decoded):
+            author = (match.group("author") or "").strip().lstrip("@")
+            if author and author.casefold() not in _TWITTER_RESERVED_HANDLES:
+                status_handles.setdefault(match.group("id"), set()).add(author)
+        for match in _TWITTER_HANDLE_RE.finditer(decoded):
+            handle = match.group("handle").lstrip("@")
+            key = handle.casefold()
+            if handle and key not in _TWITTER_RESERVED_HANDLES and key not in seen_profiles:
+                seen_profiles.add(key)
+                profile_handles.append(handle)
+    return status_handles, profile_handles
 
 
 def pixiv_user_id_from_url(value: str) -> str | None:

@@ -520,7 +520,7 @@ class CollectionsApiTests(unittest.TestCase):
         self.assertIn("function renderGalleryView()", html)
         self.assertIn("function applyGalleryView(value)", html)
         self.assertIn("function cycleGalleryView()", html)
-        self.assertIn("GALLERY_VIEWS[(index + 1) % GALLERY_VIEWS.length]", html)
+        self.assertIn("options[(index + 1) % options.length]", html)
         self.assertIn("点击切换到", html)
         self.assertIn("gallery.classList.toggle('view-list'", html)
         self.assertIn(".gallery.view-list .card {", html)

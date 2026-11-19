@@ -6,7 +6,12 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
-from .parser import ParsedSource, extract_embedded_refs, parse_filename
+from .parser import (
+    ParsedSource,
+    extract_embedded_refs,
+    parse_filename,
+    twitter_authors_from_metadata,
+)
 from .store import ProvenanceStore
 
 ProgressCallback = Callable[[int, int, str], None]
@@ -56,6 +61,7 @@ def scan_payloads(
         "new": 0,
         "skipped": 0,
         "stale": 0,
+        "authors_backfilled": 0,
     }
     live_hashes: dict[str, str | None] = {}
     for index, (point_id, payload) in enumerate(payloads, start=1):
@@ -119,7 +125,48 @@ def scan_payloads(
             progress(index, int(summary["total"]), path_value)
     if live_hashes:
         summary["stale"] = len(store.stale_points(live_hashes))
+    summary["authors_backfilled"] = _backfill_twitter_authors(store, stop_event)
     return summary
+
+
+def _backfill_twitter_authors(
+    store: ProvenanceStore,
+    stop_event: threading.Event | None = None,
+) -> int:
+    """Recover authors from handles saved in metadata when the API is gone."""
+    point_ids = store.point_ids_without_author("twitter")
+    if not point_ids:
+        return 0
+    known = store.known_points()
+    count = 0
+    for point_id in point_ids:
+        if stop_event is not None and stop_event.is_set():
+            break
+        record = store.get(point_id)
+        if record is None or record.get("author_key"):
+            continue
+        raw_path = known.get(point_id, (None, 0, None, None))[3]
+        if not raw_path:
+            continue
+        path = Path(raw_path)
+        if not path.exists():
+            continue
+        status_handles, profile_handles = twitter_authors_from_metadata(path)
+        candidates = status_handles.get(str(record.get("source_id") or ""), set())
+        if len(candidates) != 1:
+            candidates = set(profile_handles)
+        if len(candidates) != 1:
+            continue
+        handle = next(iter(candidates))
+        author_key = store.ensure_author(
+            "twitter",
+            handle,
+            name=handle,
+            handle=handle,
+        )
+        if store.assign_author_if_missing(point_id, author_key):
+            count += 1
+    return count
 
 
 def _path_key(payload: dict[str, Any]) -> str | None:
