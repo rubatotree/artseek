@@ -116,14 +116,9 @@ def scan_payloads(
                 if progress is not None and (index == 1 or index % 50 == 0):
                     progress(index, int(summary["total"]), str(payload.get("path") or ""))
                 continue
-        summary["scanned"] += 1
-        if digest:
-            live_hashes[point_id] = digest
         path_value = str(payload.get("path") or "")
         path = Path(path_value) if path_value else None
-        parsed: ParsedSource | None = None
-        if path is not None and path.exists():
-            parsed = parse_payload_path(path, deep=deep)
+        current_path = _path_key(payload) or ""
         before = store.get(point_id)
         if (
             before is not None
@@ -133,6 +128,26 @@ def scan_payloads(
         ):
             store.reset_for_replacement(point_id)
             before = store.get(point_id)
+        if (
+            before is not None
+            and digest
+            and before.get("content_hash") == digest
+            and (before.get("path_key") or "") == current_path
+            and (
+                (before.get("status") == "ok" and bool(before.get("author_key")))
+                or before.get("source_origin") == "manual"
+            )
+        ):
+            summary["skipped"] += 1
+            if progress is not None and (index == 1 or index % 50 == 0):
+                progress(index, int(summary["total"]), path_value)
+            continue
+        summary["scanned"] += 1
+        if digest:
+            live_hashes[point_id] = digest
+        parsed: ParsedSource | None = None
+        if path is not None and path.exists():
+            parsed = parse_payload_path(path, deep=deep)
         if parsed is None:
             record_unresolved(
                 store,
