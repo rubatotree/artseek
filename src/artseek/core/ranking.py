@@ -154,6 +154,7 @@ def fuse_and_rank(
     plan: QueryPlan,
     descriptor_weight: float,
     keyword_bonus: float,
+    tag_idf: Mapping[str, float] | None = None,
     strict_tags: bool = False,
     dedupe: bool = False,
     excluded_ids: set[Any] | None = None,
@@ -161,7 +162,7 @@ def fuse_and_rank(
     limit: int = 40,
     offset: int = 0,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """Fuse visual + descriptor hits with weighted RRF, tag bonus/exclusion, and dedupe."""
+    """Fuse visual + descriptor hits with weighted RRF, IDF tag bonus/exclusion, and dedupe."""
     combined: dict[Any, dict[str, Any]] = {}
     desc_w = float(descriptor_weight) if descriptor_hits else 0.0
     vis_w = 1.0 - desc_w
@@ -183,6 +184,13 @@ def fuse_and_rank(
 
     positive = {normalize_tag(tag) for tag in plan.positive_tags}
     negative = {normalize_tag(tag) for tag in plan.negative_tags}
+    if tag_idf and positive:
+        pos_weights = {t: max(0.25, float(tag_idf.get(t, 1.0))) for t in positive}
+        pos_denom = max(1e-6, sum(pos_weights.values()))
+    else:
+        pos_weights = {}
+        pos_denom = float(max(1, len(positive)))
+
     ranked: list[RankedRow] = []
     for item_key, entry in combined.items():
         payload = entry["payload"]
@@ -192,8 +200,13 @@ def fuse_and_rank(
         hits = sorted(tags & positive)
         if strict_tags and positive and not hits:
             continue
-        if positive:
-            entry["rrf"] += float(keyword_bonus) * len(hits) / len(positive)
+        if positive and hits:
+            hit_sum = (
+                sum(pos_weights.get(t, 1.0) for t in hits)
+                if pos_weights
+                else float(len(hits))
+            )
+            entry["rrf"] += float(keyword_bonus) * hit_sum / pos_denom
         ranked.append((item_key, entry, hits))
 
     ranked.sort(key=lambda row: row[1]["rrf"], reverse=True)

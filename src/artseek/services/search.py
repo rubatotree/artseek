@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 import re
 import threading
 import time
@@ -12,9 +13,10 @@ from typing import Any
 
 import numpy as np
 
+from ..compute import release_accelerator
 from ..config import AppConfig
 from ..core.query_plan import QueryPlan, normalize_query, static_expand
-from ..core.ranking import compose_visual_vector, fuse_and_rank
+from ..core.ranking import compose_visual_vector, duplicate_keys, fuse_and_rank
 from ..core.scope import ImageScope
 from ..core.tag_dictionary import expand_tag_aliases
 from ..core.tag_query import TagQueryError, parse_tag_expression
@@ -22,7 +24,9 @@ from ..db.repos.images import ImageRepo
 from ..db.repos.provenance import ProvenanceRepo
 from ..db.repos.query_cache import QueryPlanCacheRepo
 from ..db.scope_resolver import ScopeResolver
+from ..image_io import load_rgb
 from ..library import day_end_ns, day_start_ns
+from ..ml.ccip import CCIPExtractor
 from ..ml.llm import OllamaUnavailable
 from ..search_cache import SearchSnapshotStore, is_snapshot_id
 from ..vectors.index import VectorIndex
@@ -91,6 +95,21 @@ class SearchService:
         self._plan_lock = threading.Lock()
         self._pending_plans: set[tuple[str, str]] = set()
         self._plan_errors: dict[tuple[str, str], tuple[float, str]] = {}
+        self._idf_cache: tuple[int, dict[str, float]] | None = None
+
+    def _tag_idf_map(self) -> dict[str, float]:
+        gen = int(getattr(self.images.db, "write_generation", 0))
+        cached = self._idf_cache
+        if cached is not None and cached[0] == gen:
+            return cached[1]
+        total_docs, counts = self.images.tag_doc_counts()
+        denom_n = max(1, total_docs)
+        idf = {
+            name: max(0.25, 1.0 + math.log((denom_n + 1.0) / (max(1, df) + 1.0)))
+            for name, df in counts.items()
+        }
+        self._idf_cache = (gen, idf)
+        return idf
 
     # ---------------------------------------------------------------- LLM query plan
     def _resolve_plan(
@@ -363,6 +382,10 @@ class SearchService:
         text_tags: Sequence[str] = (),
         tag_text: Sequence[str] = (),
         image_tags: Sequence[str] = (),
+        media_types: Sequence[str] = (),
+        ratings: Sequence[str] = (),
+        monochrome: bool | None = None,
+        exclude_ai: bool | None = None,
         wait_for_llm: bool = False,
         had_file_refs: bool = False,
     ) -> dict[str, Any]:
@@ -431,6 +454,12 @@ class SearchService:
             (after_ns, before_ns) if (after_ns is not None or before_ns is not None) else None
         )
 
+        clean_media = tuple(
+            dict.fromkeys(str(m).strip().casefold() for m in media_types if str(m).strip())
+        )
+        clean_ratings = tuple(
+            dict.fromkeys(str(r).strip().casefold() for r in ratings if str(r).strip())
+        )
         has_metadata_filters = bool(
             resolved_authors
             or merged_text_tags
@@ -438,6 +467,10 @@ class SearchService:
             or clean_tag_text
             or clean_image_tags
             or expr_text
+            or clean_media
+            or clean_ratings
+            or monochrome is not None
+            or exclude_ai is not None
         )
 
         scope = ImageScope(
@@ -452,6 +485,10 @@ class SearchService:
             source_tag_text=tuple(clean_tag_text),
             tag_expression=expr_text,
             title_terms=(title_query.strip(),) if title_query.strip() else (),
+            media_types=clean_media,
+            ratings=clean_ratings,
+            monochrome=monochrome,
+            exclude_ai=exclude_ai,
         )
 
         page_limit = max(1, min(int(limit or self.config.search.default_limit), 200))
@@ -465,6 +502,10 @@ class SearchService:
             "tag_expression": expr_text,
             "tag_text": clean_tag_text,
             "image_tags": clean_image_tags,
+            "media_types": list(clean_media),
+            "ratings": list(clean_ratings),
+            "monochrome": monochrome,
+            "exclude_ai": exclude_ai,
         }
 
         if not search_text and not all_paths and has_metadata_filters:
@@ -621,6 +662,7 @@ class SearchService:
             plan=plan,
             descriptor_weight=desc_weight,
             keyword_bonus=self.config.search.keyword_bonus,
+            tag_idf=self._tag_idf_map(),
             strict_tags=strict_tags,
             dedupe=dedupe,
             excluded_ids=excluded_row_ids or None,
@@ -636,14 +678,13 @@ class SearchService:
             payload = full_payloads.get(rid)
             if payload is None:
                 continue
-            item["id"] = str(payload.get("point_id") or payload.get("id") or rid)
-            item["path"] = str(payload.get("path", ""))
-            item["name"] = str(payload.get("name", ""))
-            item["width"] = int(payload.get("width", 0))
-            item["height"] = int(payload.get("height", 0))
-            item["tags"] = list(payload.get("tags", []))
-            item["caption"] = payload.get("caption")
-            items.append(item)
+            pid = str(payload.get("point_id") or payload.get("id") or rid)
+            card = gallery_result(pid, payload)
+            card["score"] = item["score"]
+            card["tag_hits"] = item["tag_hits"]
+            card["visual_score"] = item.get("visual_score")
+            card["descriptor_score"] = item.get("descriptor_score")
+            items.append(card)
         items = attach_provenance(self.prov, items)
         result_out: dict[str, Any] = {
             "query_plan": dataclasses.asdict(plan),
@@ -682,6 +723,10 @@ class SearchService:
         folder_keys: Sequence[str] | None = None,
         mtime_after: str | None = None,
         mtime_before: str | None = None,
+        media_types: Sequence[str] = (),
+        ratings: Sequence[str] = (),
+        monochrome: bool | None = None,
+        exclude_ai: bool | None = None,
         sort: str = "mtime_desc",
         seed: int | None = None,
     ) -> dict[str, Any]:
@@ -704,12 +749,22 @@ class SearchService:
         time_range = (
             (after_ns, before_ns) if (after_ns is not None or before_ns is not None) else None
         )
+        clean_media = tuple(
+            dict.fromkeys(str(m).strip().casefold() for m in media_types if str(m).strip())
+        )
+        clean_ratings = tuple(
+            dict.fromkeys(str(r).strip().casefold() for r in ratings if str(r).strip())
+        )
         page_limit = max(1, min(int(limit), 200))
         page_offset = max(0, int(offset))
         scope = ImageScope(
             folders=tuple(resolved_folders),
             folder_recursive=False,
             time_range=time_range,
+            media_types=clean_media,
+            ratings=clean_ratings,
+            monochrome=monochrome,
+            exclude_ai=exclude_ai,
             restrict_point_ids=tuple(point_ids),
         )
         row_ids, total, has_more, order, used_seed = self.resolver.page_rows(
@@ -745,6 +800,145 @@ class SearchService:
                 "title_query": "",
                 "tag_text": [],
                 "image_tags": [],
+                "media_types": list(clean_media),
+                "ratings": list(clean_ratings),
+                "monochrome": monochrome,
+                "exclude_ai": exclude_ai,
                 "mode": "metadata",
             },
+        }
+
+    def search_by_character(
+        self,
+        *,
+        reference_id: str | None = None,
+        upload_path: Path | None = None,
+        bbox: Sequence[float] | None = None,
+        folder_keys: Sequence[str] | None = None,
+        use_persisted_scope: bool = True,
+        mtime_after: str | None = None,
+        mtime_before: str | None = None,
+        media_types: Sequence[str] = (),
+        ratings: Sequence[str] = (),
+        monochrome: bool | None = None,
+        exclude_ai: bool | None = None,
+        dedupe: bool = False,
+        exclude_self: bool = True,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Cross-outfit same-character retrieval over the CCIP embedding channel."""
+        if not reference_id and upload_path is None:
+            raise ServiceError(400, "请提供参考图片以搜索同角色作品")
+
+        q_vec: np.ndarray | None = None
+        crop_box = [float(v) for v in bbox] if bbox and len(bbox) == 4 else None
+        if reference_id and crop_box is None:
+            row_id = self.images.row_id_for_point(reference_id)
+            if row_id is None:
+                raise ServiceError(404, "未找到参考图片")
+            q_vec = self.vectors.ccip_vector(row_id)
+
+        if q_vec is None:
+            img_path: Path | None = upload_path
+            crop_json: str | None = None
+            if img_path is None and reference_id:
+                row_id = self.images.row_id_for_point(reference_id)
+                if row_id is None:
+                    raise ServiceError(404, "未找到参考图片")
+                row = self.db.read_conn().execute(
+                    "SELECT path, character_crop_json FROM images WHERE id = ? AND deleted = 0",
+                    (row_id,),
+                ).fetchone()
+                if row is None:
+                    raise ServiceError(404, "未找到参考图片")
+                img_path = Path(str(row["path"]))
+                crop_json = str(row["character_crop_json"]) if row["character_crop_json"] else None
+            if img_path is None or not img_path.is_file():
+                raise ServiceError(404, "参考图片文件不存在")
+
+            if self.lifecycle.embedder is not None:
+                self.lifecycle.unload_model(force=False)
+            release_accelerator()
+            extractor = CCIPExtractor(self.config.embedding)
+            try:
+                pil = load_rgb(img_path)
+                q_vec = extractor.extract_one(pil, bbox=crop_box, crop_json=crop_json)
+            finally:
+                extractor.close()
+                release_accelerator()
+
+        if folder_keys is not None or use_persisted_scope:
+            resolved_folders = resolve_folder_keys_from_db(self.images, folder_keys)
+        else:
+            resolved_folders = None
+        after_ns = day_start_ns(mtime_after)
+        before_ns = day_end_ns(mtime_before)
+        time_range = (
+            (after_ns, before_ns) if (after_ns is not None or before_ns is not None) else None
+        )
+        clean_media = tuple(
+            dict.fromkeys(str(m).strip().casefold() for m in media_types if str(m).strip())
+        )
+        clean_ratings = tuple(
+            dict.fromkeys(str(r).strip().casefold() for r in ratings if str(r).strip())
+        )
+        scope = ImageScope(
+            folders=tuple(fast_folder_key(k) for k in resolved_folders)
+            if resolved_folders is not None
+            else None,
+            time_range=time_range,
+            media_types=clean_media,
+            ratings=clean_ratings,
+            monochrome=monochrome,
+            exclude_ai=exclude_ai,
+        )
+        scope_rows = self.resolver.rows(scope)
+        page_limit = max(1, min(int(limit or self.config.search.default_limit), 200))
+        page_offset = max(0, int(offset))
+        cand_count = min(max((page_offset + page_limit) * 8, 200), 4000)
+
+        rows, scores = self.vectors.search(q_vec, "ccip", cand_count, rows=scope_rows)
+        self_row = (
+            self.images.row_id_for_point(reference_id)
+            if (exclude_self and reference_id)
+            else None
+        )
+        pairs: list[tuple[int, float]] = [
+            (int(r), float(s))
+            for r, s in zip(rows.tolist(), scores.tolist(), strict=True)
+            if int(r) != self_row
+        ]
+        payloads = self.images.get_payloads_by_ids([r for r, _ in pairs])
+
+        seen_keys: set[tuple[Any, ...]] = set()
+        filtered: list[tuple[dict[str, Any], float]] = []
+        for rid, sc in pairs:
+            payload = payloads.get(rid)
+            if payload is None:
+                continue
+            if dedupe:
+                keys = duplicate_keys(payload)
+                if keys and any(k in seen_keys for k in keys):
+                    continue
+                seen_keys.update(keys)
+            filtered.append((payload, sc))
+
+        total = len(filtered)
+        page = filtered[page_offset : page_offset + page_limit]
+        cards: list[dict[str, Any]] = []
+        for payload, sc in page:
+            card = gallery_result(str(payload["point_id"]), payload)
+            card["score"] = round(100.0 * max(0.0, sc), 2)
+            card["ccip_score"] = round(sc, 4)
+            cards.append(card)
+        cards = attach_provenance(self.prov, cards)
+        return {
+            "results": cards,
+            "total": total,
+            "has_more": page_offset + len(cards) < total,
+            "offset": page_offset,
+            "mode": "character",
+            "reference_id": reference_id,
+            "bbox": crop_box,
         }

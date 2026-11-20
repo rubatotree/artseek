@@ -28,6 +28,11 @@ class ImageScope:
     source_tag_text: tuple[str, ...] = ()
     tag_expression: str | None = None
     title_terms: tuple[str, ...] = ()
+    media_types: tuple[str, ...] = ()
+    ratings: tuple[str, ...] = ()
+    monochrome: bool | None = None
+    exclude_ai: bool | None = None
+    shot_types: tuple[str, ...] = ()
     snapshot_ids: tuple[str, ...] | None = None
     restrict_point_ids: tuple[str, ...] | None = None
 
@@ -48,6 +53,11 @@ class ImageScope:
             and not self.source_tag_text
             and not (self.tag_expression or "").strip()
             and not self.title_terms
+            and not self.media_types
+            and not self.ratings
+            and self.monochrome is None
+            and self.exclude_ai is None
+            and not self.shot_types
             and self.snapshot_ids is None
             and self.restrict_point_ids is None
         )

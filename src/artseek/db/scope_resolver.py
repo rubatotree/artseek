@@ -230,6 +230,31 @@ class ScopeResolver:
                 )
                 params.append(word.casefold())
 
+        # 8b. Structured vision attribute filters
+        if scope.media_types:
+            clean_media = [str(m).strip().casefold() for m in scope.media_types if str(m).strip()]
+            if clean_media:
+                where.append("i.media_type IN (SELECT value FROM json_each(?))")
+                params.append(json.dumps(clean_media))
+        if scope.ratings:
+            clean_rat = [str(r).strip().casefold() for r in scope.ratings if str(r).strip()]
+            if clean_rat:
+                where.append("i.rating IN (SELECT value FROM json_each(?))")
+                params.append(json.dumps(clean_rat))
+        if scope.monochrome is True:
+            where.append("i.is_monochrome = 1")
+        elif scope.monochrome is False:
+            where.append("COALESCE(i.is_monochrome, 0) = 0")
+        if scope.exclude_ai is True:
+            where.append("COALESCE(i.is_ai, 0) = 0")
+        elif scope.exclude_ai is False:
+            where.append("i.is_ai = 1")
+        if scope.shot_types:
+            clean_shots = [str(s).strip().casefold() for s in scope.shot_types if str(s).strip()]
+            if clean_shots:
+                where.append("i.shot_type IN (SELECT value FROM json_each(?))")
+                params.append(json.dumps(clean_shots))
+
         # 9. Snapshot / explicit point ID restrictions
         if scope.snapshot_ids is not None:
             where.append("i.point_id IN (SELECT value FROM json_each(?))")
@@ -315,7 +340,16 @@ class ScopeResolver:
         limit = max(1, int(limit))
         offset = max(0, int(offset))
         order = "mtime_desc" if sort in {"mtime", ""} else sort
-        if order not in {"mtime_desc", "mtime_asc", "name_asc", "name_desc", "name", "random"}:
+        allowed_sorts = {
+            "mtime_desc",
+            "mtime_asc",
+            "name_asc",
+            "name_desc",
+            "name",
+            "random",
+            "aesthetic_desc",
+        }
+        if order not in allowed_sorts:
             order = "mtime_desc"
         if order == "name":
             order = "name_asc"
@@ -398,6 +432,23 @@ class ScopeResolver:
             shuffled = _deterministic_random_order(all_ids, used_seed)
             page_ids = shuffled[offset : offset + limit].tolist()
             return page_ids, total, offset + len(page_ids) < total, order, used_seed
+
+        if order == "aesthetic_desc":
+            total_row = cur.execute(
+                f"{with_prefix}SELECT COUNT(*) FROM images AS i WHERE {where_sql}",
+                tuple(params),
+            ).fetchone()
+            total = int(total_row[0]) if total_row else 0
+            if offset >= total:
+                return [], total, False, order, None
+            rows = cur.execute(
+                f"{with_prefix}SELECT i.id FROM images AS i WHERE {where_sql} "
+                "ORDER BY COALESCE(i.aesthetic_score, -1.0) DESC, i.mtime_ns DESC, i.id ASC "
+                "LIMIT ? OFFSET ?",
+                (*params, limit, offset),
+            ).fetchall()
+            page_ids = [int(r[0]) for r in rows]
+            return page_ids, total, offset + len(page_ids) < total, order, None
 
         # Natural filename sorting is precomputed into `sort_name` so SQLite can
         # order large scopes in C instead of sorting every row in Python.

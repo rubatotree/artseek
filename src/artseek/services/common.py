@@ -63,6 +63,15 @@ def gallery_result(
         "tags": list(payload.get("tags") or []),
         "tag_hits": [],
         "caption": payload.get("caption"),
+        "media_type": payload.get("media_type"),
+        "rating": payload.get("rating"),
+        "is_monochrome": payload.get("is_monochrome"),
+        "is_ai": payload.get("is_ai"),
+        "ai_score": payload.get("ai_score"),
+        "aesthetic_score": payload.get("aesthetic_score"),
+        "shot_type": payload.get("shot_type"),
+        "focal_x": payload.get("focal_x"),
+        "focal_y": payload.get("focal_y"),
     }
 
 

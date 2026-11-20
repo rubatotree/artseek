@@ -80,6 +80,45 @@ _TAG_ENTRIES: tuple[TagEntry, ...] = (
     ),
     TagEntry("skeb", "Skeb 约稿", ("skeb", "Skeb", "约稿")),
     TagEntry("barefoot", "赤足", ("赤足", "裸足", "barefoot")),
+    # Mediums & attributes projected from vision analyzers
+    TagEntry(
+        "medium:illustration",
+        "插画媒介",
+        ("插画", "cg", "板绘", "数字插画", "illustration", "medium:illustration"),
+    ),
+    TagEntry("medium:comic", "漫画媒介", ("漫画", "黑白漫", "manga", "comic", "medium:comic")),
+    TagEntry(
+        "medium:bangumi",
+        "动画截图",
+        ("动画截图", "番剧截图", "动画", "bangumi", "anime screenshot", "medium:bangumi"),
+    ),
+    TagEntry("medium:3d", "3D渲染", ("3d", "3D", "mmd", "blender", "medium:3d")),
+    TagEntry("rating:safe", "全年龄", ("全年龄", "清水", "一般向", "safe", "rating:safe")),
+    TagEntry("rating:r15", "R15", ("r15", "R15", "擦边", "sensitive", "rating:r15")),
+    TagEntry("rating:r18", "R18", ("r18", "R18", "nsfw", "explicit", "rating:r18")),
+    TagEntry("monochrome", "黑白线稿", ("黑白", "单色", "线稿", "素描", "monochrome", "lineart")),
+    TagEntry("ai_generated", "AI生成", ("ai生成", "ai绘图", "ai_generated", "ai")),
+    TagEntry("hand_drawn", "手绘非AI", ("手绘", "人类绘制", "非ai", "hand_drawn")),
+    TagEntry("polished", "精绘完成", ("精绘", "完成度高", "精良", "polished")),
+    TagEntry("rough", "草稿速涂", ("草稿", "速涂", "涂鸦", "sketch", "rough")),
+    # Popular IPs, characters & poses
+    TagEntry("genshin_impact", "原神", ("原神", "genshin", "genshin_impact")),
+    TagEntry(
+        "honkai:_star_rail",
+        "崩坏：星穹铁道",
+        ("星穹铁道", "崩坏星穹铁道", "星铁", "hsr", "honkai:_star_rail"),
+    ),
+    TagEntry("zenless_zone_zero", "绝区零", ("绝区零", "zzz", "zenless_zone_zero")),
+    TagEntry("arknights", "明日方舟", ("明日方舟", "方舟", "arknights")),
+    TagEntry("touhou", "东方Project", ("东方", "东方project", "touhou")),
+    TagEntry("fate/grand_order", "FGO", ("fgo", "fate", "fate/grand_order")),
+    TagEntry("hatsune_miku", "初音未来", ("初音未来", "初音", "miku", "hatsune_miku")),
+    TagEntry("rem_(re:zero)", "雷姆", ("雷姆", "rem", "rem_(re:zero)")),
+    TagEntry("back_view", "背影", ("背影", "背面", "from_behind", "back_view")),
+    TagEntry("looking_back", "回头", ("回头", "回眸", "looking_back")),
+    TagEntry("side_profile", "侧脸", ("侧脸", "侧面", "profile", "side_profile")),
+    TagEntry("hugging", "拥抱", ("拥抱", "抱抱", "hug", "hugging")),
+    TagEntry("jumping", "跳跃", ("跳跃", "跃起", "jumping")),
 )
 
 _ENTRIES = {entry.tag: entry for entry in _TAG_ENTRIES}
