@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import threading
 import time
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import AppConfig
+from ..core.ranking import GENERIC_VISUAL_TAGS, rank_tags_by_idf
 from ..core.tag_dictionary import tag_info
 from ..db.repos.images import ImageRepo
 from ..db.repos.provenance import ProvenanceRepo
@@ -405,7 +407,7 @@ class ProvenanceAppService:
         pause_event: threading.Event | None = None,
         batch_size: int = 128,
         neighbor_limit: int = 24,
-        top_tags: int = 5,
+        top_tags: int = 12,
     ) -> dict[str, Any]:
         point_ids = self.prov.point_ids_without_auto_tags(limit)
         total = len(point_ids)
@@ -414,7 +416,17 @@ class ProvenanceAppService:
             return summary
 
         row_map = self.images.row_ids_for_points(point_ids)
-        row_tags = self.images.row_tags_map()
+        total_docs, doc_counts = self.images.tag_doc_counts()
+        idf_map: dict[str, float] | None = None
+        if total_docs > 0 and doc_counts:
+            idf_map = {
+                tag: (
+                    (math.log((total_docs + 1.0) / (1.0 + cnt)) + 0.5)
+                    * (0.25 if tag in GENERIC_VISUAL_TAGS else 1.0)
+                )
+                for tag, cnt in doc_counts.items()
+            }
+        row_tags_cache: dict[int, list[str]] | None = None
         done = 0
 
         for start in range(0, len(point_ids), batch_size):
@@ -434,19 +446,36 @@ class ProvenanceAppService:
                 if pid in row_map
             ]
             target_rows = [rid for _, rid in target_pairs]
-            votes = self.vectors.neighbor_tag_votes(
-                target_rows,
-                row_tags,
-                limit=neighbor_limit,
-                top_tags=top_tags,
-            )
+            own_tags_map = self.images.row_tag_scores_map(target_rows)
+            missing_rows = [rid for rid in target_rows if not own_tags_map.get(rid)]
+            neighbor_votes: dict[int, tuple[list[str], dict[str, float]]] = {}
+            if missing_rows:
+                if row_tags_cache is None:
+                    row_tags_cache = self.images.row_tags_map()
+                neighbor_votes = self.vectors.neighbor_tag_votes(
+                    missing_rows,
+                    row_tags_cache,
+                    limit=neighbor_limit,
+                    top_tags=top_tags,
+                    tag_idf=idf_map,
+                )
+
             updates: list[tuple[str, list[str], dict[str, float]]] = []
             for pid, rid in target_pairs:
-                ranked = votes.get(rid)
-                if not ranked:
-                    summary["skipped"] += 1
-                    continue
-                tags, scores = ranked
+                own_scores = own_tags_map.get(rid)
+                if own_scores:
+                    tags, scores = rank_tags_by_idf(
+                        own_scores,
+                        total_docs=total_docs,
+                        doc_counts=doc_counts,
+                        limit=top_tags,
+                    )
+                else:
+                    ranked = neighbor_votes.get(rid)
+                    if not ranked:
+                        summary["skipped"] += 1
+                        continue
+                    tags, scores = ranked
                 updates.append((pid, tags, scores))
                 if tags:
                     summary["ok"] += 1

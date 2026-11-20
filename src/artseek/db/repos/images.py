@@ -847,6 +847,61 @@ class ImageRepo:
             out.setdefault(int(r["image_id"]), []).append(str(r["name"]))
         return out
 
+    def row_tag_scores_map(
+        self, row_ids: Sequence[int] | None = None
+    ) -> dict[int, list[tuple[str, float]]]:
+        conn = self.db.read_conn()
+        out: dict[int, list[tuple[str, float]]] = {}
+        if row_ids is None:
+            rows = conn.execute(
+                """
+                SELECT it.image_id, t.name, it.score
+                FROM image_tags AS it
+                JOIN tags AS t ON t.id = it.tag_id
+                JOIN images AS i ON i.id = it.image_id AND i.deleted = 0
+                ORDER BY it.image_id, it.score DESC, t.name
+                """
+            ).fetchall()
+            for r in rows:
+                out.setdefault(int(r["image_id"]), []).append(
+                    (str(r["name"]), float(r["score"]))
+                )
+            return out
+
+        unique = [int(r) for r in dict.fromkeys(row_ids)]
+        for chunk in _chunks(unique):
+            marks = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"""
+                SELECT it.image_id, t.name, it.score
+                FROM image_tags AS it
+                JOIN tags AS t ON t.id = it.tag_id
+                JOIN images AS i ON i.id = it.image_id AND i.deleted = 0
+                WHERE it.image_id IN ({marks})
+                ORDER BY it.image_id, it.score DESC, t.name
+                """,
+                tuple(chunk),
+            ).fetchall()
+            for r in rows:
+                out.setdefault(int(r["image_id"]), []).append(
+                    (str(r["name"]), float(r["score"]))
+                )
+        return out
+
+    def tag_doc_counts(self) -> tuple[int, dict[str, int]]:
+        conn = self.db.read_conn()
+        total = self.count()
+        rows = conn.execute(
+            """
+            SELECT t.name, COUNT(*) AS cnt
+            FROM image_tags AS it
+            JOIN tags AS t ON t.id = it.tag_id
+            JOIN images AS i ON i.id = it.image_id AND i.deleted = 0
+            GROUP BY t.id
+            """
+        ).fetchall()
+        return total, {str(r["name"]): int(r["cnt"]) for r in rows}
+
     def load_scope_state(self) -> dict[str, Any]:
         conn = self.db.read_conn()
         folders = conn.execute("SELECT folder_key, selected, known FROM folders").fetchall()

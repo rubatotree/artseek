@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import math
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -10,6 +11,72 @@ import numpy as np
 from .query_plan import QueryPlan, normalize_tag
 
 RankedRow = tuple[Any, dict[str, Any], list[str]]
+
+GENERIC_VISUAL_TAGS = frozenset(
+    {
+        "1girl",
+        "solo",
+        "1boy",
+        "multiple_girls",
+        "2girls",
+        "3girls",
+        "looking_at_viewer",
+        "simple_background",
+        "white_background",
+        "transparent_background",
+        "open_mouth",
+        "closed_mouth",
+    }
+)
+
+
+def order_tags_for_descriptor(tags: Sequence[str]) -> list[str]:
+    """Place distinctive tags ahead of ultra-common boilerplate for 64-token text encoders."""
+    specific: list[str] = []
+    generic: list[str] = []
+    for tag in tags:
+        clean = str(tag or "").strip()
+        if not clean:
+            continue
+        if normalize_tag(clean) in GENERIC_VISUAL_TAGS:
+            generic.append(clean)
+        else:
+            specific.append(clean)
+    return [*specific, *generic]
+
+
+def rank_tags_by_idf(
+    tag_scores: Sequence[tuple[str, float]],
+    *,
+    total_docs: int,
+    doc_counts: Mapping[str, int],
+    limit: int = 12,
+    demote_generic: bool = True,
+) -> tuple[list[str], dict[str, float]]:
+    """Select the highest-information tags using confidence * IDF and generic demotion."""
+    if not tag_scores or limit <= 0:
+        return [], {}
+    n_docs = max(1, int(total_docs))
+    weighted: list[tuple[float, float, str]] = []
+    for raw_tag, raw_score in tag_scores:
+        tag = str(raw_tag or "").strip()
+        if not tag:
+            continue
+        score = float(raw_score)
+        df = max(0, int(doc_counts.get(tag, 0)))
+        idf = math.log((n_docs + 1.0) / (1.0 + df)) + 0.5
+        penalty = (
+            0.25
+            if demote_generic and normalize_tag(tag) in GENERIC_VISUAL_TAGS
+            else 1.0
+        )
+        weighted.append((score * idf * penalty, score, tag))
+    weighted.sort(key=lambda item: (-item[0], -item[1], item[2]))
+    chosen = weighted[: max(1, int(limit))]
+    return (
+        [tag for _, _, tag in chosen],
+        {tag: round(score, 4) for _, score, tag in chosen},
+    )
 
 
 def compose_visual_vector(

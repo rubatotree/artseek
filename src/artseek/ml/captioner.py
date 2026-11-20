@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import LLMConfig
+from ..core.ranking import order_tags_for_descriptor
 from .llm import CAPTION_SCHEMA, OllamaClient, OllamaUnavailable, flatten_caption
 
 
@@ -24,7 +25,8 @@ class Captioner:
         tags: list[str],
         caption: dict[str, Any] | None,
     ) -> str:
-        tag_text = ", ".join(tag.replace("_", " ") for tag in tags)
+        ordered = order_tags_for_descriptor(tags)
+        tag_text = ", ".join(tag.replace("_", " ") for tag in ordered)
         parts = [flatten_caption(caption), tag_text]
         return "。".join(filter(None, parts))
 

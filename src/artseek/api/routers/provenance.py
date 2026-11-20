@@ -62,7 +62,7 @@ def start_auto_tag_job(c: AppContainer, *, limit: int | None = 500) -> bool:
     def progress(done: int, total: int, _label: str) -> None:
         job.done = done
         job.total = total
-        job.message = f"正在用视觉近邻补 Tag {done}/{total}"
+        job.message = f"正在生成自动 Tag {done}/{total}"
 
     def run() -> None:
         try:

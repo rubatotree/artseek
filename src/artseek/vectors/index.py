@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import threading
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -412,6 +412,7 @@ class VectorIndex:
         limit: int = 24,
         top_tags: int = 5,
         chunk_size: int = 128,
+        tag_idf: Mapping[str, float] | None = None,
     ) -> dict[int, tuple[list[str], dict[str, float]]]:
         """Vectorized visual-neighbor tag voting directly on the in-memory matrix."""
         with self._lock:
@@ -451,7 +452,8 @@ class VectorIndex:
                             continue
                         neighbor_row = int(active_idx[pos]) if active_idx.size < n else pos
                         for tag in row_tags.get(neighbor_row, ()):
-                            votes[tag] = votes.get(tag, 0.0) + score
+                            idf_weight = float(tag_idf.get(tag, 1.0)) if tag_idf else 1.0
+                            votes[tag] = votes.get(tag, 0.0) + score * idf_weight
                     if not votes:
                         result[row] = ([], {})
                         continue
