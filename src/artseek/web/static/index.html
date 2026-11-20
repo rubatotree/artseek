@@ -829,6 +829,17 @@
       flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
       color: var(--muted); font-size: 11px;
     }
+    .artist-count {
+      flex: 0 0 auto; padding: 2px 7px; border-radius: 999px;
+      background: #f3e7ed; color: #8a5268; font-size: 10.5px; font-weight: 600;
+      font-variant-numeric: tabular-nums; line-height: 1.35;
+    }
+    .artist-card-kind {
+      display: inline-flex; align-items: center; width: fit-content;
+      padding: 2px 7px; border-radius: 999px; background: #f3e1e9;
+      color: #8a405d; font-size: 10px; font-weight: 700;
+      letter-spacing: .04em; line-height: 1.35;
+    }
     .artist-socials {
       display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto;
     }
@@ -935,6 +946,18 @@
     .artist-card .card-favorite { top: 7px; left: 7px; right: auto; bottom: auto; opacity: 0; }
     .artist-card:hover .card-favorite { opacity: 1; pointer-events: auto; }
     .artist-card .card-order-handle, .artist-card .card-remove { z-index: 5; }
+    .card.artist-collection-card {
+      border-color: #e5c3d2;
+      background: linear-gradient(180deg, #fffafc 0%, #fff 72%);
+      box-shadow: 0 7px 22px rgba(138, 82, 104, .10);
+    }
+    .card.artist-collection-card:hover {
+      border-color: #d9a7bc;
+      box-shadow: 0 9px 24px rgba(138, 82, 104, .16);
+    }
+    .card.artist-collection-card .artist-card-label { gap: 5px; }
+    .card.artist-collection-card.card-list { background: #fffafc; }
+    .card.artist-collection-card.card-list .artist-card-kind { margin-right: 6px; vertical-align: 1px; }
     .artist-collection-card.is-square {
       display: flex; flex-direction: column; aspect-ratio: 1;
     }
@@ -7639,6 +7662,11 @@
         sub.textContent = `@${author.handle}`;
         head.append(sub);
       }
+      const count = document.createElement('span');
+      count.className = 'artist-count';
+      count.textContent = `${Number(author.image_count || 0)} 张`;
+      count.title = '该画师在当前索引中的作品数';
+      head.append(count);
       const socials = document.createElement('span');
       socials.className = 'artist-socials';
       socials.innerHTML = platformIconLinks(author.members || []);
@@ -7668,14 +7696,6 @@
       const strip = document.createElement('div');
       strip.className = 'artist-strip';
       strip.dataset.artistStrip = key;
-      strip.addEventListener('wheel', (event) => {
-        if (!event.shiftKey) return;
-        if (strip.scrollWidth <= strip.clientWidth) return;
-        const raw = event.deltaY || event.deltaX;
-        if (!raw) return;
-        strip.scrollLeft += event.deltaMode === 1 ? raw * 16 : raw;
-        event.preventDefault();
-      }, { passive: false });
       const images = Array.isArray(author.images) ? author.images : [];
       for (const item of images) strip.append(artistThumbElement(item, key));
       const sentinel = document.createElement('span');
@@ -7683,6 +7703,14 @@
       sentinel.setAttribute('aria-hidden', 'true');
       strip.append(sentinel);
       section.append(strip);
+      section.addEventListener('wheel', (event) => {
+        if (!event.shiftKey) return;
+        if (strip.scrollWidth <= strip.clientWidth) return;
+        const raw = event.deltaY || event.deltaX;
+        if (!raw) return;
+        strip.scrollLeft += event.deltaMode === 1 ? raw * 16 : raw;
+        event.preventDefault();
+      }, { passive: false });
       const row = {
         key,
         images: [...images],
@@ -9129,7 +9157,7 @@
           <div class="image-wrap" draggable="true" data-gallery-drag data-artist-collection-cover tabindex="0" role="link" aria-label="打开画师：${escapeHtml(item.name)}">${cover ? `<img src="/thumb/${cover.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">` : ''}</div>
           <div class="list-body">
             <a class="list-title list-title-link" href="/author/${encodeURIComponent(item.artist_key)}" target="_blank" rel="noopener">${escapeHtml(item.name)}</a>
-            <div class="list-sub"><span class="list-author">${escapeHtml(item.name)}</span><span class="list-sep">·</span><span class="list-tags">${meta}</span></div>
+            <div class="list-sub"><span class="artist-card-kind">画师</span><span class="list-author">${escapeHtml(item.name)}</span><span class="list-sep">·</span><span class="list-tags">${meta}</span></div>
           </div>
           <div class="card-list-actions">${orderHandle}${favoriteAction}${removeAction}</div>
         </article>`;
@@ -9137,6 +9165,7 @@
       return `<article class="card artist-collection-card${squareCard ? ' is-square' : ''}" data-index="${index}" data-point-id="${escapeHtml(item.id)}" data-artist-collection>
         <div class="image-wrap"${ratio} draggable="true" data-gallery-drag data-artist-collection-cover tabindex="0" role="link" aria-label="打开画师：${escapeHtml(item.name)}">${orderHandle}${removeAction}${image}${favoriteAction}</div>
         <div class="artist-card-label">
+          <span class="artist-card-kind">画师</span>
           <a class="artist-card-name" href="/author/${encodeURIComponent(item.artist_key)}" target="_blank" rel="noopener">${escapeHtml(item.name)}</a>
           <div class="artist-card-meta"><span class="artist-sub">${meta}</span></div>
         </div>
