@@ -586,6 +586,7 @@ class ArtistService:
         return {
             "authors": page_entries,
             "total": total,
+            "has_more": start + len(page_entries) < total,
             "image_sort": norm_image_sort,
             "image_seed": base_seed,
         }

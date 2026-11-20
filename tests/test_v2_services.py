@@ -479,6 +479,14 @@ class V2ServicesTests(unittest.TestCase):
         # Artists: gallery + "none" pinned first + merge + legacy lookup
         gal = self.artists.artists_gallery(include_unassigned=True, sort="latest_desc")
         self.assertEqual(gal["authors"][0]["key"], "none")
+        first_page = self.artists.artists_gallery(include_unassigned=True, limit=1, offset=0)
+        self.assertEqual(first_page["has_more"], first_page["total"] > 1)
+        last_page = self.artists.artists_gallery(
+            include_unassigned=True,
+            limit=1,
+            offset=max(0, first_page["total"] - 1),
+        )
+        self.assertFalse(last_page["has_more"])
         self.artists.add_identity(self.alice, kind="link", value="https://example.com/alice/")
         self.artists.rename_author(self.alice, "Alice Renamed")
         self.artists.set_cover(self.alice, self.items["pixiv_1"])

@@ -7586,7 +7586,8 @@
         view.authors = reset ? incoming : view.authors.concat(incoming);
         view.offset = view.authors.length;
         view.total = Number(data.total || 0);
-        view.hasMore = Boolean(data.has_more) && incoming.length > 0;
+        const hasMore = data.has_more == null ? view.offset < view.total : Boolean(data.has_more);
+        view.hasMore = hasMore && incoming.length > 0;
         view.loading = false;
         renderArtistGallery({ append: !reset });
         $('load-more').hidden = !view.hasMore;
