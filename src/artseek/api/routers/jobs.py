@@ -7,9 +7,17 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ...core.scope import ImageScope
 from ...image_io import canonical_path
+from ...services.common import attach_provenance, gallery_result, resolve_folder_keys_from_db
 from ..deps import AppContainer, get_container
-from ..schemas import IndexAddRequest, IndexRemoveRequest
+from ..schemas import (
+    IndexAddRequest,
+    IndexRemoveRequest,
+    RetagJobRequest,
+    SingleRetagRequest,
+    VisionTaskRequest,
+)
 from .provenance import drain_provenance_refresh
 
 router = APIRouter()
@@ -108,6 +116,11 @@ def list_jobs(c: AppContainer = Depends(get_container)) -> dict[str, Any]:
     return {"jobs": c.jobs_repo.list_recent(limit=20)}
 
 
+@router.get("/api/jobs/task-stats")
+def task_stats(c: AppContainer = Depends(get_container)) -> dict[str, Any]:
+    return {"counts": c.job_manager.task_summary()}
+
+
 @router.get("/api/jobs/{job_id}")
 def get_job(job_id: str, c: AppContainer = Depends(get_container)) -> dict[str, Any]:
     row = c.jobs_repo.get(job_id)
@@ -129,3 +142,86 @@ def resume_jobs(c: AppContainer = Depends(get_container)) -> dict[str, Any]:
 @router.post("/api/jobs/stop")
 def stop_jobs(c: AppContainer = Depends(get_container)) -> dict[str, Any]:
     return {"stopped": c.job_manager.stop()}
+
+
+def _scope_rows_for_folders(
+    c: AppContainer,
+    folder_keys: list[str] | None,
+) -> list[int] | None:
+    if folder_keys is None:
+        return None
+    resolved = resolve_folder_keys_from_db(c.images, folder_keys)
+    arr = c.resolver.rows(ImageScope(folders=tuple(resolved), folder_recursive=False))
+    return arr.tolist() if arr is not None else None
+
+
+@router.post("/api/jobs/retag")
+def submit_retag_job(
+    request: RetagJobRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    if c.index_job.running:
+        raise HTTPException(409, "正在索引图片，请稍后再安排标签任务")
+    scope_rows = _scope_rows_for_folders(c, request.folder_keys)
+    try:
+        job_id = c.job_manager.submit_retag_job(
+            backend=request.backend,
+            scope_row_ids=scope_rows,
+            skip_completed=request.skip_completed,
+            limit=request.limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"job_id": job_id, "job": c.jobs_repo.get(job_id)}
+
+
+@router.post("/api/jobs/vision-enrich")
+def submit_vision_enrich_job(
+    request: VisionTaskRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    if c.index_job.running:
+        raise HTTPException(409, "正在索引图片，请稍后再安排视觉属性任务")
+    scope_rows = _scope_rows_for_folders(c, request.folder_keys)
+    job_id = c.job_manager.submit_vision_enrich_job(
+        scope_row_ids=scope_rows,
+        skip_completed=request.skip_completed,
+        limit=request.limit,
+    )
+    return {"job_id": job_id, "job": c.jobs_repo.get(job_id)}
+
+
+@router.post("/api/jobs/ccip")
+def submit_ccip_job(
+    request: VisionTaskRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    if c.index_job.running:
+        raise HTTPException(409, "正在索引图片，请稍后再安排角色特征任务")
+    scope_rows = _scope_rows_for_folders(c, request.folder_keys)
+    job_id = c.job_manager.submit_ccip_job(
+        scope_row_ids=scope_rows,
+        skip_completed=request.skip_completed,
+        limit=request.limit,
+    )
+    return {"job_id": job_id, "job": c.jobs_repo.get(job_id)}
+
+
+@router.post("/api/images/{point_id}/retag")
+def retag_single_image(
+    point_id: str,
+    request: SingleRetagRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    if c.index_job.running:
+        raise HTTPException(409, "正在索引图片，请稍后再重标标签")
+    try:
+        payload = c.job_manager.retag_single_image(point_id, backend=request.backend)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    items = attach_provenance(c.prov_repo, [gallery_result(point_id, payload)])
+    return {"image": items[0]}

@@ -332,6 +332,13 @@ class ProvenanceAppService:
         self._notify_author_change()
         return self._format_provenance_payload(point_id, payload, path)
 
+    def set_url_ignored(self, point_id: str, *, ignored: bool = True) -> dict[str, Any]:
+        payload, path = self._resolve_item(point_id)
+        self.ensure_record(point_id, payload, path)
+        self.prov.set_url_ignored(point_id, ignored=ignored)
+        self._notify_author_change()
+        return self._format_provenance_payload(point_id, payload, path)
+
     # ---------------------------------------------------------------- batch jobs
     def run_scan(
         self,

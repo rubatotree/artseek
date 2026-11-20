@@ -15,6 +15,7 @@ from ..schemas import (
     ProvenanceManualRequest,
     ProvenanceScanRequest,
     ProvenanceUrlRequest,
+    UrlIgnoredRequest,
 )
 
 router = APIRouter()
@@ -380,3 +381,12 @@ def resolve_image_provenance(
     c: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
     return c.provenance.resolve_url(point_id, request.url)
+
+
+@router.post("/api/images/{point_id}/provenance/ignore-url")
+def ignore_image_provenance_url(
+    point_id: str,
+    request: UrlIgnoredRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.provenance.set_url_ignored(point_id, ignored=request.ignored)

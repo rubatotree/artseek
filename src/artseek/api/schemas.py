@@ -103,6 +103,10 @@ class TextSearchRequest(BaseModel):
     text_tags: list[str] = Field(default_factory=list)
     tag_text: list[str] = Field(default_factory=list)
     image_tags: list[str] = Field(default_factory=list)
+    media_types: list[str] = Field(default_factory=list)
+    ratings: list[str] = Field(default_factory=list)
+    monochrome: bool | None = None
+    exclude_ai: bool | None = None
 
 
 class RandomBrowseRequest(BaseModel):
@@ -466,3 +470,39 @@ class ProvenanceManualRequest(BaseModel):
     tags: list[str] | None = None
     manual_tags: list[str] | None = None
     clear_manual: bool = False
+
+
+class RetagJobRequest(BaseModel):
+    backend: str | None = None
+    folder_keys: list[str] | None = None
+    skip_completed: bool = True
+    limit: int | None = Field(default=None, ge=1, le=200_000)
+
+
+class VisionTaskRequest(BaseModel):
+    folder_keys: list[str] | None = None
+    skip_completed: bool = True
+    limit: int | None = Field(default=None, ge=1, le=200_000)
+
+
+class SingleRetagRequest(BaseModel):
+    backend: str | None = None
+
+
+class UrlIgnoredRequest(BaseModel):
+    ignored: bool = True
+
+
+class CharacterSearchRequest(BaseModel):
+    reference_id: str | None = None
+    bbox: list[float] | None = None
+    folder_keys: list[str] | None = None
+    mtime_after: str | None = None
+    mtime_before: str | None = None
+    media_types: list[str] = Field(default_factory=list)
+    ratings: list[str] = Field(default_factory=list)
+    monochrome: bool | None = None
+    exclude_ai: bool | None = None
+    dedupe: bool = False
+    limit: int = Field(default=40, ge=1, le=200)
+    offset: int = Field(default=0, ge=0, le=4000)

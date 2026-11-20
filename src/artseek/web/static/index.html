@@ -2084,6 +2084,34 @@
             </label>
             <div id="filter-text-suggestions" class="filter-suggestions" hidden></div>
           </div>
+          <div class="filter-field-wrap">
+            <label class="filter-field"><span>视觉属性</span>
+              <div class="filter-control" style="gap:8px;flex-wrap:wrap;">
+                <select id="filter-media-type" aria-label="媒介筛选">
+                  <option value="">全部媒介</option>
+                  <option value="illustration">插画</option>
+                  <option value="comic">漫画</option>
+                  <option value="bangumi">动画截图</option>
+                  <option value="3d">3D</option>
+                </select>
+                <select id="filter-rating" aria-label="分级筛选">
+                  <option value="">全部分级</option>
+                  <option value="safe">全年龄</option>
+                  <option value="r15">R15</option>
+                  <option value="r18">R18</option>
+                </select>
+                <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;">
+                  <input id="filter-monochrome" type="checkbox"> 黑白/线稿
+                </label>
+                <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;">
+                  <input id="filter-exclude-ai" type="checkbox"> 排除 AI
+                </label>
+                <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;">
+                  <input id="filter-aesthetic-sort" type="checkbox"> 按美学排序
+                </label>
+              </div>
+            </label>
+          </div>
         </div>
         </form>
       </section>
@@ -3100,8 +3128,12 @@
           ${sourceTags ? `<div class="provenance-row"><span>来源标签</span><div class="provenance-tags">${sourceTags}</div></div>` : ''}
           ${manualTags ? `<div class="provenance-row"><span>手动标签</span><div class="provenance-tags">${manualTags}</div></div>` : ''}
           ${autoTags ? `<div class="provenance-row"><span>自动标签</span><div class="provenance-tags">${autoTags}</div></div>` : ''}
+          ${renderVisionBadgesHTML(state.current)}
           <div class="provenance-actions">
             <button type="button" data-prov-action="refresh">重新抓取</button>
+            <button type="button" data-prov-action="retag">重标标签</button>
+            <button type="button" data-prov-action="same-character">搜同角色</button>
+            <button type="button" data-prov-action="ignore-url">无需来源</button>
             ${author && author.key ? `<button type="button" data-prov-action="set-cover" ${author.cover_point_id === currentImageId() ? 'disabled' : ''}>${author.cover_point_id === currentImageId() ? '当前画师代表图' : '设为画师代表图'}</button>` : ''}
             ${postButton}
             <button type="button" data-prov-action="saucenao">SauceNAO</button>
@@ -3146,6 +3178,45 @@
         else loadProvenanceTagAliases(link, tag);
       });
       body.querySelector('[data-prov-action="refresh"]')?.addEventListener('click', () => resolveProvenanceUrl(url, { silent: true }));
+      body.querySelector('[data-prov-action="retag"]')?.addEventListener('click', async () => {
+        const pointId = currentImageId();
+        if (!pointId) return;
+        try {
+          const res = await parseResponse(await fetch(`/api/images/${encodeURIComponent(pointId)}/retag`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          }));
+          if (res && res.image && state.current && state.current.id === pointId) {
+            Object.assign(state.current, res.image);
+          }
+          if (currentImageId() === pointId) await loadProvenance(pointId);
+        } catch (error) {
+          if (currentImageId() === pointId) {
+            $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">重标标签失败：${escapeHtml(error.message)}</p>`);
+          }
+        }
+      });
+      body.querySelector('[data-prov-action="same-character"]')?.addEventListener('click', () => {
+        const pointId = currentImageId();
+        if (pointId) void runCharacterSearch(pointId);
+      });
+      body.querySelector('[data-prov-action="ignore-url"]')?.addEventListener('click', async () => {
+        const pointId = currentImageId();
+        if (!pointId) return;
+        try {
+          const updated = await parseResponse(await fetch(`/api/images/${encodeURIComponent(pointId)}/provenance/ignore-url`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ignored: true }),
+          }));
+          if (currentImageId() === pointId) applyProvenanceData(pointId, updated);
+        } catch (error) {
+          if (currentImageId() === pointId) {
+            $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">标记失败：${escapeHtml(error.message)}</p>`);
+          }
+        }
+      });
       body.querySelector('[data-prov-action="set-cover"]')?.addEventListener('click', async () => {
         const pointId = currentImageId();
         if (!pointId || !author || !author.key) return;
@@ -3411,9 +3482,76 @@
       try { return new Date(Number(seconds) * 1000).toLocaleString(); }
       catch (_) { return ''; }
     }
-    function renderProvenanceDialog(data) {
+    function renderVisionBadgesHTML(item) {
+      if (!item) return '';
+      const badges = [];
+      const mediaNames = {
+        illustration: '插画',
+        comic: '漫画',
+        bangumi: '动画截图',
+        '3d': '3D',
+        not_painting: '非绘',
+      };
+      if (item.media_type) badges.push(mediaNames[item.media_type] || item.media_type);
+      if (item.rating) badges.push(String(item.rating).toUpperCase());
+      if (item.is_monochrome) badges.push('黑白/线稿');
+      if (item.is_ai === true || item.is_ai === 1) badges.push('AI生成');
+      else if (item.is_ai === false || item.is_ai === 0) badges.push('手绘');
+      if (Number.isFinite(item.aesthetic_score)) {
+        badges.push(`美学 ${Math.round(Number(item.aesthetic_score) * 100)}%`);
+      }
+      if (!badges.length) return '';
+      const markup = badges.map((b) => `<span class="provenance-tag">${escapeHtml(b)}</span>`).join('');
+      return `<div class="provenance-row"><span>视觉属性</span><div class="provenance-tags">${markup}</div></div>`;
+    }
+    async function runCharacterSearch(pointId) {
+      if (!pointId) return;
+      if ($('viewer')?.open) dismissViewer();
+      window.scrollTo({ top: 0, behavior: 'auto' });
+      const advanced = readAdvancedFilters();
+      const timeRange = currentTimeRange();
+      const seq = ++state.searchSeq;
+      state.mode = 'search';
+      state.hasMore = false;
+      $('panel').classList.add('loading');
+      $('query-info').textContent = '正在按 CCIP 检索跨服装同角色作品……';
+      try {
+        const data = await parseResponse(await fetch('/api/search/character', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            reference_id: pointId,
+            folder_keys: [...treeState.selected],
+            mtime_after: timeRange.after || null,
+            mtime_before: timeRange.before || null,
+            media_types: advanced.media_types || [],
+            ratings: advanced.ratings || [],
+            monochrome: advanced.monochrome,
+            exclude_ai: advanced.exclude_ai,
+            dedupe: $('dedupe')?.checked || false,
+            limit: Number($('limit')?.value || 40),
+            offset: 0,
+          }),
+        }));
+        if (seq !== state.searchSeq) return;
+        state.results = data.results || [];
+        state.hasMore = Boolean(data.has_more);
+        renderGallery(state.results, { append: false });
+        $('load-more').hidden = !state.hasMore;
+        $('query-info').textContent = `同角色检索完成：找到 ${Number(data.total || state.results.length)} 张相关作品`;
+      } catch (error) {
+        if (seq === state.searchSeq) $('query-info').textContent = `同角色检索失败：${error.message}`;
+      } finally {
+        if (seq === state.searchSeq) $('panel').classList.remove('loading');
+      }
+    }
+    function renderProvenanceDialog(data, taskData = null, jobsData = null) {
       const body = $('provenance-dialog-body');
       const job = data.job || {};
+      const counts = (taskData && taskData.counts) || {};
+      const jobs = (jobsData && jobsData.jobs) || [];
+      const activeBgJob = jobs.find((j) => ['retag', 'vision_enrich', 'ccip'].includes(j.kind) && ['queued', 'running', 'paused'].includes(j.status))
+        || jobs.find((j) => ['retag', 'vision_enrich', 'ccip'].includes(j.kind));
       const platforms = data.by_platform || {};
       const count = (platform) => Object.values(platforms[platform] || {}).reduce((sum, value) => sum + Number(value || 0), 0);
       const unresolved = Object.values(platforms).reduce(
@@ -3422,6 +3560,11 @@
       const done = Number(job.done || 0);
       const total = Number(job.total || 0);
       const percent = total > 0 ? Math.min(100, Math.round(done * 100 / total)) : 0;
+      const bgDone = Number(activeBgJob?.done || 0);
+      const bgTotal = Number(activeBgJob?.total || 0);
+      const bgPercent = bgTotal > 0 ? Math.min(100, Math.round(bgDone * 100 / bgTotal)) : 0;
+      const prevBackend = $('task-tag-backend')?.value || 'camie+pixai0.9';
+      const prevSkip = $('task-skip-completed') ? $('task-skip-completed').checked : true;
       const budgets = (job.budgets || []).map((budget) => {
         const used = Number(budget.used_today || 0);
         const limitText = budget.daily_limit == null ? '不限' : String(Number(budget.daily_limit));
@@ -3445,27 +3588,67 @@
           <div class="provenance-stat"><b>${unresolved.toLocaleString()}</b>未识别，需反向搜图</div>
           <div class="provenance-stat"><b>${count('pixiv').toLocaleString()}</b>Pixiv 文件</div>
           <div class="provenance-stat"><b>${count('twitter').toLocaleString()}</b>X/Twitter 文件</div>
-          <div class="provenance-stat"><b>${count('xiaohongshu').toLocaleString()}</b>小红书文件</div>
           <div class="provenance-stat"><b>${Number(data.authors || 0).toLocaleString()}</b>作者组</div>
-          <div class="provenance-stat"><b>${Number(data.with_metadata || 0).toLocaleString()}</b>已有标题/作者</div>
+          <div class="provenance-stat"><b>${Number(counts.total || 0).toLocaleString()}</b>已索引图片</div>
+          <div class="provenance-stat"><b>${Number(counts.camie_v2_done || 0).toLocaleString()} / ${Number(counts.pixai_v09_done || 0).toLocaleString()}</b>Camie / PixAI0.9 标签</div>
+          <div class="provenance-stat"><b>${Number(counts.pixai_v10_done || 0).toLocaleString()}</b>PixAI 1.0 标签</div>
+          <div class="provenance-stat"><b>${Number(counts.vision_done || 0).toLocaleString()}</b>视觉属性与人脸</div>
+          <div class="provenance-stat"><b>${Number(counts.ccip_done || 0).toLocaleString()}</b>CCIP 角色向量</div>
         </div>
         <div class="provenance-progress"><i style="width:${percent}%"></i></div>
         <div class="provenance-row"><span>${escapeHtml(job.message || '空闲')}</span></div>
         ${job.error ? `<div class="provenance-hint">错误：${escapeHtml(job.error)}</div>` : ''}
         <div class="provenance-actions">${controls.join('')}</div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:8px 0;">
+        <div class="provenance-row" style="gap:8px;flex-wrap:wrap;align-items:center;">
+          <strong>标签与视觉任务调度</strong>
+          <select id="task-tag-backend" aria-label="标签模型后端">
+            <option value="camie+pixai0.9">Camie v2 + PixAI v0.9（默认融合）</option>
+            <option value="pixai1.0">PixAI v1.0（1008px 精度补标）</option>
+            <option value="camie">仅 Camie Tagger v2</option>
+            <option value="pixai0.9">仅 PixAI v0.9</option>
+          </select>
+          <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;">
+            <input id="task-skip-completed" type="checkbox"${prevSkip ? ' checked' : ''}> 跳过已完成图片
+          </label>
+        </div>
+        <div class="provenance-actions">
+          <button type="button" data-bg-job="retag">安排自动标签任务</button>
+          <button type="button" data-bg-job="vision">提取视觉属性 & 人脸居中</button>
+          <button type="button" data-bg-job="ccip">提取 CCIP 角色向量</button>
+          ${activeBgJob && ['queued', 'running', 'paused'].includes(activeBgJob.status)
+            ? '<button type="button" data-bg-job="stop">停止后台任务</button>'
+            : ''}
+        </div>
+        ${activeBgJob ? `
+          <div class="provenance-progress"><i style="width:${bgPercent}%"></i></div>
+          <div class="provenance-row"><span>后台任务：${escapeHtml(activeBgJob.message || activeBgJob.status)}</span></div>
+          ${activeBgJob.error ? `<div class="provenance-hint">任务错误：${escapeHtml(activeBgJob.error)}</div>` : ''}
+        ` : ''}
         <div>${budgets}</div>
       `;
+      if ($('task-tag-backend')) $('task-tag-backend').value = prevBackend;
       body.querySelectorAll('[data-prov-job]').forEach((button) => {
         button.addEventListener('click', () => runProvenanceJobAction(button.dataset.provJob));
+      });
+      body.querySelectorAll('[data-bg-job]').forEach((button) => {
+        button.addEventListener('click', () => runBackgroundTaskAction(button.dataset.bgJob));
       });
     }
     async function refreshProvenanceDialog() {
       if (!$('provenance-dialog').open) return;
       try {
-        const data = await parseResponse(await fetch('/api/provenance/stats'));
-        renderProvenanceDialog(data);
+        const [data, taskData, jobsData] = await Promise.all([
+          parseResponse(await fetch('/api/provenance/stats')),
+          parseResponse(await fetch('/api/jobs/task-stats')).catch(() => ({ counts: {} })),
+          parseResponse(await fetch('/api/jobs')).catch(() => ({ jobs: [] })),
+        ]);
+        renderProvenanceDialog(data, taskData, jobsData);
         clearTimeout(state.provenancePoll);
-        if (data.job && data.job.running) {
+        const bgRunning = (jobsData.jobs || []).some(
+          (j) => ['retag', 'vision_enrich', 'ccip'].includes(j.kind) && ['queued', 'running', 'paused'].includes(j.status),
+        );
+        if ((data.job && data.job.running) || bgRunning) {
           state.provenanceIdlePolls = 3;
           state.provenancePoll = setTimeout(refreshProvenanceDialog, 1200);
         } else if (state.provenanceIdlePolls > 0) {
@@ -3509,6 +3692,29 @@
       } catch (error) {
         $('provenance-dialog-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">操作失败：${escapeHtml(error.message)}</p>`);
       }
+      await refreshProvenanceDialog();
+    }
+    async function runBackgroundTaskAction(action) {
+      const skipCompleted = $('task-skip-completed') ? $('task-skip-completed').checked : true;
+      const backend = $('task-tag-backend')?.value || 'camie+pixai0.9';
+      const folderKeys = treeState.selected.size ? [...treeState.selected] : null;
+      const spec = {
+        retag: { url: '/api/jobs/retag', body: { backend, folder_keys: folderKeys, skip_completed: skipCompleted } },
+        vision: { url: '/api/jobs/vision-enrich', body: { folder_keys: folderKeys, skip_completed: skipCompleted } },
+        ccip: { url: '/api/jobs/ccip', body: { folder_keys: folderKeys, skip_completed: skipCompleted } },
+        stop: { url: '/api/jobs/stop', body: {} },
+      }[action];
+      if (!spec) return;
+      try {
+        await parseResponse(await fetch(spec.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(spec.body),
+        }));
+      } catch (error) {
+        $('provenance-dialog-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">调度失败：${escapeHtml(error.message)}</p>`);
+      }
+      state.provenanceIdlePolls = 3;
       await refreshProvenanceDialog();
     }
     function setViewerUiHidden(hidden) {
@@ -5070,12 +5276,19 @@
       Object.keys(FILTER_CHIP_CONFIG).forEach(commitFilterInput);
     }
     function readAdvancedFilters() {
+      const mediaType = $('filter-media-type')?.value.trim() || '';
+      const rating = $('filter-rating')?.value.trim() || '';
       return {
         authors: chipValues('filter-author-chips'),
         title_query: $('filter-title').value.trim(),
         text_label: $('filter-text-label').value.trim(),
         tag_expression: state.filterTagExpression,
         text_tags: chipValues('filter-text-chips'),
+        media_types: mediaType ? [mediaType] : [],
+        ratings: rating ? [rating] : [],
+        monochrome: $('filter-monochrome')?.checked ? true : null,
+        exclude_ai: $('filter-exclude-ai')?.checked ? true : null,
+        aesthetic_sort: Boolean($('filter-aesthetic-sort')?.checked),
       };
     }
     function hasAdvancedFilters(filters = readAdvancedFilters()) {
@@ -5085,6 +5298,11 @@
         || filters.text_label
         || filters.tag_expression
         || filters.text_tags.length
+        || (filters.media_types && filters.media_types.length)
+        || (filters.ratings && filters.ratings.length)
+        || filters.monochrome !== null
+        || filters.exclude_ai !== null
+        || filters.aesthetic_sort
       );
     }
     function updateFilterBadge() {
@@ -5095,6 +5313,11 @@
         filters.text_label,
         filters.tag_expression,
         ...filters.text_tags,
+        ...(filters.media_types || []),
+        ...(filters.ratings || []),
+        filters.monochrome === true ? 'mono' : '',
+        filters.exclude_ai === true ? 'no_ai' : '',
+        filters.aesthetic_sort ? 'aesthetic' : '',
       ].filter(Boolean).length;
       const badge = $('filter-count');
       badge.textContent = String(count);
@@ -5105,6 +5328,11 @@
       $('filter-title').value = filters.title_query || '';
       $('filter-text-label').value = filters.text_label || '';
       $('filter-text-tags').value = '';
+      if ($('filter-media-type')) $('filter-media-type').value = (filters.media_types && filters.media_types[0]) || '';
+      if ($('filter-rating')) $('filter-rating').value = (filters.ratings && filters.ratings[0]) || '';
+      if ($('filter-monochrome')) $('filter-monochrome').checked = filters.monochrome === true;
+      if ($('filter-exclude-ai')) $('filter-exclude-ai').checked = filters.exclude_ai === true;
+      if ($('filter-aesthetic-sort')) $('filter-aesthetic-sort').checked = Boolean(filters.aesthetic_sort);
       state.filterTagExpression = String(filters.tag_expression || '').trim();
       Object.keys(FILTER_SUGGEST_CONFIG).forEach(updateSuggestToggle);
       Object.values(FILTER_CHIP_CONFIG).forEach((config) => $(config.chips).replaceChildren());
@@ -5114,6 +5342,12 @@
       renderTagExpressionChip();
       updateFilterBadge();
     }
+    ['filter-media-type', 'filter-rating', 'filter-monochrome', 'filter-exclude-ai', 'filter-aesthetic-sort'].forEach((id) => {
+      $(id)?.addEventListener('change', () => {
+        updateFilterBadge();
+        scheduleFilterApply();
+      });
+    });
     Object.entries(FILTER_CHIP_CONFIG).forEach(([kind, config]) => {
       $(config.input).addEventListener('keydown', (event) => {
         if (event.key !== 'Enter' && event.key !== ',' && event.key !== '，') return;
@@ -8853,6 +9087,10 @@
           text_label: frozen.text_label || '',
           tag_expression: frozen.tag_expression || '',
           text_tags: frozen.text_tags || [],
+          media_types: frozen.media_types || [],
+          ratings: frozen.ratings || [],
+          monochrome: frozen.monochrome ?? null,
+          exclude_ai: frozen.exclude_ai ?? null,
           sort: frozen.sort || state.searchSort,
           seed: frozen.seed ?? state.searchSeed,
           exclude_ids: imageResults.map((item) => item.id),
@@ -8874,7 +9112,11 @@
           text_label: advanced.text_label || '',
           tag_expression: advanced.tag_expression || '',
           text_tags: advanced.text_tags || [],
-          sort: effectiveSearchSort(),
+          media_types: advanced.media_types || [],
+          ratings: advanced.ratings || [],
+          monochrome: advanced.monochrome ?? null,
+          exclude_ai: advanced.exclude_ai ?? null,
+          sort: advanced.aesthetic_sort ? 'aesthetic_desc' : effectiveSearchSort(),
           seed: effectiveSearchSort() === 'random' ? state.searchSeed : null,
           exclude_ids: reset ? [] : imageResults.map((item) => item.id),
           snapshot_id: keepSnapshot && !reset ? (state.searchSnapshotId || '') : '',
@@ -8919,6 +9161,10 @@
           form.append('text_tags', JSON.stringify(common.text_tags || []));
           form.append('text_label', common.text_label || '');
           form.append('tag_expression', common.tag_expression || '');
+          form.append('media_types', JSON.stringify(common.media_types || []));
+          form.append('ratings', JSON.stringify(common.ratings || []));
+          if (common.monochrome !== null) form.append('monochrome', String(common.monochrome));
+          if (common.exclude_ai !== null) form.append('exclude_ai', String(common.exclude_ai));
           form.append('sort', common.sort || state.searchSort);
           if (common.seed != null) form.append('seed', String(common.seed));
           form.append('references', JSON.stringify(libraryRefs));
@@ -8939,6 +9185,10 @@
                     folder_keys: common.folder_keys,
                     mtime_after: common.mtime_after,
                     mtime_before: common.mtime_before,
+                    media_types: common.media_types || [],
+                    ratings: common.ratings || [],
+                    monochrome: common.monochrome ?? null,
+                    exclude_ai: common.exclude_ai ?? null,
                     sort: common.sort,
                     seed: common.seed,
                   }
@@ -9182,8 +9432,18 @@
         </div>
       </article>`;
     }
+    function focalObjectPositionStyle(item) {
+      if (!item) return '';
+      const fx = Number(item.focal_x);
+      const fy = Number(item.focal_y);
+      if (!Number.isFinite(fx) || !Number.isFinite(fy)) return '';
+      const x = Math.max(0, Math.min(100, fx * 100)).toFixed(1);
+      const y = Math.max(0, Math.min(100, fy * 100)).toFixed(1);
+      return ` style="object-position:${x}% ${y}%"`;
+    }
     function cardHTML(item, index) {
       if (item.kind === 'artist') return artistCollectionCardHTML(item, index);
+      const thumbFocalStyle = focalObjectPositionStyle(item);
       const view = state.galleryView;
       const listMode = view === 'list';
       const inCollection = state.mode === 'collection';
@@ -9255,7 +9515,7 @@
         }
         const meta = metaParts.join('<span class="list-sep">·</span>');
         return `<article class="card card-list" data-index="${index}" data-point-id="${escapeHtml(item.id)}"${cardAccess}>
-          <div class="image-wrap"${imageAccess}${galleryDrag}>${orderHandle}<img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false"></div>
+          <div class="image-wrap"${imageAccess}${galleryDrag}>${orderHandle}<img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}"${thumbFocalStyle} draggable="false"></div>
           <div class="list-body">
             <div class="list-title" title="${escapeHtml(title)}">${titleHtml}</div>
             <div class="list-sub">
@@ -9269,7 +9529,7 @@
       }
       const hits = hitsText ? `<div class="card-hits">命中：${hitsText}</div>` : '';
       return `<article class="card" data-index="${index}" data-point-id="${escapeHtml(item.id)}"${cardAccess}>
-          <div class="image-wrap"${ratio}${imageAccess}${galleryDrag}>${orderHandle}<img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">${score}${cardOverlay}${hits}${removeAction}${favoriteAction}</div>
+          <div class="image-wrap"${ratio}${imageAccess}${galleryDrag}>${orderHandle}<img src="/thumb/${item.id}" loading="lazy" alt="${escapeHtml(item.name)}"${thumbFocalStyle} draggable="false">${score}${cardOverlay}${hits}${removeAction}${favoriteAction}</div>
         </article>`;
     }
     function renderGallery(results, { append } = { append: false }) {

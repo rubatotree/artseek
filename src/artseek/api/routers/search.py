@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from ..deps import AppContainer, get_container
 from ..schemas import (
+    CharacterSearchRequest,
     TextSearchRequest,
     parse_folder_keys,
     parse_id_list,
@@ -54,6 +55,10 @@ def search(
         text_tags=request.text_tags,
         tag_text=request.tag_text,
         image_tags=request.image_tags,
+        media_types=request.media_types,
+        ratings=request.ratings,
+        monochrome=request.monochrome,
+        exclude_ai=request.exclude_ai,
     )
 
 
@@ -81,8 +86,35 @@ def local_search(
         folder_keys=request.folder_keys,
         mtime_after=request.mtime_after,
         mtime_before=request.mtime_before,
+        media_types=request.media_types,
+        ratings=request.ratings,
+        monochrome=request.monochrome,
+        exclude_ai=request.exclude_ai,
         sort=request.sort,
         seed=request.seed,
+    )
+
+
+@router.post("/api/search/character")
+def search_by_character(
+    request: CharacterSearchRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    if c.index_job.running:
+        raise HTTPException(409, "正在索引图片，请稍后再检索")
+    return c.search.search_by_character(
+        reference_id=request.reference_id,
+        bbox=request.bbox,
+        folder_keys=request.folder_keys,
+        mtime_after=request.mtime_after,
+        mtime_before=request.mtime_before,
+        media_types=request.media_types,
+        ratings=request.ratings,
+        monochrome=request.monochrome,
+        exclude_ai=request.exclude_ai,
+        dedupe=request.dedupe,
+        limit=request.limit,
+        offset=request.offset,
     )
 
 
@@ -114,6 +146,10 @@ async def search_upload(
     text_tags: str = Form(default="[]"),
     tag_text: str = Form(default="[]"),
     image_tags: str = Form(default="[]"),
+    media_types: str = Form(default="[]"),
+    ratings: str = Form(default="[]"),
+    monochrome: bool | None = Form(default=None),
+    exclude_ai: bool | None = Form(default=None),
     c: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
     if c.index_job.running:
@@ -137,12 +173,16 @@ async def search_upload(
             extra_text_tags = json.loads(text_tags or "[]")
             extra_tag_text = json.loads(tag_text or "[]")
             extra_image_tags = json.loads(image_tags or "[]")
+            extra_media_types = json.loads(media_types or "[]")
+            extra_ratings = json.loads(ratings or "[]")
         except json.JSONDecodeError as exc:
             raise HTTPException(400, "标签筛选参数不合法") from exc
         if (
             not isinstance(extra_text_tags, list)
             or not isinstance(extra_tag_text, list)
             or not isinstance(extra_image_tags, list)
+            or not isinstance(extra_media_types, list)
+            or not isinstance(extra_ratings, list)
         ):
             raise HTTPException(400, "标签筛选参数不合法")
         return c.search.search(
@@ -172,6 +212,10 @@ async def search_upload(
             text_tags=[str(t) for t in extra_text_tags if str(t).strip()],
             tag_text=[str(t) for t in extra_tag_text if str(t).strip()],
             image_tags=[str(t) for t in extra_image_tags if str(t).strip()],
+            media_types=[str(m) for m in extra_media_types if str(m or "").strip()],
+            ratings=[str(r) for r in extra_ratings if str(r or "").strip()],
+            monochrome=monochrome,
+            exclude_ai=exclude_ai,
             had_file_refs=bool(files),
         )
     finally:
