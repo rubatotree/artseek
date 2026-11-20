@@ -172,6 +172,44 @@ class TestVisionAttributesAndCCIP(unittest.TestCase):
             self.assertIn("rating:safe", u["attr_tags"])
             self.assertIn("hand_drawn", u["attr_tags"])
             self.assertIn("polished", u["attr_tags"])
+            self.assertGreater(u["aesthetic_score"], 0.80)
+
+    def test_vision_classifiers_skip_double_softmax_when_already_normalized(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            onnx_p = root / "model.onnx"
+            onnx_p.write_bytes(b"fake")
+            meta_p = root / "meta.json"
+            meta_p.write_text(
+                json.dumps({"labels": ["polished", "rough", "monochrome"]}),
+                encoding="utf-8",
+            )
+            from artseek.ml.vision_attributes import _OnnxImageClassifier
+
+            sess = _FakeORTSession(
+                lambda arr: np.repeat(
+                    np.array([[0.95, 0.04, 0.01]], dtype=np.float32),
+                    arr.shape[0],
+                    axis=0,
+                )
+            )
+            with (
+                patch(
+                    "artseek.ml.vision_attributes._cached_or_download",
+                    side_effect=lambda r, f: meta_p if f.endswith(".json") else onnx_p,
+                ),
+                patch("artseek.ml.vision_attributes.create_ort_session", return_value=sess),
+            ):
+                clf = _OnnxImageClassifier(
+                    torch.device("cpu"),
+                    "deepghs/anime_completeness",
+                    "model.onnx",
+                    "meta.json",
+                    ("polished", "rough", "monochrome"),
+                    224,
+                )
+                probs = clf.predict_probs([Image.new("RGB", (64, 64))])[0]
+            self.assertAlmostEqual(probs["polished"], 0.95, places=3)
 
     def test_head_detector_handles_transposed_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

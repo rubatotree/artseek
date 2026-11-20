@@ -43,16 +43,22 @@ class _FakePixAISession:
     def __init__(self, logits_rows: np.ndarray) -> None:
         self._logits = logits_rows
         self.last_input_shape: tuple[int, ...] | None = None
+        self.last_outputs: list[str] | None = None
 
     def get_inputs(self) -> list[_FakeORTTensor]:
         return [_FakeORTTensor("input")]
 
     def get_outputs(self) -> list[_FakeORTTensor]:
-        return [_FakeORTTensor("output")]
+        return [
+            _FakeORTTensor("embedding"),
+            _FakeORTTensor("logits"),
+            _FakeORTTensor("prediction"),
+        ]
 
-    def run(self, _outputs: list[str], feed: dict[str, np.ndarray]) -> list[np.ndarray]:
+    def run(self, outputs: list[str], feed: dict[str, np.ndarray]) -> list[np.ndarray]:
         arr = feed["input"]
         self.last_input_shape = tuple(arr.shape)
+        self.last_outputs = list(outputs)
         return [self._logits[: arr.shape[0]]]
 
 
@@ -390,6 +396,7 @@ class TestTagPostprocessingAndFusion(unittest.TestCase):
                 preds = tagger.predict([img])
 
             self.assertEqual(fake_session.last_input_shape, (1, 3, 448, 448))
+            self.assertEqual(fake_session.last_outputs, ["prediction"])
             self.assertEqual(len(preds), 1)
             pred = preds[0]
             self.assertIn("furina_(genshin_impact)", pred.tags)

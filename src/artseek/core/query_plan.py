@@ -196,6 +196,8 @@ ILLUSTRATION_LEXICON: dict[str, tuple[str, ...]] = {
     "动画截图": ("medium:bangumi",),
     "番剧截图": ("medium:bangumi",),
     "3d渲染": ("medium:3d",),
+    "实拍": ("medium:not_painting",),
+    "照片": ("medium:not_painting",),
     "全年龄": ("rating:safe",),
     "r15": ("rating:r15",),
     "r18": ("rating:r18",),

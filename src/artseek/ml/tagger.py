@@ -576,7 +576,12 @@ class PixAITaggerV09:
 
         self.session = create_ort_session(model_path, self.device)
         self._input_name = self.session.get_inputs()[0].name
-        self._output_name = self.session.get_outputs()[0].name
+        outputs = self.session.get_outputs()
+        out_names = {o.name for o in outputs}
+        self._output_name = next(
+            (name for name in ("prediction", "probs", "logits") if name in out_names),
+            outputs[-1].name,
+        )
         self.names, self.categories, self.char_ips = self._load_tags(tags_path)
 
     @staticmethod

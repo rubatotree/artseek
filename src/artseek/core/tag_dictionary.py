@@ -93,6 +93,11 @@ _TAG_ENTRIES: tuple[TagEntry, ...] = (
         ("动画截图", "番剧截图", "动画", "bangumi", "anime screenshot", "medium:bangumi"),
     ),
     TagEntry("medium:3d", "3D渲染", ("3d", "3D", "mmd", "blender", "medium:3d")),
+    TagEntry(
+        "medium:not_painting",
+        "实拍/非绘画",
+        ("照片", "实拍", "非绘画", "摄影", "photo", "not_painting", "medium:not_painting"),
+    ),
     TagEntry("rating:safe", "全年龄", ("全年龄", "清水", "一般向", "safe", "rating:safe")),
     TagEntry("rating:r15", "R15", ("r15", "R15", "擦边", "sensitive", "rating:r15")),
     TagEntry("rating:r18", "R18", ("r18", "R18", "nsfw", "explicit", "rating:r18")),

@@ -321,8 +321,17 @@ class _OnnxImageClassifier:
         if not images or self.session is None:
             return []
         batch = self._preprocess_batch(images)
-        logits = self.session.run([self._output_name], {self._input_name: batch})[0]
-        probs = _softmax(np.asarray(logits, dtype=np.float32))
+        raw = np.asarray(
+            self.session.run([self._output_name], {self._input_name: batch})[0],
+            dtype=np.float32,
+        )
+        row_sums = np.sum(raw, axis=-1)
+        already_probs = (
+            float(np.min(raw)) >= -1e-5
+            and float(np.max(raw)) <= 1.0 + 1e-5
+            and bool(np.all(np.abs(row_sums - 1.0) <= 1e-2))
+        )
+        probs = raw if already_probs else _softmax(raw)
         out: list[dict[str, float]] = []
         for row in probs:
             out.append(
