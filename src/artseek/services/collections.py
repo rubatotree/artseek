@@ -19,7 +19,7 @@ from ..collections import (
 from ..db.repos.collections import CollectionRepo
 from ..db.repos.images import ImageRepo
 from ..db.repos.provenance import ProvenanceRepo
-from .common import ServiceError, attach_provenance, gallery_result, normalize_ratings
+from .common import ServiceError, attach_provenance, gallery_result, normalize_ratings, rating_matches
 
 _MAX_ORDERED_COLLECTION_IDS = 10_240
 
@@ -330,9 +330,8 @@ class CollectionService:
                     "",
                 )
                 cover_payload = cover_payloads.get(cover_id) if cover_id else None
-                if cover_payload is not None and allowed_ratings and (
-                    str(cover_payload.get("rating") or "").strip().casefold()
-                    not in allowed_ratings
+                if cover_payload is not None and not rating_matches(
+                    cover_payload.get("rating"), allowed_ratings
                 ):
                     cover_id = ""
                     cover_payload = None
@@ -359,9 +358,8 @@ class CollectionService:
                     continue
                 if allowed_image_ids is not None and item_id not in allowed_image_ids:
                     continue
-                if allowed_ratings and (
-                    str(payload.get("rating") or "").strip().casefold()
-                    not in allowed_ratings
+                if allowed_ratings and not rating_matches(
+                    payload.get("rating"), allowed_ratings
                 ):
                     continue
                 if needle:
@@ -484,9 +482,7 @@ class CollectionService:
                 continue
             if allowed_ids is not None and pid not in allowed_ids:
                 continue
-            if clean_ratings and (
-                str(payload.get("rating") or "").strip().casefold() not in clean_ratings
-            ):
+            if clean_ratings and not rating_matches(payload.get("rating"), clean_ratings):
                 continue
             if needle:
                 tags = payload.get("tags") or []

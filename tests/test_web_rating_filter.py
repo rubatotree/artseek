@@ -121,6 +121,40 @@ class RatingFilterApiTests(unittest.TestCase):
         self.assertEqual(up_to_r15.status_code, 200)
         self.assertEqual(self._ids(up_to_r15.json()), {"safe-id", "r15-id"})
 
+    def test_unrated_bucket_folds_r18_and_untagged(self) -> None:
+        base = {"folder_keys": [self.folder_key]}
+        unrated_only = self.client.post(
+            "/api/scope-images", json={**base, "ratings": ["unrated"]}
+        )
+        self.assertEqual(unrated_only.status_code, 200)
+        self.assertEqual(self._ids(unrated_only.json()), {"unrated-id"})
+        self.assertEqual(unrated_only.json()["total"], 1)
+
+        r18_bucket = self.client.post(
+            "/api/scope-images", json={**base, "ratings": ["r18", "unrated"]}
+        )
+        self.assertEqual(r18_bucket.status_code, 200)
+        self.assertEqual(self._ids(r18_bucket.json()), {"unrated-id"})
+
+        up_to_r15 = self.client.post(
+            "/api/scope-images", json={**base, "ratings": ["safe", "r15", "r18", "unrated"]}
+        )
+        self.assertEqual(up_to_r15.status_code, 200)
+        self.assertEqual(self._ids(up_to_r15.json()), {"safe-id", "r15-id", "unrated-id"})
+
+        collection = self.client.post("/api/collections", json={"name": "未标注兜底"})
+        collection_id = collection.json()["collection"]["id"]
+        for image_id in ("safe-id", "r15-id", "unrated-id"):
+            self.client.post(
+                f"/api/collections/{collection_id}/items", json={"image_id": image_id}
+            )
+        collection_unrated = self.client.get(
+            f"/api/collections/{collection_id}/images",
+            params=[("ratings", "unrated")],
+        )
+        self.assertEqual(collection_unrated.status_code, 200)
+        self.assertEqual(self._ids(collection_unrated.json()), {"unrated-id"})
+
     def test_folder_random_collection_and_get_scope_paths(self) -> None:
         folder = self.client.get(
             "/api/folder-images",

@@ -36,8 +36,12 @@ _UNASSIGNED_TOKENS = frozenset(
 )
 
 
+# Pseudo rating value used by the browser to fold "R18" and "not yet tagged" into one bucket.
+UNRATED_RATING = "unrated"
+
+
 def normalize_ratings(ratings: Sequence[str] | None) -> tuple[str, ...]:
-    """Canonicalize a browser rating gate into scope values (`safe`, `r15`, `r18`)."""
+    """Canonicalize a browser rating gate into scope values (`safe`, `r15`, `r18`, `unrated`)."""
     return tuple(
         dict.fromkeys(
             str(value).strip().casefold()
@@ -45,6 +49,17 @@ def normalize_ratings(ratings: Sequence[str] | None) -> tuple[str, ...]:
             if str(value).strip()
         )
     )
+
+
+def rating_matches(rating: object, allowed: Sequence[str] | set[str]) -> bool:
+    """Truthfully answer "does this payload rating fall inside the allowed rating gate?"."""
+    clean = {str(value).strip().casefold() for value in (allowed or ()) if str(value).strip()}
+    if not clean:
+        return True
+    value = str(rating or "").strip().casefold()
+    if not value:
+        return UNRATED_RATING in clean
+    return value in clean
 
 
 class ServiceError(Exception):

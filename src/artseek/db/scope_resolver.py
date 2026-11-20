@@ -238,9 +238,18 @@ class ScopeResolver:
                 params.append(json.dumps(clean_media))
         if scope.ratings:
             clean_rat = [str(r).strip().casefold() for r in scope.ratings if str(r).strip()]
-            if clean_rat:
+            include_unrated = "unrated" in clean_rat
+            tagged = [value for value in clean_rat if value != "unrated"]
+            if tagged and include_unrated:
+                where.append(
+                    "(i.rating IN (SELECT value FROM json_each(?)) OR i.rating IS NULL)"
+                )
+                params.append(json.dumps(tagged))
+            elif tagged:
                 where.append("i.rating IN (SELECT value FROM json_each(?))")
-                params.append(json.dumps(clean_rat))
+                params.append(json.dumps(tagged))
+            elif include_unrated:
+                where.append("i.rating IS NULL")
         if scope.monochrome is True:
             where.append("i.is_monochrome = 1")
         elif scope.monochrome is False:

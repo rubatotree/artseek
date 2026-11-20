@@ -152,6 +152,13 @@
       display: grid; gap: 10px; padding-top: 8px;
       border-top: 1px solid var(--line);
     }
+    .rating-gate-block {
+      display: grid; gap: 6px; padding-top: 8px;
+      border-top: 1px solid var(--line);
+    }
+    .rating-gate-field { justify-content: space-between; }
+    .rating-gate-field > span { color: var(--ink); font-weight: 650; }
+    .rating-gate-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
     .storage-block .storage-title { color: var(--ink); font-weight: 650; }
     .storage-field { display: grid; gap: 4px; }
     .storage-path-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; }
@@ -580,6 +587,9 @@
       border-radius: 7px; color: var(--ink); font-size: 12px; white-space: nowrap; cursor: pointer;
     }
     .rating-filter-options label:hover { background: var(--rose-soft); }
+    .rating-filter-options label.is-disabled { opacity: .42; cursor: default; }
+    .rating-filter-options label.is-disabled:hover { background: transparent; }
+    .rating-filter-options label.is-disabled input { cursor: default; }
     .rating-filter-options input { width: 14px; height: 14px; accent-color: #b85f7e; cursor: pointer; }
     body.mobile-search-open .results-head {
       position: sticky; top: var(--search-panel-bottom, 76px); z-index: 25;
@@ -2105,6 +2115,17 @@
             <p id="model-hint" class="model-hint"></p>
             <label title="0 表示保持载入，直到手动卸载">自动卸载 <input id="auto-unload" type="number" min="0" max="1440" step="1" value="10"> 分钟</label>
           </div>
+          <div class="rating-gate-block">
+            <label class="rating-gate-field" for="rating-gate">
+              <span>显示类型</span>
+              <select id="rating-gate" class="artseek-select" aria-label="图库显示的分级上限" title="全部：显示所有图片；R15：只显示全年龄与 R15；全年龄：只显示标签为全年龄的图片">
+                <option value="all" selected>全部</option>
+                <option value="r15">R15</option>
+                <option value="safe">全年龄</option>
+              </select>
+            </label>
+            <p class="rating-gate-hint" id="rating-gate-hint">全部显示所有图片；R15 只显示全年龄与 R15；全年龄只显示标签为全年龄的图片。</p>
+          </div>
           <div class="storage-block">
             <div class="storage-title">存储位置</div>
             <div class="storage-field">
@@ -2220,11 +2241,11 @@
                   <option value="not_painting">实拍/非绘画</option>
                 </select>
                 <details id="rating-filter" class="rating-filter">
-                  <summary id="rating-filter-summary" aria-label="分级筛选" title="勾选要显示的分级；未勾选「全部」时会隐藏未标注分级与 R18 图片">全部</summary>
-                  <div class="rating-filter-options" role="group" aria-label="分级筛选">
-                    <label><input id="rating-filter-all" type="checkbox" checked> 全部</label>
-                    <label><input id="rating-filter-r15" type="checkbox" checked> R15</label>
+                  <summary id="rating-filter-summary" aria-label="分级筛选" title="决定本次搜索包含哪些分级；可选项受左侧「高级 → 显示类型」限制">全部</summary>
+                  <div class="rating-filter-options" role="group" aria-label="搜索分级筛选">
                     <label><input id="rating-filter-safe" type="checkbox" checked> 全年龄</label>
+                    <label><input id="rating-filter-r15" type="checkbox" checked> R15</label>
+                    <label><input id="rating-filter-r18" type="checkbox" checked> R18/未标注</label>
                   </div>
                 </details>
                 <label class="artseek-check">
@@ -2399,83 +2420,162 @@
     const CARD_ASPECT_MAX = 3;
     const GALLERY_VIEW_STORAGE_KEY = 'artseek.galleryView';
     const SIDEBAR_COLLAPSED_STORAGE_KEY = 'artseek.sidebarCollapsed';
-    const RATING_FILTER_STORAGE_KEY = 'artseek.ratingFilter';
-    const RATING_FILTER_KEYS = ['all', 'r15', 'safe'];
-    function loadRatingFilter() {
+    // Two-stage rating filtering:
+    //   #rating-gate  (left "高级" panel)  -> hard visibility ceiling for the whole library
+    //   #rating-filter-* (search panel)    -> which ratings inside that ceiling a search returns
+    const RATING_GATE_STORAGE_KEY = 'artseek.ratingGate';
+    const RATING_SCOPE_STORAGE_KEY = 'artseek.ratingScope';
+    const LEGACY_RATING_FILTER_STORAGE_KEY = 'artseek.ratingFilter';
+    const RATING_GATE_KEYS = ['all', 'r15', 'safe'];
+    const RATING_SCOPE_KEYS = ['safe', 'r15', 'r18'];
+    const RATING_SCOPE_LABELS = { safe: '全年龄', r15: 'R15', r18: 'R18/未标注' };
+    // Checkbox values that stay selectable for each display-type gate.
+    const RATING_GATE_ALLOWED_SCOPE = {
+      all: ['safe', 'r15', 'r18'],
+      r15: ['safe', 'r15'],
+      safe: ['safe'],
+    };
+    // Backend scope tokens per checkbox; "R18/未标注" folds in the untagged bucket.
+    const RATING_SCOPE_QUERY_VALUES = {
+      safe: ['safe'],
+      r15: ['r15'],
+      r18: ['r18', 'unrated'],
+    };
+    function loadRatingGate() {
       try {
-        const stored = localStorage.getItem(RATING_FILTER_STORAGE_KEY);
-        if (!stored) return new Set(RATING_FILTER_KEYS);
-        if (stored === 'safe') return new Set(['safe']);
-        if (stored === 'r15') return new Set(['safe', 'r15']);
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          const valid = parsed.filter((value) => RATING_FILTER_KEYS.includes(value));
-          if (valid.includes('all')) return new Set(RATING_FILTER_KEYS);
-          if (valid.length) return new Set(valid);
+        const stored = localStorage.getItem(RATING_GATE_STORAGE_KEY);
+        if (stored && RATING_GATE_KEYS.includes(stored)) return stored;
+        const legacy = localStorage.getItem(LEGACY_RATING_FILTER_STORAGE_KEY);
+        if (legacy != null) {
+          localStorage.removeItem(LEGACY_RATING_FILTER_STORAGE_KEY);
+          if (legacy === 'safe') return 'safe';
+          if (legacy === 'r15') return 'r15';
+          const parsed = JSON.parse(legacy);
+          if (Array.isArray(parsed)) {
+            if (parsed.includes('all')) return 'all';
+            if (parsed.includes('r15')) return 'r15';
+            if (parsed.includes('safe')) return 'safe';
+          }
         }
       } catch {
         // Storage can be unavailable or contain an older value; use the default.
       }
-      return new Set(RATING_FILTER_KEYS);
+      return 'all';
     }
-    function selectedRatingFilter() {
+    function loadRatingScope() {
+      try {
+        const stored = localStorage.getItem(RATING_SCOPE_STORAGE_KEY);
+        if (!stored) return new Set(RATING_SCOPE_KEYS);
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          const valid = parsed.filter((value) => RATING_SCOPE_KEYS.includes(value));
+          if (valid.length) return new Set(valid);
+        }
+      } catch {
+        // Fall through to the default: every rating selected.
+      }
+      return new Set(RATING_SCOPE_KEYS);
+    }
+    function selectedRatingGate() {
+      const value = $('rating-gate')?.value || '';
+      return RATING_GATE_KEYS.includes(value) ? value : 'all';
+    }
+    function allowedRatingScopeKeys() {
+      return RATING_GATE_ALLOWED_SCOPE[selectedRatingGate()] || RATING_SCOPE_KEYS;
+    }
+    function selectedRatingScope() {
       const selected = new Set();
-      for (const key of RATING_FILTER_KEYS) {
-        if ($(`rating-filter-${key}`)?.checked) selected.add(key);
+      for (const key of RATING_SCOPE_KEYS) {
+        const input = $(`rating-filter-${key}`);
+        if (input?.checked && !input.disabled) selected.add(key);
       }
       return selected;
     }
-    function persistRatingFilter(selected = selectedRatingFilter()) {
-      try {
-        if (selected.size === RATING_FILTER_KEYS.length) {
-          localStorage.removeItem(RATING_FILTER_STORAGE_KEY);
-        } else {
-          localStorage.setItem(RATING_FILTER_STORAGE_KEY, JSON.stringify([...selected]));
-        }
-      } catch {
-        // Keep the in-memory selection when storage is unavailable.
-      }
+    // Search-side selection clipped by the gate; never empty, falls back to the whole allowed set.
+    function effectiveRatingScopeKeys() {
+      const allowed = allowedRatingScopeKeys();
+      const selected = [...selectedRatingScope()].filter((key) => allowed.includes(key));
+      return selected.length ? selected : [...allowed];
     }
-    function ratingFilterValues() {
-      const selected = selectedRatingFilter();
-      if (selected.has('all')) return [];
+    function ratingQueryValues(keys) {
+      if (keys.length === RATING_SCOPE_KEYS.length) return [];
       const values = [];
-      if (selected.has('r15')) values.push('r15');
-      if (selected.has('safe')) values.push('safe');
+      for (const key of RATING_SCOPE_KEYS) {
+        if (!keys.includes(key)) continue;
+        values.push(...RATING_SCOPE_QUERY_VALUES[key]);
+      }
       return values;
     }
+    /** Ratings a search request may return (gate ∩ search checkboxes). */
+    function ratingFilterValues() {
+      return ratingQueryValues(effectiveRatingScopeKeys());
+    }
+    /** Ratings plain browsing may return — driven purely by the display-type gate. */
+    function galleryRatingValues() {
+      return ratingQueryValues(allowedRatingScopeKeys());
+    }
     function filterItemsByRating(items) {
-      const selected = selectedRatingFilter();
-      if (selected.has('all')) return items;
+      const keys = effectiveRatingScopeKeys();
+      if (keys.length === RATING_SCOPE_KEYS.length) return items;
       return items.filter((item) => {
         if (item.kind === 'artist') return true;
         const rating = String(item.rating || '').trim().toLowerCase();
-        if (rating === 'safe') return selected.has('safe');
-        if (rating === 'r15') return selected.has('r15');
-        return false;
+        if (rating === 'safe') return keys.includes('safe');
+        if (rating === 'r15') return keys.includes('r15');
+        return keys.includes('r18');
       });
     }
-    function ratingFilterSummary(selected = selectedRatingFilter()) {
-      if (selected.has('all')) return '全部';
-      const labels = [];
-      if (selected.has('r15')) labels.push('R15');
-      if (selected.has('safe')) labels.push('全年龄');
-      return labels.length ? labels.join(' + ') : '未选择';
+    function ratingFilterSummary(selected = selectedRatingScope()) {
+      if (!selected.size) return '未选择';
+      if (RATING_SCOPE_KEYS.every((key) => selected.has(key))) return '全部';
+      return RATING_SCOPE_KEYS.filter((key) => selected.has(key))
+        .map((key) => RATING_SCOPE_LABELS[key])
+        .join(' + ');
     }
     function updateRatingFilterSummary() {
       const summary = $('rating-filter-summary');
       if (summary) summary.textContent = ratingFilterSummary();
     }
-    function applyStoredRatingFilter() {
-      const selected = loadRatingFilter();
-      for (const key of RATING_FILTER_KEYS) {
-        const checkbox = $(`rating-filter-${key}`);
-        if (checkbox) checkbox.checked = selected.has(key);
+    // The user's full intent survives a temporary gate narrowing, so widening the gate restores it.
+    let ratingScopeMemory = new Set(RATING_SCOPE_KEYS);
+    /** Paint checkbox enablement + ticking from `ratingScopeMemory` clipped by the gate. */
+    function renderRatingScopeSelection() {
+      const allowed = allowedRatingScopeKeys();
+      let chosen = [...ratingScopeMemory].filter((key) => allowed.includes(key));
+      if (!chosen.length) chosen = [...allowed];
+      for (const key of RATING_SCOPE_KEYS) {
+        const input = $(`rating-filter-${key}`);
+        if (!input) continue;
+        const enabled = allowed.includes(key);
+        input.disabled = !enabled;
+        input.closest('label')?.classList.toggle('is-disabled', !enabled);
+        input.checked = enabled && chosen.includes(key);
       }
+    }
+    function applyStoredRatingFilters() {
+      if ($('rating-gate')) $('rating-gate').value = loadRatingGate();
+      ratingScopeMemory = loadRatingScope();
+      renderRatingScopeSelection();
       updateRatingFilterSummary();
     }
+    function persistRatingFilters() {
+      try {
+        const gate = selectedRatingGate();
+        if (gate === 'all') localStorage.removeItem(RATING_GATE_STORAGE_KEY);
+        else localStorage.setItem(RATING_GATE_STORAGE_KEY, gate);
+        // Persist the user's full intent, not the gate-clipped view.
+        const scope = RATING_SCOPE_KEYS.filter((key) => ratingScopeMemory.has(key));
+        if (scope.length === RATING_SCOPE_KEYS.length) {
+          localStorage.removeItem(RATING_SCOPE_STORAGE_KEY);
+        } else {
+          localStorage.setItem(RATING_SCOPE_STORAGE_KEY, JSON.stringify(scope));
+        }
+      } catch {
+        // Keep the in-memory selection when storage is unavailable.
+      }
+    }
     function appendRatingParams(params) {
-      for (const rating of ratingFilterValues()) params.append('ratings', rating);
+      for (const rating of galleryRatingValues()) params.append('ratings', rating);
       return params;
     }
     const GALLERY_VIEWS = [
@@ -5747,7 +5847,7 @@
     }
     function updateFilterBadge() {
       const filters = readAdvancedFilters();
-      const ratingFiltered = !selectedRatingFilter().has('all');
+      const ratingFiltered = ratingFilterValues().length > 0;
       const count = [
         ...filters.authors,
         filters.title_query,
@@ -5788,31 +5888,32 @@
         scheduleFilterApply();
       });
     });
-    function handleRatingFilterChange(event) {
-      const all = $('rating-filter-all');
-      const r15 = $('rating-filter-r15');
-      const safe = $('rating-filter-safe');
-      if (!all || !r15 || !safe) return;
-      if (event.target === all) {
-        if (all.checked) {
-          r15.checked = true;
-          safe.checked = true;
-        }
-      } else {
-        if (all.checked && (!r15.checked || !safe.checked)) all.checked = false;
-        if (!r15.checked && !safe.checked) {
-          if (event.target === r15) r15.checked = true;
-          else safe.checked = true;
-        }
+    function handleRatingScopeChange(event) {
+      const input = event.currentTarget;
+      const key = String(input.id || '').replace('rating-filter-', '');
+      if (input.checked) ratingScopeMemory.add(key);
+      else ratingScopeMemory.delete(key);
+      // Never allow an empty search scope: re-tick the box the user just cleared.
+      if (!input.checked && !selectedRatingScope().size) {
+        input.checked = true;
+        ratingScopeMemory.add(key);
       }
-      persistRatingFilter();
+      persistRatingFilters();
       updateRatingFilterSummary();
       updateFilterBadge();
       void refreshForRatingChange();
     }
-    ['rating-filter-all', 'rating-filter-r15', 'rating-filter-safe'].forEach((id) => {
-      $(id)?.addEventListener('change', handleRatingFilterChange);
+    RATING_SCOPE_KEYS.forEach((key) => {
+      $(`rating-filter-${key}`)?.addEventListener('change', handleRatingScopeChange);
     });
+    function handleRatingGateChange() {
+      renderRatingScopeSelection();
+      persistRatingFilters();
+      updateRatingFilterSummary();
+      updateFilterBadge();
+      void refreshForRatingChange();
+    }
+    $('rating-gate')?.addEventListener('change', handleRatingGateChange);
     document.addEventListener('click', (event) => {
       const details = $('rating-filter');
       if (details?.open && event.target instanceof Node && !details.contains(event.target)) {
@@ -7862,7 +7963,7 @@
               seed: sort === 'random' ? state.authorSeed : null,
               offset: reset ? 0 : state.results.length,
               limit: Number($('limit').value) || 40,
-              ratings: ratingFilterValues(),
+              ratings: galleryRatingValues(),
             }),
           },
         ));
@@ -8180,7 +8281,7 @@
         tag_expression: '',
         collection_id: '',
         snapshot_id: '',
-        ratings: ratingFilterValues(),
+        ratings: state.mode === 'search' ? ratingFilterValues() : galleryRatingValues(),
       };
       const range = currentTimeRange();
       if (state.libraryView === 'artists' && state.mode === 'search') {
@@ -9083,7 +9184,7 @@
             limit: Number($('limit').value) || 40,
             offset: reset ? 0 : state.results.length,
             author_key: state.authorKey || null,
-            ratings: ratingFilterValues(),
+            ratings: galleryRatingValues(),
           }),
         });
         const data = await parseResponse(response);
@@ -9318,7 +9419,7 @@
           mtime_after: timeRange.after || null,
           mtime_before: timeRange.before || null,
           author_key: state.authorKey || null,
-          ratings: ratingFilterValues(),
+          ratings: galleryRatingValues(),
         };
         const data = await parseResponse(await fetch('/api/scope-images', {
           method: 'POST',
@@ -12447,7 +12548,7 @@
       }
     }
     async function bootApp() {
-      applyStoredRatingFilter();
+      applyStoredRatingFilters();
       updateFilterBadge();
       renderLibraryViewSwitch();
       await Promise.all([
