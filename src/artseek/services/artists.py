@@ -28,6 +28,7 @@ from .common import (
     attach_provenance,
     fast_folder_key,
     gallery_result,
+    normalize_ratings,
     resolve_author_token,
 )
 
@@ -263,6 +264,7 @@ class ArtistService:
         offset: int = 0,
         sort: str = "mtime_desc",
         seed: int | None = None,
+        ratings: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         summary = self.prov.author_summary(author_key)
         if summary is None:
@@ -275,7 +277,10 @@ class ArtistService:
             else self.prov.canonical_author_key(author_key)
         )
         row_ids, total, has_more, order, used_seed = self.resolver.page_rows(
-            ImageScope(author_keys=(canonical,)),
+            ImageScope(
+                author_keys=(canonical,),
+                ratings=normalize_ratings(ratings),
+            ),
             sort=sort,
             limit=page_size,
             offset=start,
@@ -312,6 +317,7 @@ class ArtistService:
         title_query: str = "",
         text_tags: Sequence[str] = (),
         tag_expression: str = "",
+        ratings: Sequence[str] = (),
     ) -> set[str] | None:
         scope: set[str] | None = None
 
@@ -368,6 +374,7 @@ class ArtistService:
             source_tags_all=tuple(str(t).strip() for t in text_tags if str(t).strip()),
             tag_expression=expr_text,
             title_terms=(title_query.strip(),) if title_query.strip() else (),
+            ratings=normalize_ratings(ratings),
         )
         if not img_scope.is_unfiltered:
             pids = self.resolver.point_ids(img_scope)
@@ -453,7 +460,9 @@ class ArtistService:
         title_query: str = "",
         text_tags: Sequence[str] = (),
         tag_expression: str = "",
+        ratings: Sequence[str] = (),
     ) -> dict[str, Any]:
+        clean_ratings = normalize_ratings(ratings)
         scope = self._resolve_artist_scope_ids(
             snapshot_id=snapshot_id,
             folder_keys=folder_keys,
@@ -464,6 +473,7 @@ class ArtistService:
             title_query=title_query,
             text_tags=text_tags,
             tag_expression=tag_expression,
+            ratings=clean_ratings,
         )
         norm_sort = sort if sort in ARTIST_SORT_KEYS else "latest_desc"
         cache_key = (
@@ -476,6 +486,7 @@ class ArtistService:
             tag_expression,
             collection_id,
             snapshot_id,
+            clean_ratings,
         )
         entries, orders = self._artist_catalog_for(cache_key, scope, norm_sort)
         if q.strip():
@@ -559,7 +570,13 @@ class ArtistService:
             entry["images_offset"] = len(images)
             entry["images_total"] = totals[key]
             entry["image_seed"] = seeds[key]
-            cover_id = explicit_covers.get(key) or (previews[key][0] if previews[key] else "")
+            explicit_cover = explicit_covers.get(key)
+            if explicit_cover and (
+                explicit_cover not in live_meta
+                or (scope is not None and explicit_cover not in scope)
+            ):
+                explicit_cover = ""
+            cover_id = explicit_cover or (previews[key][0] if previews[key] else "")
             cover_item = by_id.get(cover_id) if cover_id else None
             entry["cover"] = (
                 {
@@ -608,6 +625,7 @@ class ArtistService:
         title_query: str = "",
         text_tags: Sequence[str] = (),
         tag_expression: str = "",
+        ratings: Sequence[str] = (),
     ) -> dict[str, Any]:
         summary = self.prov.author_summary(author_key)
         if summary is None:
@@ -622,6 +640,7 @@ class ArtistService:
             title_query=title_query,
             text_tags=text_tags,
             tag_expression=tag_expression,
+            ratings=ratings,
         )
         norm_sort = _normalize_image_sort(sort)
         order_ids = self._collection_order_ids(collection_id, norm_sort)

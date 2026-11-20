@@ -19,7 +19,7 @@ from ..collections import (
 from ..db.repos.collections import CollectionRepo
 from ..db.repos.images import ImageRepo
 from ..db.repos.provenance import ProvenanceRepo
-from .common import ServiceError, attach_provenance, gallery_result
+from .common import ServiceError, attach_provenance, gallery_result, normalize_ratings
 
 _MAX_ORDERED_COLLECTION_IDS = 10_240
 
@@ -271,8 +271,10 @@ class CollectionService:
         needle: str,
         allowed_author_key: str | None,
         seed: int | None,
+        ratings: tuple[str, ...] = (),
     ) -> tuple[list[dict[str, Any]], int, bool]:
         item_ids = list(collection.item_ids)
+        allowed_ratings = set(ratings)
         image_ids = [item_id for item_id in item_ids if not is_artist_item(item_id)]
         artist_keys = [artist_item_key(item_id) for item_id in item_ids if is_artist_item(item_id)]
 
@@ -328,6 +330,12 @@ class CollectionService:
                     "",
                 )
                 cover_payload = cover_payloads.get(cover_id) if cover_id else None
+                if cover_payload is not None and allowed_ratings and (
+                    str(cover_payload.get("rating") or "").strip().casefold()
+                    not in allowed_ratings
+                ):
+                    cover_id = ""
+                    cover_payload = None
                 cover = (
                     {
                         "id": cover_id,
@@ -350,6 +358,11 @@ class CollectionService:
                 if payload is None:
                     continue
                 if allowed_image_ids is not None and item_id not in allowed_image_ids:
+                    continue
+                if allowed_ratings and (
+                    str(payload.get("rating") or "").strip().casefold()
+                    not in allowed_ratings
+                ):
                     continue
                 if needle:
                     tags = payload.get("tags") or []
@@ -411,8 +424,10 @@ class CollectionService:
         offset: int = 0,
         author_key: str | None = None,
         seed: int | None = None,
+        ratings: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         collection = self._require_collection(collection_id)
+        clean_ratings = normalize_ratings(ratings)
         random_requested = sort == "random"
         method = (
             "random"
@@ -430,7 +445,14 @@ class CollectionService:
             if method == "random" and used_seed is None:
                 used_seed = random.SystemRandom().randrange(1 << 53)
             mixed_results, mixed_total, mixed_has_more = self._mixed_collection_page(
-                collection, method, start, page_size, needle, author_key, used_seed
+                collection,
+                method,
+                start,
+                page_size,
+                needle,
+                author_key,
+                used_seed,
+                clean_ratings,
             )
             return {
                 "collection": collection.summary(),
@@ -449,7 +471,7 @@ class CollectionService:
         allowed_ids = (
             set(self.prov.point_ids_for_author(author_key)) if author_key else None
         )
-        if not needle and allowed_ids is None and method != "random":
+        if not needle and allowed_ids is None and not clean_ratings and method != "random":
             return self._unfiltered_sql_collection_page(
                 collection, method, start, page_size, query.strip()
             )
@@ -461,6 +483,10 @@ class CollectionService:
             if payload is None:
                 continue
             if allowed_ids is not None and pid not in allowed_ids:
+                continue
+            if clean_ratings and (
+                str(payload.get("rating") or "").strip().casefold() not in clean_ratings
+            ):
                 continue
             if needle:
                 tags = payload.get("tags") or []

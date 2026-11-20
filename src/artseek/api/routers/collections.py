@@ -116,6 +116,7 @@ def collection_images(
     offset: int = Query(default=0, ge=0, le=10_000),
     author_key: str | None = None,
     seed: int | None = None,
+    ratings: list[str] = Query(default=[]),
     c: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
     return c.collections.collection_images(
@@ -126,4 +127,5 @@ def collection_images(
         offset=offset,
         author_key=author_key,
         seed=seed,
+        ratings=ratings,
     )

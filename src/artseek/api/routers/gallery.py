@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...library import DEFAULT_SORT
 from ..deps import AppContainer, get_container
@@ -47,6 +47,7 @@ def folder_images(
     offset: int = 0,
     author_key: str | None = None,
     seed: int | None = None,
+    ratings: list[str] = Query(default=[]),
     c: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
     return c.gallery.folder_images(
@@ -56,6 +57,7 @@ def folder_images(
         offset=offset,
         author_key=author_key,
         seed=seed,
+        ratings=ratings,
     )
 
 
@@ -69,6 +71,7 @@ def scope_images(
     author_key: str | None = None,
     mtime_after: str | None = None,
     mtime_before: str | None = None,
+    ratings: list[str] = Query(default=[]),
     c: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
     keys = parse_folder_keys(folder_keys) or []
@@ -81,6 +84,7 @@ def scope_images(
         author_key=author_key,
         mtime_after=mtime_after,
         mtime_before=mtime_before,
+        ratings=ratings,
     )
 
 
@@ -98,6 +102,7 @@ def scope_images_post(
         author_key=request.author_key,
         mtime_after=request.mtime_after,
         mtime_before=request.mtime_before,
+        ratings=request.ratings,
     )
 
 
@@ -116,4 +121,5 @@ def random_browse(
         author_key=request.author_key,
         mtime_after=request.mtime_after,
         mtime_before=request.mtime_before,
+        ratings=request.ratings,
     )

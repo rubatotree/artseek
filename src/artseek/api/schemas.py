@@ -119,6 +119,7 @@ class RandomBrowseRequest(BaseModel):
     limit: int = Field(default=40, ge=1, le=200)
     offset: int = Field(default=0, ge=0, le=50_000)
     author_key: str | None = None
+    ratings: list[str] = Field(default_factory=list)
 
 
 class FolderScopeRequest(BaseModel):
@@ -170,6 +171,7 @@ class ScopeImagesRequest(BaseModel):
     author_key: str | None = None
     mtime_after: str | None = None
     mtime_before: str | None = None
+    ratings: list[str] = Field(default_factory=list)
 
     @field_validator("sort", mode="before")
     @classmethod
@@ -216,6 +218,7 @@ class ArtistScopeRequest(BaseModel):
     tag_expression: str = ""
     collection_id: str = ""
     snapshot_id: str = ""
+    ratings: list[str] = Field(default_factory=list)
 
 
 class ArtistGalleryRequest(ArtistScopeRequest):

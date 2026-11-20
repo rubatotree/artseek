@@ -29,6 +29,7 @@ from .common import (
     fast_folder_key,
     gallery_result,
     normalize_folder_sort,
+    normalize_ratings,
     reconcile_scope_with_tree,
     resolve_author_token,
     resolve_folder_keys_from_db,
@@ -159,17 +160,23 @@ class GalleryService:
         folder_keys_in_order: Sequence[str],
         *,
         author_keys: tuple[str, ...],
+        ratings: tuple[str, ...] = (),
         start: int,
         page_size: int,
     ) -> tuple[list[int], int]:
         """Slice DFS-by-folder-count without scanning every folder's rows into RAM."""
-        if not author_keys:
+        if not author_keys and not ratings:
             counts_by_key = {k: tree.direct_count_by_key.get(k, 0) for k in folder_keys_in_order}
         else:
             counts_by_key = {}
             for k in folder_keys_in_order:
                 counts_by_key[k] = self.resolver.count(
-                    ImageScope(folders=(k,), folder_recursive=False, author_keys=author_keys)
+                    ImageScope(
+                        folders=(k,),
+                        folder_recursive=False,
+                        author_keys=author_keys,
+                        ratings=ratings,
+                    )
                 )
         total = sum(counts_by_key.values())
         if start >= total or total == 0:
@@ -191,7 +198,12 @@ class GalleryService:
             local_offset = max(0, start - cursor)
             local_limit = min(cnt - local_offset, end - (cursor + local_offset))
             rows, _, _, _, _ = self.resolver.page_rows(
-                ImageScope(folders=(fkey,), folder_recursive=False, author_keys=author_keys),
+                ImageScope(
+                    folders=(fkey,),
+                    folder_recursive=False,
+                    author_keys=author_keys,
+                    ratings=ratings,
+                ),
                 sort="name_asc",
                 limit=max(1, local_limit),
                 offset=local_offset,
@@ -209,6 +221,7 @@ class GalleryService:
         offset: int = 0,
         author_key: str | None = None,
         seed: int | None = None,
+        ratings: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         tree = build_folder_tree_from_db(self.images)
         key = fast_folder_key(folder_key, tree.all_keys)
@@ -221,6 +234,7 @@ class GalleryService:
         authors: tuple[str, ...] = ()
         if author_key:
             authors = (resolve_author_token(self.prov, author_key),)
+        clean_ratings = normalize_ratings(ratings)
 
         used_seed: int | None = None
         if method in {"count", "count_asc"}:
@@ -229,6 +243,7 @@ class GalleryService:
                 tree,
                 ordered_folders,
                 author_keys=authors,
+                ratings=clean_ratings,
                 start=start,
                 page_size=page_size,
             )
@@ -239,7 +254,12 @@ class GalleryService:
                 else ("mtime_desc" if method == "mtime" else method)
             )
             row_ids, total, _has_more, _order, used_seed = self.resolver.page_rows(
-                ImageScope(folders=(key,), folder_recursive=True, author_keys=authors),
+                ImageScope(
+                    folders=(key,),
+                    folder_recursive=True,
+                    author_keys=authors,
+                    ratings=clean_ratings,
+                ),
                 sort=sql_sort,
                 limit=page_size,
                 offset=start,
@@ -270,6 +290,7 @@ class GalleryService:
         author_key: str | None = None,
         mtime_after: str | None = None,
         mtime_before: str | None = None,
+        ratings: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         keys = resolve_folder_keys_from_db(self.images, folder_keys)
         if not keys:
@@ -294,6 +315,7 @@ class GalleryService:
                 folder_recursive=False,
                 time_range=time_range,
                 author_keys=authors,
+                ratings=normalize_ratings(ratings),
             ),
             sort=sql_sort,
             limit=page_size,
@@ -323,6 +345,7 @@ class GalleryService:
         author_key: str | None = None,
         mtime_after: str | None = None,
         mtime_before: str | None = None,
+        ratings: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         keys = resolve_folder_keys_from_db(self.images, folder_keys)
         if not keys:
@@ -341,6 +364,7 @@ class GalleryService:
                 folder_recursive=False,
                 time_range=time_range,
                 author_keys=authors,
+                ratings=normalize_ratings(ratings),
             ),
             sort="random",
             limit=page_size,
@@ -509,6 +533,7 @@ class GalleryService:
         offset: int = 0,
         sort: str = "mtime_desc",
         seed: int | None = None,
+        ratings: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         clean = str(tag or "").strip()
         if not clean:
@@ -516,7 +541,10 @@ class GalleryService:
         page_size = max(1, min(int(limit), 200))
         start = max(0, min(int(offset), 50_000))
         row_ids, total, has_more, order, used_seed = self.resolver.page_rows(
-            ImageScope(source_tags_any=(clean,)),
+            ImageScope(
+                source_tags_any=(clean,),
+                ratings=normalize_ratings(ratings),
+            ),
             sort=sort,
             limit=page_size,
             offset=start,

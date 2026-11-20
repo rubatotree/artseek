@@ -36,6 +36,17 @@ _UNASSIGNED_TOKENS = frozenset(
 )
 
 
+def normalize_ratings(ratings: Sequence[str] | None) -> tuple[str, ...]:
+    """Canonicalize a browser rating gate into scope values (`safe`, `r15`, `r18`)."""
+    return tuple(
+        dict.fromkeys(
+            str(value).strip().casefold()
+            for value in (ratings or ())
+            if str(value).strip()
+        )
+    )
+
+
 class ServiceError(Exception):
     """Domain error carrying an HTTP-friendly status code and optional structured detail."""
 

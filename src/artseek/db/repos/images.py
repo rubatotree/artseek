@@ -1336,3 +1336,101 @@ class ImageRepo:
             tags=list(tags),
             tag_scores=dict(tag_scores or {}),
         )
+
+    def purge_legacy_auto_tags(self, *, keep_new_models: bool = True) -> dict[str, int]:
+        """Clear legacy pre-Camie/PixAI auto tags from `image_tags` and `image_source`."""
+        now = int(time.time())
+        with self.db.write_tx() as conn:
+            conn.execute("DROP TABLE IF EXISTS temp._purge_targets")
+            if keep_new_models:
+                conn.execute(
+                    """
+                    CREATE TEMP TABLE _purge_targets AS
+                    SELECT i.id AS image_id, i.point_id
+                    FROM images AS i
+                    LEFT JOIN image_task_state AS ts ON ts.point_id = i.point_id
+                    WHERE i.deleted = 0
+                      AND COALESCE(ts.tag_models_json, '{}') NOT LIKE '%camie_v2%'
+                      AND COALESCE(ts.tag_models_json, '{}') NOT LIKE '%pixai_v09%'
+                      AND COALESCE(ts.tag_models_json, '{}') NOT LIKE '%pixai_v10%'
+                    """
+                )
+            else:
+                conn.execute(
+                    """
+                    CREATE TEMP TABLE _purge_targets AS
+                    SELECT i.id AS image_id, i.point_id
+                    FROM images AS i
+                    WHERE i.deleted = 0
+                    """
+                )
+            purged_images = int(
+                conn.execute("SELECT COUNT(*) FROM _purge_targets").fetchone()[0]
+            )
+            cur_tags = conn.execute(
+                """
+                DELETE FROM image_tags
+                WHERE image_id IN (SELECT image_id FROM _purge_targets)
+                  AND tag_id IN (SELECT id FROM tags WHERE category NOT IN (6, 7, 8))
+                """
+            )
+            deleted_tag_links = int(cur_tags.rowcount or 0)
+            conn.execute(
+                """
+                UPDATE images
+                SET descriptor_text = ''
+                WHERE id IN (SELECT image_id FROM _purge_targets)
+                """
+            )
+            conn.execute(
+                """
+                UPDATE image_task_state
+                SET tag_models_json = '{}', descriptor_done = 0, updated_at = ?
+                WHERE point_id IN (SELECT point_id FROM _purge_targets)
+                """,
+                (now,),
+            )
+            conn.execute(
+                """
+                UPDATE image_source
+                SET auto_tags_json = '[]', auto_tag_scores_json = '{}',
+                    auto_tagged_at = NULL, updated_at = ?
+                WHERE point_id IN (SELECT point_id FROM _purge_targets)
+                  AND COALESCE(auto_tags_json, '[]') NOT IN ('', '[]')
+                """,
+                (now,),
+            )
+            conn.execute(
+                """
+                UPDATE image_source
+                SET auto_tagged_at = NULL
+                WHERE point_id IN (SELECT point_id FROM _purge_targets)
+                  AND auto_tagged_at IS NOT NULL
+                """
+            )
+            cur_src_tags = conn.execute(
+                """
+                DELETE FROM source_tags
+                WHERE origin = 'auto'
+                  AND point_id IN (SELECT point_id FROM _purge_targets)
+                """
+            )
+            purged_source_auto_tags = int(cur_src_tags.rowcount or 0)
+            conn.execute(
+                """
+                UPDATE tags
+                SET doc_count = (
+                    SELECT COUNT(*)
+                    FROM image_tags AS it
+                    JOIN images AS i ON i.id = it.image_id AND i.deleted = 0
+                    WHERE it.tag_id = tags.id
+                )
+                """
+            )
+            conn.execute("DELETE FROM tags WHERE doc_count = 0")
+            conn.execute("DROP TABLE IF EXISTS temp._purge_targets")
+            return {
+                "purged_images": purged_images,
+                "deleted_tag_links": deleted_tag_links,
+                "purged_source_auto_tags": purged_source_auto_tags,
+            }

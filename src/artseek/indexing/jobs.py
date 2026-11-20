@@ -15,6 +15,7 @@ import numpy as np
 
 from ..compute import release_accelerator
 from ..config import AppConfig
+from ..core.ranking import rank_tags_by_idf
 from ..db.connection import Database
 from ..db.repos.images import ImageRepo
 from ..db.repos.jobs import JobRepo
@@ -367,6 +368,39 @@ class JobManager:
 
     def clear_finished_jobs(self) -> int:
         return self.jobs_repo.clear_finished()
+
+    def purge_legacy_auto_tags(self, *, keep_new_models: bool = True) -> dict[str, int]:
+        summary = self.images.purge_legacy_auto_tags(keep_new_models=keep_new_models)
+        if callable(self._on_caches_invalidated):
+            self._on_caches_invalidated()
+        return summary
+
+    def _sync_provenance_auto_tags(
+        self,
+        entries: Sequence[tuple[str, Sequence[str], dict[str, float]]],
+    ) -> None:
+        if not entries:
+            return
+        pids = [pid for pid, _, _ in entries if pid]
+        existing = self.prov_repo.get_many(pids)
+        if not existing:
+            return
+        total_docs, doc_counts = self.images.tag_doc_counts()
+        updates: list[tuple[str, Sequence[str], dict[str, float] | None]] = []
+        for pid, tags, scores in entries:
+            if pid not in existing:
+                continue
+            scored = [(t, float(scores.get(t, 0.0))) for t in tags]
+            top_tags, top_scores = rank_tags_by_idf(
+                scored,
+                total_docs=total_docs,
+                doc_counts=doc_counts,
+                limit=12,
+                demote_generic=True,
+            )
+            updates.append((pid, top_tags, top_scores))
+        if updates:
+            self.prov_repo.set_auto_tags_many(updates)
 
     def task_summary(self, scope_row_ids: Sequence[int] | None = None) -> dict[str, int]:
         return self.task_state.summary_counts(scope_row_ids=scope_row_ids)
@@ -928,6 +962,12 @@ class JobManager:
 
                 self.images.update_tags_and_descriptor_batch(db_updates)
                 self.task_state.mark_tag_models_done(done_entries, versions, descriptor_done=True)
+                self._sync_provenance_auto_tags(
+                    [
+                        (done_entries[i][0], preds[i].tags, preds[i].scores)
+                        for i in range(len(loaded))
+                    ]
+                )
                 updated += len(loaded)
                 processed = min(total, start + len(chunk))
                 self.jobs_repo.update(
@@ -1335,6 +1375,7 @@ class JobManager:
             versions,
             descriptor_done=True,
         )
+        self._sync_provenance_auto_tags([(point_id, pred.tags, pred.scores)])
         if desc_text.strip():
             self._encode_and_flush_descriptors([(img_id, desc_text)])
         if callable(self._on_caches_invalidated):

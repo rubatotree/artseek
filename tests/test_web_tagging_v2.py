@@ -483,6 +483,224 @@ class TestStageDSearchAndWebAPI(unittest.TestCase):
                 finally:
                     blocker.set()
 
+    def test_purge_legacy_auto_tags_and_retag_syncs_provenance_auto_tags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            img_dir = root / "art"
+            img_dir.mkdir()
+            p_legacy = img_dir / "legacy.png"
+            p_new = img_dir / "new.png"
+            Image.new("RGB", (64, 64), (10, 200, 220)).save(p_legacy)
+            Image.new("RGB", (64, 64), (240, 200, 180)).save(p_new)
+
+            cfg = AppConfig(
+                data_dir=root / "data",
+                cache_dir=root / "cache",
+                tagger=TaggerConfig(enabled=False),
+            )
+            cfg.ensure_dirs()
+            db = Database(cfg.db_path)
+            images = ImageRepo(db)
+            task_state = TaskStateRepo(db)
+            fk = canonical_path(img_dir)
+            rec_ids = images.upsert_images_batch(
+                [
+                    ImageUpsertRecord(
+                        point_id="legacy_pid",
+                        root_key=fk,
+                        root_path=str(img_dir),
+                        folder_key=fk,
+                        folder_path=str(img_dir),
+                        folder_mtime_ns=1,
+                        path=str(p_legacy),
+                        path_key=canonical_path(p_legacy),
+                        name=p_legacy.name,
+                        ext=".png",
+                        mtime_ns=100,
+                        size_bytes=100,
+                        width=64,
+                        height=64,
+                        content_hash="ch_leg",
+                        phash="0" * 16,
+                        descriptor_text="old_wrong_tag",
+                        tags=["old_wrong_tag"],
+                        tag_scores={"old_wrong_tag": 0.9},
+                        tag_categories={"old_wrong_tag": 0},
+                    ),
+                    ImageUpsertRecord(
+                        point_id="new_pid",
+                        root_key=fk,
+                        root_path=str(img_dir),
+                        folder_key=fk,
+                        folder_path=str(img_dir),
+                        folder_mtime_ns=1,
+                        path=str(p_new),
+                        path_key=canonical_path(p_new),
+                        name=p_new.name,
+                        ext=".png",
+                        mtime_ns=200,
+                        size_bytes=100,
+                        width=64,
+                        height=64,
+                        content_hash="ch_new",
+                        phash="1" * 16,
+                        descriptor_text="keep_new_tag",
+                        tags=["keep_new_tag"],
+                        tag_scores={"keep_new_tag": 0.95},
+                        tag_categories={"keep_new_tag": 0},
+                    ),
+                ]
+            )
+            images.update_vision_attributes_batch(
+                [
+                    {
+                        "image_id": rec_ids[0],
+                        "media_type": "illustration",
+                        "rating": "safe",
+                        "is_monochrome": 0,
+                        "is_ai": 0,
+                        "aesthetic_score": 0.8,
+                        "focal_x": 0.5,
+                        "focal_y": 0.5,
+                        "attr_tags": {"medium:illustration": CAT_MEDIUM},
+                    }
+                ]
+            )
+            task_state.mark_tag_models_done(
+                [("new_pid", rec_ids[1], "ch_new")],
+                {"camie_v2": 1, "pixai_v09": 1},
+            )
+
+            # Seed provenance records: manual + pixiv + legacy auto tags
+            from artseek.db.repos.provenance import ProvenanceRepo
+
+            prov = ProvenanceRepo(db)
+            with db.write_tx() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO image_source (
+                        point_id, path_key, platform, source_id, url,
+                        tags_json, manual_tags_json, auto_tags_json, updated_at
+                    ) VALUES (?, ?, 'pixiv', 'legacy', 'https://example.com/legacy',
+                              '["keep_pixiv"]', ?, ?, 1)
+                    """,
+                    (
+                        "legacy_pid",
+                        canonical_path(p_legacy),
+                        '["keep_manual"]',
+                        '["old_24nn"]',
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO image_source (
+                        point_id, path_key, platform, source_id, url,
+                        manual_tags_json, auto_tags_json, updated_at
+                    ) VALUES (?, ?, 'pixiv', 'new', 'https://example.com/new', '[]', ?, 1)
+                    """,
+                    ("new_pid", canonical_path(p_new), '["keep_new_tag"]'),
+                )
+            prov.set_auto_tags_many([("legacy_pid", ["old_24nn"], {"old_24nn": 0.8})])
+            db.close()
+
+            vecs = VectorIndex(cfg.visual_vectors_path, cfg.descriptor_vectors_path)
+            vecs.set_rows(
+                [0, 1],
+                np.ones((2, 8), dtype=np.float32),
+                np.ones((2, 8), dtype=np.float32),
+            )
+            vecs.flush()
+
+            class _FakeTagger:
+                model_versions = {"camie_v2": 1, "pixai_v09": 1}
+
+                def predict(self, imgs):
+                    return [
+                        PredictedTags(
+                            tags=["hatsune_miku", "1girl"],
+                            scores={"hatsune_miku": 0.96, "1girl": 0.91},
+                            categories={"hatsune_miku": CAT_CHARACTER, "1girl": 0},
+                        )
+                        for _ in imgs
+                    ]
+
+                def close(self):
+                    pass
+
+            app = create_app(cfg, embedder_factory=_FakeEmbedder)  # type: ignore[arg-type]
+
+            with (
+                patch("artseek.indexing.jobs.build_tagger", return_value=_FakeTagger()),
+                TestClient(app) as client,
+            ):
+                home = client.get("/")
+                self.assertEqual(home.status_code, 200)
+                self.assertIn("清理旧版错误标签", home.text)
+
+                purge = client.post("/api/jobs/purge-legacy-tags")
+                self.assertEqual(purge.status_code, 200)
+                summary = purge.json()["summary"]
+                self.assertEqual(summary["purged_images"], 1)
+                self.assertGreaterEqual(summary["deleted_tag_links"], 1)
+                self.assertEqual(summary["purged_source_auto_tags"], 1)
+
+                # Legacy image: old_wrong_tag removed, medium:illustration preserved;
+                # manual_tags and pixiv source tag preserved; old_24nn auto tag removed;
+                # new_pid keep_new_tag preserved untouched.
+                conn = app.state.container.db.read_conn()
+                leg_tags = {
+                    r["tag"]
+                    for r in conn.execute(
+                        "SELECT t.name AS tag FROM image_tags AS it "
+                        "JOIN tags AS t ON t.id = it.tag_id WHERE it.image_id = ?",
+                        (rec_ids[0],),
+                    ).fetchall()
+                }
+                self.assertNotIn("old_wrong_tag", leg_tags)
+                self.assertIn("medium:illustration", leg_tags)
+
+                new_tags = {
+                    r["tag"]
+                    for r in conn.execute(
+                        "SELECT t.name AS tag FROM image_tags AS it "
+                        "JOIN tags AS t ON t.id = it.tag_id WHERE it.image_id = ?",
+                        (rec_ids[1],),
+                    ).fetchall()
+                }
+                self.assertIn("keep_new_tag", new_tags)
+
+                prov_leg = conn.execute(
+                    "SELECT manual_tags_json, auto_tags_json, auto_tagged_at "
+                    "FROM image_source WHERE point_id = 'legacy_pid'"
+                ).fetchone()
+                self.assertEqual(prov_leg["manual_tags_json"], '["keep_manual"]')
+                self.assertEqual(prov_leg["auto_tags_json"], "[]")
+                self.assertIsNone(prov_leg["auto_tagged_at"])
+
+                src_leg = {
+                    (r["tag"], r["origin"])
+                    for r in conn.execute(
+                        "SELECT tag, origin FROM source_tags WHERE point_id = 'legacy_pid'"
+                    ).fetchall()
+                }
+                self.assertIn(("keep_pixiv", "source"), src_leg)
+                self.assertNotIn(("old_24nn", "auto"), src_leg)
+
+                prov_new = conn.execute(
+                    "SELECT auto_tags_json FROM image_source WHERE point_id = 'new_pid'"
+                ).fetchone()
+                self.assertEqual(prov_new["auto_tags_json"], '["keep_new_tag"]')
+
+                # Single image retag must update both image_tags and image_source.auto_tags
+                retag = client.post("/api/images/legacy_pid/retag", json={})
+                self.assertEqual(retag.status_code, 200)
+                prov_res = client.get("/api/images/legacy_pid/provenance")
+                self.assertEqual(prov_res.status_code, 200)
+                record = prov_res.json()["record"]
+                self.assertIn("hatsune_miku", record["auto_tags"])
+                self.assertNotIn("old_24nn", record["auto_tags"])
+                self.assertEqual(record["manual_tags"], ["keep_manual"])
+
 
 if __name__ == "__main__":
     unittest.main()

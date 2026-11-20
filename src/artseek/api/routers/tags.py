@@ -55,6 +55,7 @@ def tag_images(
     offset: int = Query(default=0, ge=0, le=50_000),
     sort: str = "mtime_desc",
     seed: int | None = None,
+    ratings: list[str] = Query(default=[]),
     c: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
     return c.gallery.tag_images(
@@ -63,4 +64,5 @@ def tag_images(
         offset=offset,
         sort=sort,
         seed=seed,
+        ratings=ratings,
     )

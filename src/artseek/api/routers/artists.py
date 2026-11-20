@@ -75,6 +75,7 @@ def author_images(
     offset: int = Query(default=0, ge=0, le=50_000),
     sort: str = "mtime_desc",
     seed: int | None = None,
+    ratings: list[str] = Query(default=[]),
     c: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
     return c.artists.author_images(
@@ -83,6 +84,7 @@ def author_images(
         offset=offset,
         sort=sort,
         seed=seed,
+        ratings=ratings,
     )
 
 
@@ -109,6 +111,7 @@ def artist_gallery(
         title_query=request.title_query,
         text_tags=request.text_tags,
         tag_expression=request.tag_expression,
+        ratings=request.ratings,
     )
 
 
@@ -133,6 +136,7 @@ def scoped_artist_images(
         title_query=request.title_query,
         text_tags=request.text_tags,
         tag_expression=request.tag_expression,
+        ratings=request.ratings,
     )
 
 

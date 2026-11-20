@@ -2193,11 +2193,10 @@
                   <option value="3d">3D</option>
                   <option value="not_painting">实拍/非绘画</option>
                 </select>
-                <select id="filter-rating" class="artseek-select" aria-label="分级筛选">
-                  <option value="">全部分级</option>
+                <select id="filter-rating" class="artseek-select" aria-label="分级筛选" title="开启后隐藏无分级标签与超出所选分级的图片">
+                  <option value="">全部</option>
                   <option value="safe">全年龄</option>
-                  <option value="r15">R15</option>
-                  <option value="r18">R18</option>
+                  <option value="r15" title="显示全年龄与 R15">R15</option>
                 </select>
                 <label class="artseek-check">
                   <input id="filter-monochrome" type="checkbox"> 黑白/线稿
@@ -2371,6 +2370,49 @@
     const CARD_ASPECT_MAX = 3;
     const GALLERY_VIEW_STORAGE_KEY = 'artseek.galleryView';
     const SIDEBAR_COLLAPSED_STORAGE_KEY = 'artseek.sidebarCollapsed';
+    const RATING_FILTER_STORAGE_KEY = 'artseek.ratingFilter';
+    const RATING_FILTER_MODES = new Set(['safe', 'r15']);
+    function loadRatingFilter() {
+      try {
+        const stored = localStorage.getItem(RATING_FILTER_STORAGE_KEY);
+        return RATING_FILTER_MODES.has(stored) ? stored : '';
+      } catch {
+        // Storage can be unavailable in private contexts; keep the safe default.
+      }
+      return '';
+    }
+    function persistRatingFilter(value) {
+      try {
+        if (RATING_FILTER_MODES.has(value)) {
+          localStorage.setItem(RATING_FILTER_STORAGE_KEY, value);
+        } else {
+          localStorage.removeItem(RATING_FILTER_STORAGE_KEY);
+        }
+      } catch {
+        // Keep the in-memory selection when storage is unavailable.
+      }
+    }
+    function ratingFilterValues(value = $('filter-rating')?.value || '') {
+      if (value === 'safe') return ['safe'];
+      if (value === 'r15') return ['safe', 'r15'];
+      return [];
+    }
+    function filterItemsByRating(items) {
+      const allowed = new Set(ratingFilterValues());
+      if (!allowed.size) return items;
+      return items.filter((item) => (
+        item.kind === 'artist'
+        || allowed.has(String(item.rating || '').trim().toLowerCase())
+      ));
+    }
+    function applyStoredRatingFilter() {
+      const select = $('filter-rating');
+      if (select) select.value = loadRatingFilter();
+    }
+    function appendRatingParams(params) {
+      for (const rating of ratingFilterValues()) params.append('ratings', rating);
+      return params;
+    }
     const GALLERY_VIEWS = [
       { value: 'natural', label: '原比例瀑布流' },
       { value: 'square', label: '正方形瀑布流' },
@@ -3782,7 +3824,10 @@
         <div class="task-section">
           <div class="task-section-head">
             <strong>图库状态概览</strong>
-            <span class="task-section-sub">${escapeHtml(scopeHint)}</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="task-section-sub">${escapeHtml(scopeHint)}</span>
+              <button type="button" class="task-mini-btn" data-bg-job="purge-legacy" title="清理尚未用 Camie/PixAI 重标图片的旧版错误自动标签（保留手动与 Pixiv/X 来源标签）">清理旧版错误标签</button>
+            </div>
           </div>
           <div class="provenance-stat-grid">
             <div class="provenance-stat"><b>${Number(counts.total || 0).toLocaleString()}</b>已索引图片</div>
@@ -3935,6 +3980,23 @@
       await refreshProvenanceDialog();
     }
     async function runBackgroundTaskAction(action) {
+      if (action === 'purge-legacy') {
+        if (!window.confirm('将清理尚未完成 Camie/PixAI 新打标图片的旧版错误自动标签与旧来源自动标签（不会影响手动标签、Pixiv/X 官方标签及已重标的新标签），确认继续？')) {
+          return;
+        }
+        try {
+          const res = await parseResponse(await fetch('/api/jobs/purge-legacy-tags', { method: 'POST' }));
+          const sum = res.summary || {};
+          $('provenance-dialog-body').insertAdjacentHTML(
+            'afterbegin',
+            `<p class="provenance-hint">已清理 ${Number(sum.purged_images || 0)} 张旧图的 ${Number(sum.deleted_tag_links || 0)} 条旧自动标签，以及 ${Number(sum.purged_source_auto_tags || 0)} 条旧来源自动标签。</p>`,
+          );
+        } catch (error) {
+          $('provenance-dialog-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">清理失败：${escapeHtml(error.message)}</p>`);
+        }
+        await refreshProvenanceDialog();
+        return;
+      }
       const skipCompleted = $('task-skip-completed') ? $('task-skip-completed').checked : true;
       const backend = $('task-tag-backend')?.value || 'camie+pixai0.9';
       const folderKeys = treeState.selected.size ? [...treeState.selected] : null;
@@ -5340,6 +5402,18 @@
         applyFilterChanges();
       }, 180);
     }
+    async function refreshForRatingChange() {
+      if (state.mode === 'search') return fetchResults({ reset: true });
+      if (state.mode === 'collection' && state.collectionId) {
+        return fetchCollectionImages({ reset: true });
+      }
+      if (state.mode === 'author' && state.authorKey) return fetchAuthorImages({ reset: true });
+      if (state.mode === 'tag' && state.tagName) return fetchTagImages({ reset: true });
+      if (state.mode === 'random') return startRandomBrowse();
+      if (state.mode === 'browse' && state.browseKey) return fetchFolderImages({ reset: true });
+      if (treeState.selected.size) return startScopeBrowse();
+      return undefined;
+    }
     async function applyFilterChanges() {
       const filters = readAdvancedFilters();
       const hasQuery = Boolean(
@@ -5524,7 +5598,6 @@
     }
     function readAdvancedFilters() {
       const mediaType = $('filter-media-type')?.value.trim() || '';
-      const rating = $('filter-rating')?.value.trim() || '';
       return {
         authors: chipValues('filter-author-chips'),
         title_query: $('filter-title').value.trim(),
@@ -5532,7 +5605,7 @@
         tag_expression: state.filterTagExpression,
         text_tags: chipValues('filter-text-chips'),
         media_types: mediaType ? [mediaType] : [],
-        ratings: rating ? [rating] : [],
+        ratings: ratingFilterValues(),
         monochrome: $('filter-monochrome')?.checked ? true : null,
         exclude_ai: $('filter-exclude-ai')?.checked ? true : null,
         aesthetic_sort: Boolean($('filter-aesthetic-sort')?.checked),
@@ -5546,7 +5619,6 @@
         || filters.tag_expression
         || filters.text_tags.length
         || (filters.media_types && filters.media_types.length)
-        || (filters.ratings && filters.ratings.length)
         || filters.monochrome !== null
         || filters.exclude_ai !== null
         || filters.aesthetic_sort
@@ -5576,7 +5648,6 @@
       $('filter-text-label').value = filters.text_label || '';
       $('filter-text-tags').value = '';
       if ($('filter-media-type')) $('filter-media-type').value = (filters.media_types && filters.media_types[0]) || '';
-      if ($('filter-rating')) $('filter-rating').value = (filters.ratings && filters.ratings[0]) || '';
       if ($('filter-monochrome')) $('filter-monochrome').checked = filters.monochrome === true;
       if ($('filter-exclude-ai')) $('filter-exclude-ai').checked = filters.exclude_ai === true;
       if ($('filter-aesthetic-sort')) $('filter-aesthetic-sort').checked = Boolean(filters.aesthetic_sort);
@@ -5589,11 +5660,16 @@
       renderTagExpressionChip();
       updateFilterBadge();
     }
-    ['filter-media-type', 'filter-rating', 'filter-monochrome', 'filter-exclude-ai', 'filter-aesthetic-sort'].forEach((id) => {
+    ['filter-media-type', 'filter-monochrome', 'filter-exclude-ai', 'filter-aesthetic-sort'].forEach((id) => {
       $(id)?.addEventListener('change', () => {
         updateFilterBadge();
         scheduleFilterApply();
       });
+    });
+    $('filter-rating')?.addEventListener('change', () => {
+      persistRatingFilter($('filter-rating').value);
+      updateFilterBadge();
+      void refreshForRatingChange();
     });
     Object.entries(FILTER_CHIP_CONFIG).forEach(([kind, config]) => {
       $(config.input).addEventListener('keydown', (event) => {
@@ -7630,6 +7706,7 @@
           offset: String(reset ? 0 : state.results.length),
         });
         if (sort === 'random' && state.authorSeed != null) params.set('seed', String(state.authorSeed));
+        appendRatingParams(params);
         const data = await parseResponse(await fetch(`/api/authors/${encodeURIComponent(state.authorKey)}/images?${params}`));
         if (seq !== state.searchSeq) return;
         const incoming = data.results || [];
@@ -7693,6 +7770,7 @@
           offset: String(reset ? 0 : state.results.length),
         });
         if (sort === 'random' && state.tagSeed != null) params.set('seed', String(state.tagSeed));
+        appendRatingParams(params);
         const data = await parseResponse(await fetch(`/api/tags/${encodeURIComponent(state.tagName)}/images?${params}`));
         if (seq !== state.searchSeq) return;
         const incoming = data.results || [];
@@ -7759,6 +7837,7 @@
           params.set('seed', String(state.collectionRandomSeed));
         }
         if (state.authorKey) params.set('author_key', state.authorKey);
+        appendRatingParams(params);
         const data = await parseResponse(await fetch(`/api/collections/${encodeURIComponent(collectionId)}/images?${params}`));
         if (seq !== state.searchSeq) return;
         const incoming = data.results || [];
@@ -7943,6 +8022,7 @@
         tag_expression: '',
         collection_id: '',
         snapshot_id: '',
+        ratings: ratingFilterValues(),
       };
       const range = currentTimeRange();
       if (state.libraryView === 'artists' && state.mode === 'search') {
@@ -8845,6 +8925,7 @@
             limit: Number($('limit').value) || 40,
             offset: reset ? 0 : state.results.length,
             author_key: state.authorKey || null,
+            ratings: ratingFilterValues(),
           }),
         });
         const data = await parseResponse(response);
@@ -9079,6 +9160,7 @@
           mtime_after: timeRange.after || null,
           mtime_before: timeRange.before || null,
           author_key: state.authorKey || null,
+          ratings: ratingFilterValues(),
         };
         const data = await parseResponse(await fetch('/api/scope-images', {
           method: 'POST',
@@ -9194,6 +9276,7 @@
         });
         if (sort === 'random' && state.browseSeed != null) params.set('seed', String(state.browseSeed));
         if (state.authorKey) params.set('author_key', state.authorKey);
+        appendRatingParams(params);
         const response = await fetch(`/api/folder-images?${params}`);
         const data = await parseResponse(response);
         if (seq !== state.searchSeq) return;
@@ -9357,7 +9440,7 @@
           tag_expression: frozen.tag_expression || '',
           text_tags: frozen.text_tags || [],
           media_types: frozen.media_types || [],
-          ratings: frozen.ratings || [],
+          ratings: ratingFilterValues(),
           monochrome: frozen.monochrome ?? null,
           exclude_ai: frozen.exclude_ai ?? null,
           sort: frozen.sort || state.searchSort,
@@ -12000,7 +12083,7 @@
         mtime_after: data.mtime_after || null,
         mtime_before: data.mtime_before || null,
       };
-      state.results = data.results || [];
+      state.results = filterItemsByRating(data.results || []);
       state.hasMore = snapshotHasMore(data) && state.results.length > 0;
       renderTree();
       renderCollectionList();
@@ -12202,6 +12285,8 @@
       }
     }
     async function bootApp() {
+      applyStoredRatingFilter();
+      updateFilterBadge();
       renderLibraryViewSwitch();
       await Promise.all([
         loadLibraryTree(),

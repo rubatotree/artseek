@@ -189,6 +189,14 @@ def clear_finished_jobs(c: AppContainer = Depends(get_container)) -> dict[str, A
     return {"removed": removed, "queue": c.job_manager.queue_snapshot()}
 
 
+@router.post("/api/jobs/purge-legacy-tags")
+def purge_legacy_tags(c: AppContainer = Depends(get_container)) -> dict[str, Any]:
+    if c.index_job.running or c.job_manager.is_busy(("retag", "index", "compact")):
+        raise HTTPException(409, "正在执行索引或打标任务，请先停止后再清理旧标签")
+    summary = c.job_manager.purge_legacy_auto_tags(keep_new_models=True)
+    return {"summary": summary, "counts": c.job_manager.task_summary()}
+
+
 @router.get("/api/jobs/{job_id}")
 def get_job(job_id: str, c: AppContainer = Depends(get_container)) -> dict[str, Any]:
     row = c.jobs_repo.get(job_id)
