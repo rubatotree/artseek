@@ -12,7 +12,6 @@ from typing import Any
 import numpy as np
 
 from ..core.scope import ImageScope
-from ..library import natural_key
 from ..query import normalize_tag
 from ..tag_dictionary import expand_tag_aliases
 from ..tag_query import And, Atom, Node, Not, Or, parse_tag_expression
@@ -400,18 +399,20 @@ class ScopeResolver:
             page_ids = shuffled[offset : offset + limit].tolist()
             return page_ids, total, offset + len(page_ids) < total, order, used_seed
 
-        # Natural filename sorting preserves v1 natural_key semantics ("2" before "10").
-        fetched = cur.execute(
-            f"{with_prefix}SELECT i.id, i.name, i.point_id FROM images AS i WHERE {where_sql}",
+        # Natural filename sorting is precomputed into `sort_name` so SQLite can
+        # order large scopes in C instead of sorting every row in Python.
+        direction = "DESC" if order == "name_desc" else "ASC"
+        total_row = cur.execute(
+            f"{with_prefix}SELECT COUNT(*) FROM images AS i WHERE {where_sql}",
             tuple(params),
-        ).fetchall()
-        total = len(fetched)
+        ).fetchone()
+        total = int(total_row[0]) if total_row else 0
         if offset >= total:
             return [], total, False, order, None
-        items = [(int(r[0]), str(r[1]), str(r[2])) for r in fetched]
-        items.sort(
-            key=lambda entry: (natural_key(entry[1]), entry[2]),
-            reverse=(order == "name_desc"),
-        )
-        page_ids = [entry[0] for entry in items[offset : offset + limit]]
+        rows = cur.execute(
+            f"{with_prefix}SELECT i.id FROM images AS i WHERE {where_sql} "
+            f"ORDER BY i.sort_name {direction}, i.point_id {direction} LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        ).fetchall()
+        page_ids = [int(r[0]) for r in rows]
         return page_ids, total, offset + len(page_ids) < total, order, None

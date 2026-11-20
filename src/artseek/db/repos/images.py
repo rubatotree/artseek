@@ -13,6 +13,7 @@ from typing import Any
 
 import numpy as np
 
+from ...core.sort_keys import natural_sort_text
 from ...image_io import canonical_path
 from ...query import normalize_tag
 from ..connection import Database
@@ -564,8 +565,8 @@ class ImageRepo:
                     INSERT INTO images(
                         id, point_id, root_id, folder_id, path, path_key, name, ext,
                         mtime_ns, size_bytes, width, height, content_hash, phash,
-                        indexed_at, descriptor_text, caption_json, deleted
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                        indexed_at, descriptor_text, caption_json, deleted, sort_name
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         point_id = excluded.point_id,
                         root_id = excluded.root_id,
@@ -583,7 +584,8 @@ class ImageRepo:
                         indexed_at = excluded.indexed_at,
                         descriptor_text = excluded.descriptor_text,
                         caption_json = excluded.caption_json,
-                        deleted = 0
+                        deleted = 0,
+                        sort_name = excluded.sort_name
                     """,
                     (
                         img_id,
@@ -603,6 +605,7 @@ class ImageRepo:
                         int(indexed_at),
                         rec.descriptor_text,
                         caption_json,
+                        natural_sort_text(rec.name),
                     ),
                 )
                 conn.execute("DELETE FROM image_tags WHERE image_id = ?", (img_id,))

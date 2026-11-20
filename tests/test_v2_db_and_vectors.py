@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from artseek.core.scope import ImageScope
+from artseek.core.sort_keys import natural_sort_text
 from artseek.db.connection import Database
 from artseek.db.repos.collections import CollectionRepo
 from artseek.db.repos.images import ImageRepo
@@ -18,6 +19,7 @@ from artseek.db.repos.provenance import ProvenanceRepo
 from artseek.db.repos.query_cache import QueryPlanCacheRepo
 from artseek.db.scope_resolver import ScopeResolver
 from artseek.image_io import canonical_path, point_id
+from artseek.library import natural_key
 from artseek.provenance.parser import ParsedSource, SourceRef
 from artseek.vectors.index import VectorIndex
 
@@ -48,6 +50,29 @@ class V2DataLayerTests(unittest.TestCase):
         self.vindex.release_cuda()
         self.db.close()
         self._tmp.cleanup()
+
+    def test_natural_sort_text_matches_python_natural_key(self) -> None:
+        names = [
+            "2.jpg",
+            "10.jpg",
+            "a2",
+            "a10",
+            "A2",
+            "bjd",
+            "133",
+            "b 1",
+            "a01",
+            "a1",
+            "x100y2",
+            "x100y10",
+            "(1-027 白) タグマール.png",
+            "00.jpg",
+            "",
+        ]
+        self.assertEqual(
+            sorted(names, key=natural_key),
+            sorted(names, key=natural_sort_text),
+        )
 
     def _seed_sample_library(self) -> dict[str, tuple[int, str]]:
         root = self.base / "pics"

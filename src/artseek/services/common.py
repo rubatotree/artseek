@@ -125,7 +125,9 @@ def fast_folder_key(value: str | Path, known_keys: set[str] | None = None) -> st
     text = str(value or "").strip()
     if not text:
         return ""
-    if not text.startswith("~") and os.path.isabs(text):
+    if not text.startswith("~") and (
+        os.path.isabs(text) or (len(text) >= 2 and text[1] == ":")
+    ):
         norm = os.path.normcase(os.path.normpath(text))
         if known_keys is None or norm in known_keys:
             return norm
@@ -310,7 +312,7 @@ def build_folder_tree_from_db(images: ImageRepo) -> FolderTreeIndex:
 
 
 def reconcile_scope_with_tree(
-    images: ImageRepo, tree: FolderTreeIndex
+    images: ImageRepo, tree: FolderTreeIndex, *, persist: bool = True
 ) -> tuple[dict[str, Any], list[str]]:
     """Reconcile persisted scope state against current DB folders without disk Path.resolve."""
     gen = images.db.write_generation
@@ -348,14 +350,20 @@ def reconcile_scope_with_tree(
         "mtime_after": raw.get("mtime_after"),
         "mtime_before": raw.get("mtime_before"),
     }
-    if merged != raw_cmp:
-        images.save_scope_state(
-            sort=sort,
-            selected=selected,
-            known=merged_known,
-            mtime_after=after,
-            mtime_before=before,
-        )
+    if persist and merged != raw_cmp and not images.db._write_lock._is_owned():
+        # Skip persisting during a concurrent writer's transaction so reads stay lock-free.
+        acquired = images.db._write_lock.acquire(blocking=False)
+        if acquired:
+            try:
+                images.save_scope_state(
+                    sort=sort,
+                    selected=selected,
+                    known=merged_known,
+                    mtime_after=after,
+                    mtime_before=before,
+                )
+            finally:
+                images.db._write_lock.release()
     images._cached_reconciled_scope = (  # type: ignore[attr-defined]
         images.db.write_generation,
         merged,

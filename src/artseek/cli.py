@@ -23,7 +23,6 @@ from .db.connection import Database
 from .db.repos.images import ImageRepo
 from .db.repos.provenance import ProvenanceRepo
 from .image_io import canonical_path
-from .indexer import ImageIndexer
 from .library import index_roots_from_scope, load_catalog, load_scope, root_image_counts
 from .ml.llm import OllamaClient
 from .model_manager import pull_models
@@ -113,14 +112,26 @@ def _run_index(
     captions: bool | None,
     recursive: bool,
 ) -> None:
+    from .indexing.scan import IncrementalScanner
+    from .ml.captioner import Captioner
+    from .ml.embedder import SiglipEmbedder
+    from .ml.llm import OllamaUnavailable
+
     mismatch = cuda_mismatch_hint()
     if mismatch:
         console.print(f"[yellow]{mismatch}[/yellow]")
-    console.print("正在载入本地向量模型与插画标签器……")
-    indexer = ImageIndexer(cfg)
     console.print(f"推理设备：{describe_runtime(cfg.embedding.device)}")
     progress_state: dict[str, int] = {}
+    db = Database(cfg.db_path)
     try:
+        images = ImageRepo(db)
+        prov = ProvenanceRepo(db)
+        vectors = VectorIndex(
+            cfg.visual_vectors_path,
+            cfg.descriptor_vectors_path,
+            active_rows=images.active_row_ids(),
+        )
+        scanner = IncrementalScanner(cfg, db, images, vectors, cpu_workers=8)
         with Progress(
             TextColumn("{task.description}"),
             BarColumn(),
@@ -136,24 +147,67 @@ def _run_index(
                     )
                 progress.update(progress_state[root], completed=done)
 
-            summary = indexer.index(
+            summary = scanner.index_roots(
                 directories,
                 recursive=recursive,
                 force=force,
-                captions=captions,
                 progress=update,
             )
             if summary.indexed or summary.deleted:
                 console.print("正在更新图片来源…")
-                provenance = ProvenanceStore(cfg.provenance_path)
                 scan_payloads(
-                    provenance,
-                    indexer.store.iter_payloads(),
-                    total=indexer.store.count(),
+                    prov,
+                    images.iter_scan_payloads(),
+                    total=images.count(),
                     deep=False,
+                    only_new=True,
                 )
+
+            use_captions = cfg.llm.caption_on_index if captions is None else bool(captions)
+            if use_captions and summary.indexed > 0:
+                rows = db.read_conn().execute(
+                    """
+                    SELECT id, path FROM images
+                    WHERE deleted = 0
+                      AND (caption_json IS NULL OR caption_json = '' OR caption_json = 'null')
+                    ORDER BY id
+                    """
+                ).fetchall()
+                if rows:
+                    captioner = Captioner(cfg.llm)
+                    embedder = SiglipEmbedder(cfg.embedding)
+                    try:
+                        cap_task = progress.add_task("长描述", total=len(rows))
+                        for idx, r in enumerate(rows, start=1):
+                            img_id = int(r["id"])
+                            p = Path(str(r["path"]))
+                            if not p.is_file():
+                                continue
+                            try:
+                                cap = captioner.caption_image(p)
+                            except OllamaUnavailable as exc:
+                                summary.llm_warning = str(exc)
+                                break
+                            payload = images.get_payloads_by_ids([img_id]).get(img_id)
+                            tags = list(payload.get("tags", [])) if payload else []
+                            desc_text = captioner.build_descriptor_text(tags, cap)
+                            images.update_caption_and_descriptor(img_id, cap, desc_text)
+                            if desc_text.strip():
+                                desc_vec = embedder.encode_texts([desc_text])[0]
+                                vis_vec = vectors.visual_vectors([img_id]).get(img_id)
+                                if vis_vec is not None:
+                                    vectors.set_rows(
+                                        [img_id],
+                                        vis_vec.reshape(1, -1),
+                                        np.asarray(desc_vec, dtype=np.float32).reshape(1, -1),
+                                    )
+                            progress.update(cap_task, completed=idx)
+                        vectors.flush()
+                    finally:
+                        embedder.close()
+        vectors.release_cuda()
     finally:
-        indexer.close()
+        db.close()
 
     table = Table(title="索引完成")
     table.add_column("发现")
@@ -205,11 +259,15 @@ def rebuild_command(
 ) -> None:
     """清空旧向量索引后完整重建；不会删除或修改原图片。"""
     cfg = _config(config)
-    store = VectorStore(cfg)
+    db = Database(cfg.db_path)
     try:
-        store.clear()
+        images = ImageRepo(db)
+        images.clear_all_images()
+        vectors = VectorIndex(cfg.visual_vectors_path, cfg.descriptor_vectors_path)
+        vectors.clear()
+        vectors.release_cuda()
     finally:
-        store.close()
+        db.close()
     _run_index(cfg, directories, force=True, captions=captions, recursive=True)
 
 

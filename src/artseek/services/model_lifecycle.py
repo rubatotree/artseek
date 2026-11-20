@@ -20,7 +20,7 @@ from ..vectors.index import VectorIndex
 
 
 def _default_embedder(config: AppConfig) -> Any:
-    from ..models.embedder import SiglipEmbedder
+    from ..ml.embedder import SiglipEmbedder
 
     return SiglipEmbedder(config.embedding)
 

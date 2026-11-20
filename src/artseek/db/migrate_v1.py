@@ -18,6 +18,7 @@ import numpy as np
 
 from ..collections import CollectionStore, is_artist_item
 from ..config import AppConfig
+from ..core.sort_keys import natural_sort_text
 from ..image_io import canonical_path
 from ..library import DEFAULT_SORT, SORT_KEYS, normalize_day
 from ..notes import HASH_RE, display_title
@@ -466,6 +467,9 @@ def migrate_v1(
                                 now_ts,
                                 str(payload.get("descriptor_text") or ""),
                                 _encode_caption(payload.get("caption")),
+                                natural_sort_text(
+                                    str(payload.get("name") or os.path.basename(raw_path))
+                                ),
                             )
                         )
                         if tags:
@@ -478,8 +482,8 @@ def migrate_v1(
                         INSERT INTO images(
                             id, point_id, root_id, folder_id, path, path_key, name, ext,
                             mtime_ns, size_bytes, width, height, content_hash, phash,
-                            indexed_at, descriptor_text, caption_json, deleted
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                            indexed_at, descriptor_text, caption_json, deleted, sort_name
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
                         """,
                         img_rows,
                     )

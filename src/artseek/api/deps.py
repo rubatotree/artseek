@@ -18,6 +18,7 @@ from ..db.repos.notes import NotesIndexRepo
 from ..db.repos.provenance import ProvenanceRepo
 from ..db.repos.query_cache import QueryPlanCacheRepo
 from ..db.scope_resolver import ScopeResolver
+from ..indexing.jobs import JobManager
 from ..ml.llm import OllamaClient
 from ..notes import NoteStore
 from ..search_cache import SearchSnapshotStore
@@ -144,6 +145,25 @@ class AppContainer:
             is_busy=lambda: self.index_job.running or self.provenance_job.running,
             on_index_reopened=self.invalidate_caches,
         )
+        self.job_manager = JobManager(
+            config,
+            self.db,
+            self.images,
+            self.prov_repo,
+            self.jobs_repo,
+            self.vectors,
+            self.lifecycle,
+            self.provenance,
+            on_caches_invalidated=self.invalidate_caches,
+            on_index_completed=self._on_index_completed,
+            index_state=self.index_job,
+            provenance_state=self.provenance_job,
+        )
+
+    def _on_index_completed(self) -> None:
+        # Parsing is cheap; the next /api/index-status or /api/jobs poll starts
+        # the gated provenance refresh without blocking index completion.
+        self.provenance_refresh_pending = True
 
     def _on_dimension_known(self, dim: int) -> None:
         known = self.images.known_dimension()
@@ -155,6 +175,7 @@ class AppContainer:
         self.artists.invalidate_cache()
 
     def close(self) -> None:
+        self.job_manager.close()
         self.provenance_job.stop_event.set()
         self.provenance_job.pause_event.clear()
         self.lifecycle.close()
