@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import heapq
 import itertools
 import threading
 import time
@@ -10,7 +9,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
@@ -222,8 +221,7 @@ class JobManager:
                     enqueue_captions=use_captions,
                 )
 
-            heapq.heappush(
-                self._queue,
+            self._insert_task_locked(
                 _QueuedTask(
                     JOB_PRIORITIES["index"],
                     next(self._seq),
@@ -231,6 +229,7 @@ class JobManager:
                     "index",
                     _run,
                 ),
+                use_priority=True,
             )
             self._cond.notify_all()
             return job_id
@@ -249,8 +248,7 @@ class JobManager:
             def _run() -> None:
                 self._execute_caption_backfill(job_id, limit=limit)
 
-            heapq.heappush(
-                self._queue,
+            self._insert_task_locked(
                 _QueuedTask(
                     JOB_PRIORITIES["caption"],
                     next(self._seq),
@@ -258,9 +256,21 @@ class JobManager:
                     "caption",
                     _run,
                 ),
+                use_priority=True,
             )
             self._cond.notify_all()
             return job_id
+
+    def _insert_task_locked(self, task: _QueuedTask, *, use_priority: bool = True) -> None:
+        if not use_priority:
+            self._queue.append(task)
+            return
+        idx = len(self._queue)
+        for pos, existing in enumerate(self._queue):
+            if task.priority < existing.priority:
+                idx = pos
+                break
+        self._queue.insert(idx, task)
 
     def _enqueue_job(
         self,
@@ -269,6 +279,8 @@ class JobManager:
         params: dict[str, Any],
         message: str,
         runner: Callable[[str], None],
+        *,
+        use_priority: bool = False,
     ) -> str:
         with self._cond:
             job_id = f"{prefix}-{uuid.uuid4().hex[:12]}"
@@ -283,8 +295,7 @@ class JobManager:
             def _run() -> None:
                 runner(job_id)
 
-            heapq.heappush(
-                self._queue,
+            self._insert_task_locked(
                 _QueuedTask(
                     JOB_PRIORITIES.get(kind, 50),
                     next(self._seq),
@@ -292,9 +303,70 @@ class JobManager:
                     kind,
                     _run,
                 ),
+                use_priority=use_priority,
             )
             self._cond.notify_all()
             return job_id
+
+    def queue_snapshot(self, *, history_limit: int = 12) -> dict[str, Any]:
+        """Return active job, ordered queued jobs, and recent finished jobs."""
+        with self._cond:
+            active_id = self._active_job_id
+            queued_ids = [t.job_id for t in self._queue]
+            paused = self._pause_event.is_set()
+        active = self.jobs_repo.get(active_id) if active_id else None
+        queued: list[dict[str, Any]] = []
+        for jid in queued_ids:
+            row = self.jobs_repo.get(jid)
+            if row is not None:
+                queued.append(row)
+        skip_ids = {jid for jid in ([active_id] if active_id else [])} | set(queued_ids)
+        history = [
+            row
+            for row in self.jobs_repo.list_recent(limit=max(1, int(history_limit)) + len(skip_ids))
+            if row["id"] not in skip_ids
+        ][: max(1, int(history_limit))]
+        return {
+            "active": active,
+            "queued": queued,
+            "history": history,
+            "paused": paused,
+        }
+
+    def move_queued_job(
+        self,
+        job_id: str,
+        direction: Literal["up", "down", "top", "bottom"],
+    ) -> bool:
+        with self._cond:
+            idx = next((i for i, t in enumerate(self._queue) if t.job_id == job_id), None)
+            if idx is None:
+                return False
+            task = self._queue.pop(idx)
+            if direction == "up":
+                new_idx = max(0, idx - 1)
+            elif direction == "down":
+                new_idx = min(len(self._queue), idx + 1)
+            elif direction == "top":
+                new_idx = 0
+            else:
+                new_idx = len(self._queue)
+            self._queue.insert(new_idx, task)
+            return True
+
+    def remove_job(self, job_id: str) -> bool:
+        with self._cond:
+            if self._active_job_id == job_id:
+                raise RuntimeError("运行中的任务无法直接删除，请先停止当前任务")
+            before = len(self._queue)
+            self._queue = [t for t in self._queue if t.job_id != job_id]
+            in_queue = len(self._queue) < before
+            self._cond.notify_all()
+        deleted = self.jobs_repo.delete(job_id)
+        return in_queue or deleted
+
+    def clear_finished_jobs(self) -> int:
+        return self.jobs_repo.clear_finished()
 
     def task_summary(self, scope_row_ids: Sequence[int] | None = None) -> dict[str, int]:
         return self.task_state.summary_counts(scope_row_ids=scope_row_ids)
@@ -378,6 +450,118 @@ class JobManager:
             ),
         )
 
+    def submit_provenance_scan_job(
+        self,
+        *,
+        deep: bool = False,
+        only_new: bool = True,
+        auto_enrich: bool = True,
+    ) -> str:
+        label = "深度来源扫描" if deep else "本地增量扫源"
+        return self._enqueue_job(
+            "provenance_scan",
+            "pscan",
+            {"deep": bool(deep), "only_new": bool(only_new), "auto_enrich": bool(auto_enrich)},
+            f"等待执行{label}…",
+            lambda jid: self._execute_provenance_scan(
+                jid,
+                deep=deep,
+                only_new=only_new,
+                auto_enrich=auto_enrich,
+            ),
+        )
+
+    def submit_provenance_enrich_job(
+        self,
+        *,
+        platforms: Sequence[str] = ("pixiv", "twitter"),
+        limit: int | None = None,
+    ) -> str:
+        clean_platforms = [
+            p for p in platforms if p in {"pixiv", "twitter"}
+        ] or ["pixiv", "twitter"]
+        return self._enqueue_job(
+            "provenance_enrich",
+            "penrich",
+            {"platforms": clean_platforms, "limit": limit},
+            f"等待补全 {'/'.join(clean_platforms)} 来源元数据…",
+            lambda jid: self._execute_provenance_enrich(
+                jid,
+                platforms=clean_platforms,
+                limit=limit,
+            ),
+        )
+
+    def auto_fill_queue(
+        self,
+        *,
+        backend: str | None = None,
+        scope_row_ids: Sequence[int] | None = None,
+        include_provenance: bool = False,
+    ) -> list[str]:
+        """Automatically enqueue incomplete pipeline steps not already active or queued."""
+        canon = normalize_tagger_backend(backend or self.config.tagger.backend)
+        with self._cond:
+            busy_kinds = {t.kind for t in self._queue}
+            if self._active_kind:
+                busy_kinds.add(self._active_kind)
+
+        added: list[str] = []
+        if (
+            include_provenance
+            and "provenance_scan" not in busy_kinds
+            and self.images.count() > int(self.prov_repo.stats().get("total") or 0)
+        ):
+            added.append(
+                self.submit_provenance_scan_job(deep=False, only_new=True, auto_enrich=True)
+            )
+
+        req_versions = model_versions_for_backend(canon)
+        if "retag" not in busy_kinds and self.task_state.pending_for_tagger(
+            req_versions, scope_row_ids=scope_row_ids, skip_completed=True, limit=1
+        ):
+            added.append(
+                self.submit_retag_job(
+                    backend=canon,
+                    scope_row_ids=scope_row_ids,
+                    skip_completed=True,
+                )
+            )
+
+        if "vision_enrich" not in busy_kinds and self.task_state.pending_for_vision(
+            min_version=VISION_META_VERSION,
+            scope_row_ids=scope_row_ids,
+            skip_completed=True,
+            limit=1,
+        ):
+            added.append(
+                self.submit_vision_enrich_job(
+                    scope_row_ids=scope_row_ids,
+                    skip_completed=True,
+                )
+            )
+
+        if "ccip" not in busy_kinds and self.task_state.pending_for_ccip(
+            scope_row_ids=scope_row_ids,
+            skip_completed=True,
+            limit=1,
+        ):
+            added.append(
+                self.submit_ccip_job(
+                    scope_row_ids=scope_row_ids,
+                    skip_completed=True,
+                )
+            )
+
+        if include_provenance and "provenance_enrich" not in busy_kinds:
+            pending_recs = self.provenance_service.select_enrich_records(
+                platforms=("pixiv", "twitter"), limit=1
+            )
+            if pending_recs:
+                added.append(self.submit_provenance_enrich_job())
+
+        return added
+
     # ---------------------------------------------------------------- worker loop
     def _worker_loop(self) -> None:
         while True:
@@ -386,7 +570,7 @@ class JobManager:
                     self._cond.wait()
                 if self._shutdown:
                     return
-                task = heapq.heappop(self._queue)
+                task = self._queue.pop(0)
                 self._active_job_id = task.job_id
                 self._active_kind = task.kind
                 self._stop_event.clear()
@@ -991,6 +1175,125 @@ class JobManager:
             if extractor is not None:
                 extractor.close()
             release_accelerator()
+
+    def _execute_provenance_scan(
+        self,
+        job_id: str,
+        *,
+        deep: bool,
+        only_new: bool,
+        auto_enrich: bool,
+    ) -> None:
+        self.jobs_repo.update(job_id, status="running", message="正在扫描本地图库来源…")
+
+        def _progress(done: int, total: int, label: str) -> None:
+            self.jobs_repo.update(
+                job_id,
+                done=done,
+                total=total,
+                message=f"正在扫描来源 {done}/{total} · {label}",
+            )
+
+        try:
+            summary = self.provenance_service.run_scan(
+                deep=deep,
+                only_new=only_new,
+                progress=_progress,
+                stop_event=self._stop_event,
+                pause_event=self._pause_event,
+            )
+            if auto_enrich and not self._stop_event.is_set():
+                pending_recs = self.provenance_service.select_enrich_records(
+                    platforms=("pixiv", "twitter"), limit=None
+                )
+                if pending_recs:
+                    self.jobs_repo.update(
+                        job_id,
+                        message=f"本地扫描完成，正在补全 {len(pending_recs)} 条远端元数据…",
+                    )
+                    self.provenance_service.run_enrich(
+                        pending_recs,
+                        progress=_progress,
+                        stop_event=self._stop_event,
+                        pause_event=self._pause_event,
+                    )
+            status = "stopped" if self._stop_event.is_set() else "completed"
+            self.jobs_repo.update(
+                job_id,
+                status=status,
+                message=f"本地来源扫描完成：扫描 {summary.get('scanned', 0)} 张",
+                summary=summary,
+            )
+        except Exception as exc:
+            self.jobs_repo.update(
+                job_id,
+                status="failed",
+                message="本地来源扫描失败",
+                error=str(exc),
+            )
+
+    def _execute_provenance_enrich(
+        self,
+        job_id: str,
+        *,
+        platforms: Sequence[str],
+        limit: int | None = None,
+    ) -> None:
+        records = self.provenance_service.select_enrich_records(
+            platforms=platforms, limit=limit
+        )
+        total = len(records)
+        if total == 0:
+            self.jobs_repo.update(
+                job_id,
+                status="completed",
+                done=0,
+                total=0,
+                message="没有待补全的 Pixiv / X 来源记录",
+                summary={"total": 0, "ok": 0, "failed": 0},
+            )
+            return
+        self.jobs_repo.update(
+            job_id,
+            status="running",
+            done=0,
+            total=total,
+            message=f"正在补全 Pixiv / X 元数据 0/{total}…",
+        )
+
+        def _progress(done: int, total_cnt: int, label: str) -> None:
+            self.jobs_repo.update(
+                job_id,
+                done=done,
+                total=total_cnt,
+                message=f"正在补全元数据 {done}/{total_cnt} · {label}",
+            )
+
+        try:
+            summary = self.provenance_service.run_enrich(
+                records,
+                progress=_progress,
+                stop_event=self._stop_event,
+                pause_event=self._pause_event,
+            )
+            status = "stopped" if self._stop_event.is_set() else "completed"
+            ok_cnt = int(summary.get("ok", 0))
+            fail_cnt = int(summary.get("failed", 0))
+            self.jobs_repo.update(
+                job_id,
+                status=status,
+                done=ok_cnt,
+                total=total,
+                message=f"远端元数据补全完成：成功 {ok_cnt}，失败 {fail_cnt}",
+                summary=summary,
+            )
+        except Exception as exc:
+            self.jobs_repo.update(
+                job_id,
+                status="failed",
+                message="远端元数据补全失败",
+                error=str(exc),
+            )
 
     def retag_single_image(
         self,

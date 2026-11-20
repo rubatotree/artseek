@@ -141,3 +141,15 @@ class JobRepo:
                 (int(time.time()),),
             )
             return int(cur.rowcount or 0)
+
+    def delete(self, job_id: str) -> bool:
+        with self.db.write_tx() as conn:
+            cur = conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+            return int(cur.rowcount or 0) > 0
+
+    def clear_finished(self) -> int:
+        with self.db.write_tx() as conn:
+            cur = conn.execute(
+                "DELETE FROM jobs WHERE status IN ('completed', 'failed', 'stopped', 'interrupted')"
+            )
+            return int(cur.rowcount or 0)

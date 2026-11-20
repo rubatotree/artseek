@@ -12,8 +12,12 @@ from ...image_io import canonical_path
 from ...services.common import attach_provenance, gallery_result, resolve_folder_keys_from_db
 from ..deps import AppContainer, get_container
 from ..schemas import (
+    AutoFillQueueRequest,
     IndexAddRequest,
     IndexRemoveRequest,
+    JobMoveRequest,
+    ProvenanceEnrichRequest,
+    ProvenanceScanRequest,
     RetagJobRequest,
     SingleRetagRequest,
     VisionTaskRequest,
@@ -121,12 +125,100 @@ def task_stats(c: AppContainer = Depends(get_container)) -> dict[str, Any]:
     return {"counts": c.job_manager.task_summary()}
 
 
+@router.get("/api/jobs/queue")
+def job_queue(c: AppContainer = Depends(get_container)) -> dict[str, Any]:
+    return c.job_manager.queue_snapshot()
+
+
+@router.post("/api/jobs/auto-fill")
+def auto_fill_queue(
+    request: AutoFillQueueRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    if c.index_job.running:
+        raise HTTPException(409, "正在索引图片，请稍后再安排队列")
+    scope_rows = _scope_rows_for_folders(c, request.folder_keys)
+    try:
+        added = c.job_manager.auto_fill_queue(
+            backend=request.backend,
+            scope_row_ids=scope_rows,
+            include_provenance=request.include_provenance,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"added": added, "queue": c.job_manager.queue_snapshot()}
+
+
+@router.post("/api/jobs/provenance-scan")
+def enqueue_provenance_scan(
+    request: ProvenanceScanRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    if c.index_job.running:
+        raise HTTPException(409, "正在索引图片，请稍后再安排扫描任务")
+    auto_enrich = (
+        c.config.provenance.auto_enrich
+        if request.auto_enrich is None
+        else request.auto_enrich
+    )
+    job_id = c.job_manager.submit_provenance_scan_job(
+        deep=request.deep,
+        only_new=request.only_new,
+        auto_enrich=auto_enrich,
+    )
+    return {"job_id": job_id, "job": c.jobs_repo.get(job_id)}
+
+
+@router.post("/api/jobs/provenance-enrich")
+def enqueue_provenance_enrich(
+    request: ProvenanceEnrichRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    if c.index_job.running:
+        raise HTTPException(409, "正在索引图片，请稍后再安排补全任务")
+    job_id = c.job_manager.submit_provenance_enrich_job(
+        platforms=list(request.platforms),
+        limit=request.limit,
+    )
+    return {"job_id": job_id, "job": c.jobs_repo.get(job_id)}
+
+
+@router.post("/api/jobs/clear-finished")
+def clear_finished_jobs(c: AppContainer = Depends(get_container)) -> dict[str, Any]:
+    removed = c.job_manager.clear_finished_jobs()
+    return {"removed": removed, "queue": c.job_manager.queue_snapshot()}
+
+
 @router.get("/api/jobs/{job_id}")
 def get_job(job_id: str, c: AppContainer = Depends(get_container)) -> dict[str, Any]:
     row = c.jobs_repo.get(job_id)
     if row is None:
         raise HTTPException(404, "任务不存在")
     return row
+
+
+@router.post("/api/jobs/{job_id}/move")
+def move_queued_job(
+    job_id: str,
+    request: JobMoveRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    moved = c.job_manager.move_queued_job(job_id, request.direction)
+    return {"moved": moved, "queue": c.job_manager.queue_snapshot()}
+
+
+@router.delete("/api/jobs/{job_id}")
+def remove_job(
+    job_id: str,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    try:
+        removed = c.job_manager.remove_job(job_id)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not removed:
+        raise HTTPException(404, "任务不存在或已不在队列中")
+    return {"removed": True, "queue": c.job_manager.queue_snapshot()}
 
 
 @router.post("/api/jobs/pause")

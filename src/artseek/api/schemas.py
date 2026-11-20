@@ -489,6 +489,16 @@ class SingleRetagRequest(BaseModel):
     backend: str | None = None
 
 
+class AutoFillQueueRequest(BaseModel):
+    backend: str | None = None
+    folder_keys: list[str] | None = None
+    include_provenance: bool = False
+
+
+class JobMoveRequest(BaseModel):
+    direction: Literal["up", "down", "top", "bottom"]
+
+
 class UrlIgnoredRequest(BaseModel):
     ignored: bool = True
 
