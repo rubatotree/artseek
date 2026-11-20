@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 from unittest.mock import patch
-from urllib.error import URLError
+
+import httpx
 
 from artseek.config import LLMConfig
-from artseek.llm import OllamaClient, OllamaUnavailable
+from artseek.ml.llm import OllamaClient, OllamaUnavailable, is_localhost_url
 
 
 class ModelInstalledTests(unittest.TestCase):
@@ -17,92 +19,95 @@ class ModelInstalledTests(unittest.TestCase):
         self.assertFalse(OllamaClient.model_installed("qwen3:4b", []))
 
 
+class ProxyBypassTests(unittest.TestCase):
+    def test_localhost_disables_env_proxy_while_remote_keeps_it(self) -> None:
+        self.assertTrue(is_localhost_url("http://127.0.0.1:11434"))
+        self.assertTrue(is_localhost_url("http://localhost:11434"))
+        self.assertFalse(is_localhost_url("http://192.168.1.50:11434"))
+
+        with patch.dict(
+            os.environ,
+            {
+                "HTTP_PROXY": "http://127.0.0.1:7897",
+                "HTTPS_PROXY": "http://127.0.0.1:7897",
+                "ALL_PROXY": "socks5://127.0.0.1:7897",
+            },
+        ):
+            local = OllamaClient(LLMConfig(base_url="http://127.0.0.1:11434"))
+            with local._make_client(timeout=2.0) as c_local:
+                self.assertFalse(c_local.trust_env)
+                self.assertEqual(c_local._mounts, {})
+
+            remote = OllamaClient(LLMConfig(base_url="http://192.168.1.50:11434"))
+            with remote._make_client(timeout=2.0) as c_remote:
+                self.assertTrue(c_remote.trust_env)
+                self.assertTrue(bool(c_remote._mounts))
+
+
 class PreloadTests(unittest.TestCase):
     def test_disabled_client_does_not_touch_network(self) -> None:
-        client = OllamaClient(LLMConfig(enabled=False))
-        with patch("artseek.llm.urllib.request.urlopen") as urlopen:
-            client.preload()
-        urlopen.assert_not_called()
+        called = False
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            nonlocal called
+            called = True
+            return httpx.Response(200, json={})
+
+        client = OllamaClient(
+            LLMConfig(enabled=False), transport=httpx.MockTransport(handler)
+        )
+        client.preload()
+        self.assertFalse(called)
 
     def test_preload_loads_installed_query_model(self) -> None:
-        client = OllamaClient(LLMConfig(enabled=True, query_model="qwen3:4b"))
-        tags = json.dumps({"models": [{"name": "qwen3:4b"}]}).encode("utf-8")
-        loaded = json.dumps({"done": True}).encode("utf-8")
-        responses = [tags, loaded]
+        paths: list[str] = []
 
-        def fake_urlopen(request, timeout=None):
-            del timeout
-            payload = responses.pop(0)
+        def handler(request: httpx.Request) -> httpx.Response:
+            paths.append(request.url.path)
+            if request.url.path == "/api/tags":
+                return httpx.Response(200, json={"models": [{"name": "qwen3:4b"}]})
+            return httpx.Response(200, json={"done": True})
 
-            class Handle:
-                def __enter__(self):
-                    return self
-
-                def __exit__(self, *args):
-                    return False
-
-                def read(self):
-                    return payload
-
-            return Handle()
-
-        with patch("artseek.llm.urllib.request.urlopen", side_effect=fake_urlopen):
-            client.preload()
-        self.assertEqual(responses, [])
+        client = OllamaClient(
+            LLMConfig(enabled=True, query_model="qwen3:4b"),
+            transport=httpx.MockTransport(handler),
+        )
+        client.preload()
+        self.assertEqual(paths, ["/api/tags", "/api/generate"])
 
     def test_preload_errors_when_model_missing(self) -> None:
-        client = OllamaClient(LLMConfig(enabled=True, query_model="qwen3:4b"))
-        tags = json.dumps({"models": [{"name": "qwen3:8b"}]}).encode("utf-8")
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"models": [{"name": "qwen3:8b"}]})
 
-        def fake_urlopen(request, timeout=None):
-            del request, timeout
-
-            class Handle:
-                def __enter__(self):
-                    return self
-
-                def __exit__(self, *args):
-                    return False
-
-                def read(self):
-                    return tags
-
-            return Handle()
-
-        with patch("artseek.llm.urllib.request.urlopen", side_effect=fake_urlopen):
-            with self.assertRaises(OllamaUnavailable):
-                client.preload()
+        client = OllamaClient(
+            LLMConfig(enabled=True, query_model="qwen3:4b"),
+            transport=httpx.MockTransport(handler),
+        )
+        with self.assertRaises(OllamaUnavailable):
+            client.preload()
 
     def test_preload_errors_when_ollama_down(self) -> None:
-        client = OllamaClient(LLMConfig(enabled=True))
-        with patch("artseek.llm.urllib.request.urlopen", side_effect=URLError("down")):
-            with self.assertRaises(OllamaUnavailable):
-                client.preload()
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("down", request=request)
+
+        client = OllamaClient(
+            LLMConfig(enabled=True), transport=httpx.MockTransport(handler)
+        )
+        with self.assertRaises(OllamaUnavailable):
+            client.preload()
 
     def test_unload_sends_keep_alive_zero(self) -> None:
-        client = OllamaClient(
-            LLMConfig(enabled=True, query_model="qwen3:4b", vision_model="qwen3-vl:4b")
-        )
         seen: list[dict] = []
 
-        def fake_urlopen(request, timeout=None):
-            del timeout
-            seen.append(json.loads(request.data.decode("utf-8")))
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(json.loads(request.content.decode("utf-8")))
+            return httpx.Response(200, json={"done": True})
 
-            class Handle:
-                def __enter__(self):
-                    return self
-
-                def __exit__(self, *args):
-                    return False
-
-                def read(self):
-                    return json.dumps({"done": True}).encode("utf-8")
-
-            return Handle()
-
-        with patch("artseek.llm.urllib.request.urlopen", side_effect=fake_urlopen):
-            client.unload()
+        client = OllamaClient(
+            LLMConfig(enabled=True, query_model="qwen3:4b", vision_model="qwen3-vl:4b"),
+            transport=httpx.MockTransport(handler),
+        )
+        client.unload()
         self.assertEqual(
             seen,
             [
@@ -112,10 +117,18 @@ class PreloadTests(unittest.TestCase):
         )
 
     def test_disabled_unload_does_not_touch_network(self) -> None:
-        client = OllamaClient(LLMConfig(enabled=False))
-        with patch("artseek.llm.urllib.request.urlopen") as urlopen:
-            client.unload()
-        urlopen.assert_not_called()
+        called = False
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            nonlocal called
+            called = True
+            return httpx.Response(200, json={})
+
+        client = OllamaClient(
+            LLMConfig(enabled=False), transport=httpx.MockTransport(handler)
+        )
+        client.unload()
+        self.assertFalse(called)
 
 
 if __name__ == "__main__":

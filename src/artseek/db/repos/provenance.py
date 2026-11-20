@@ -102,10 +102,13 @@ class ProvenanceRepo(ProvenanceStore):
 
     def __init__(self, db: Database) -> None:
         self.db = db
-        self.path = Path(db.path)
         self._schema_lock = db._write_lock
         self._schema_ready = True
         self._tx_local = threading.local()
+
+    @property
+    def path(self) -> Path:
+        return Path(self.db.path)
 
     @contextmanager
     def _read(self) -> Iterator[Any]:

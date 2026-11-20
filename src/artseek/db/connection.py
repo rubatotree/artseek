@@ -83,6 +83,14 @@ class Database:
             conn = self.read_conn()
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
+    def reopen(self, new_path: Path) -> None:
+        """Close all connections, switch to `new_path`, and ensure schema is ready."""
+        with self._write_lock:
+            self.close()
+            self.path = Path(new_path)
+            self._closed = False
+            self._initialize_schema()
+
     def close(self) -> None:
         """Close all tracked thread-local connections."""
         with self._pool_lock:

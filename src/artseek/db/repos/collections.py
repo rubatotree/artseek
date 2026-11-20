@@ -21,8 +21,11 @@ class CollectionRepo(CollectionStore):
 
     def __init__(self, db: Database) -> None:
         self.db = db
-        self.path = Path(db.path)
         self._lock = db._write_lock
+
+    @property
+    def path(self) -> Path:
+        return Path(self.db.path)
 
     def create(self, name: str) -> Collection:
         with self.db.write_tx():

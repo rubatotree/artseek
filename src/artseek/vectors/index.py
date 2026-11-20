@@ -93,6 +93,19 @@ class VectorIndex:
         with self._lock:
             return self._dirty
 
+    def reopen(
+        self,
+        visual_path: Path,
+        descriptor_path: Path,
+        *,
+        active_rows: np.ndarray | Sequence[int] | None = None,
+    ) -> None:
+        """Switch backing `.npy` file paths and reload into memory."""
+        with self._lock:
+            self.visual_path = Path(visual_path)
+            self.descriptor_path = Path(descriptor_path)
+            self.reload(active_rows=active_rows)
+
     def reload(self, *, active_rows: np.ndarray | Sequence[int] | None = None) -> None:
         with self._lock:
             self.release_cuda()

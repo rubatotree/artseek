@@ -302,6 +302,47 @@ class ImageRepo:
             for row in rows
         ]
 
+    def iter_scan_payloads(self, *, batch_size: int = 1000):
+        """Stream minimal `(point_id, payload)` tuples in keyset batches for provenance scans."""
+        last_id = -1
+        while True:
+            conn = self.db.read_conn()
+            rows = conn.execute(
+                """
+                SELECT i.id, i.point_id, i.path, i.path_key, i.name, i.mtime_ns,
+                       i.width, i.height, i.content_hash, i.phash,
+                       r.root_key, r.root_path, f.folder_key
+                FROM images AS i
+                JOIN roots AS r ON r.id = i.root_id
+                JOIN folders AS f ON f.id = i.folder_id
+                WHERE i.deleted = 0 AND i.id > ?
+                ORDER BY i.id
+                LIMIT ?
+                """,
+                (last_id, int(batch_size)),
+            ).fetchall()
+            if not rows:
+                return
+            for row in rows:
+                last_id = int(row["id"])
+                pid = str(row["point_id"])
+                yield pid, {
+                    "row_id": last_id,
+                    "id": pid,
+                    "point_id": pid,
+                    "path": str(row["path"]),
+                    "path_key": str(row["path_key"]),
+                    "name": str(row["name"]),
+                    "mtime_ns": int(row["mtime_ns"]),
+                    "width": int(row["width"]),
+                    "height": int(row["height"]),
+                    "content_hash": str(row["content_hash"]),
+                    "phash": str(row["phash"]),
+                    "root": str(row["root_path"]),
+                    "root_key": str(row["root_key"]),
+                    "folder_key": str(row["folder_key"]),
+                }
+
     # ---------------------------------------------------------------- roots & folders
     def _ensure_root_locked(
         self,
@@ -661,14 +702,19 @@ class ImageRepo:
     def list_folder_rows(self) -> list[sqlite3.Row]:
         return self.db.read_conn().execute(
             """
+            WITH agg AS (
+                SELECT folder_id, COUNT(*) AS direct_count, MAX(mtime_ns) AS max_mtime_ns
+                FROM images
+                WHERE deleted = 0
+                GROUP BY folder_id
+            )
             SELECT f.id, f.root_id, f.folder_key, f.path, f.name, f.parent_id,
                    f.mtime_ns, f.selected, f.known, r.root_key, r.root_path,
-                   COUNT(i.id) AS direct_count,
-                   COALESCE(MAX(i.mtime_ns), f.mtime_ns) AS latest_mtime_ns
+                   COALESCE(agg.direct_count, 0) AS direct_count,
+                   MAX(f.mtime_ns, COALESCE(agg.max_mtime_ns, 0)) AS latest_mtime_ns
             FROM folders AS f
             JOIN roots AS r ON r.id = f.root_id
-            LEFT JOIN images AS i ON i.folder_id = f.id AND i.deleted = 0
-            GROUP BY f.id
+            LEFT JOIN agg ON agg.folder_id = f.id
             """
         ).fetchall()
 
@@ -696,10 +742,9 @@ class ImageRepo:
     ) -> list[dict[str, Any]]:
         needle = str(query or "").strip()
         sql = """
-            SELECT t.name AS tag, COUNT(it.image_id) AS cnt
+            SELECT t.name AS tag, COUNT(*) AS cnt
             FROM tags AS t
             JOIN image_tags AS it ON it.tag_id = t.id
-            JOIN images AS i ON i.id = it.image_id AND i.deleted = 0
         """
         params: list[Any] = []
         if needle:
