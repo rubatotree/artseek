@@ -178,6 +178,37 @@ class V2IndexingPipelineTests(unittest.TestCase):
         self.assertEqual(summary3.deleted, 1)
         self.assertEqual(self.images.count(), 2)
 
+    def test_http_index_job_runs_through_job_manager(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from artseek.api.app import create_app
+
+        self.cfg.tagger.enabled = False
+        root = self.base / "http_pics"
+        _save_test_image(root / "p1.jpg", size=(320, 480))
+        _save_test_image(root / "p2.jpg", size=(480, 320))
+        app = create_app(self.cfg, embedder_factory=_FakeEmbedder)  # type: ignore[arg-type]
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/index",
+                json={"path": str(root), "recursive": True},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json()["running"])
+            deadline = time.time() + 15.0
+            status = response.json()
+            while time.time() < deadline:
+                status = client.get("/api/index-status").json()
+                if not status["running"]:
+                    break
+                time.sleep(0.05)
+            self.assertFalse(status["running"])
+            self.assertIsNone(status["error"])
+            self.assertEqual(status["summary"]["indexed"], 2)
+            jobs = client.get("/api/jobs").json()["jobs"]
+            self.assertTrue(any(job["kind"] == "index" for job in jobs))
+            self.assertGreaterEqual(self.images.count(), 2)
+
     def test_overlapping_roots_rejected(self) -> None:
         parent = self.base / "library"
         child = parent / "nested"

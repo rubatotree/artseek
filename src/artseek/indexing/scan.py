@@ -8,18 +8,33 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..config import AppConfig
 from ..db.connection import Database
 from ..db.repos.images import ImageRepo
 from ..image_io import IMAGE_EXTENSIONS, canonical_path, point_id
-from ..ml.embedder import SiglipEmbedder
-from ..ml.pipeline import IndexingPipeline
-from ..ml.tagger import WDTagger
 from ..vectors.index import VectorIndex
 
+if TYPE_CHECKING:
+    from ..ml.embedder import SiglipEmbedder
+    from ..ml.tagger import WDTagger
+
 ProgressCallback = Callable[[int, int, str], None]
+
+
+def _default_embedder(config: AppConfig) -> SiglipEmbedder:
+    from ..ml.embedder import SiglipEmbedder
+
+    return SiglipEmbedder(config.embedding)
+
+
+def _default_tagger(config: AppConfig) -> WDTagger | None:
+    if not config.tagger.enabled:
+        return None
+    from ..ml.tagger import WDTagger
+
+    return WDTagger(config.tagger, config.embedding)
 
 
 @dataclass(slots=True)
@@ -87,12 +102,10 @@ class IncrementalScanner:
         self.images_repo = images_repo
         self.vectors = vectors
         self._embedder_factory = embedder_factory or (
-            lambda: SiglipEmbedder(self.config.embedding)
+            lambda: _default_embedder(self.config)
         )
         self._tagger_factory = tagger_factory or (
-            lambda: WDTagger(self.config.tagger, self.config.embedding)
-            if self.config.tagger.enabled
-            else None
+            lambda: _default_tagger(self.config)
         )
         self.cpu_workers = max(1, int(cpu_workers))
 
@@ -222,6 +235,8 @@ class IncrementalScanner:
                 failed_before = len(summary.failed)
                 if todo:
                     assert active_embedder is not None
+                    from ..ml.pipeline import IndexingPipeline
+
                     pipeline = IndexingPipeline(
                         self.config,
                         self.images_repo,

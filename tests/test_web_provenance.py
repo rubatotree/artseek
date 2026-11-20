@@ -1289,7 +1289,7 @@ class ProvenanceApiTests(unittest.TestCase):
         deadline = time.time() + 5
         while time.time() < deadline:
             status = self.client.get("/api/provenance/job").json()
-            if not status["running"]:
+            if not status["running"] and status["kind"] == "auto_tag":
                 break
             time.sleep(0.02)
         self.assertFalse(status["running"])
