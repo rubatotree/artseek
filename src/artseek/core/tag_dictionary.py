@@ -80,7 +80,6 @@ _TAG_ENTRIES: tuple[TagEntry, ...] = (
     ),
     TagEntry("skeb", "Skeb 约稿", ("skeb", "Skeb", "约稿")),
     TagEntry("barefoot", "赤足", ("赤足", "裸足", "barefoot")),
-    TagEntry("thighhighs", "过膝袜", ("过膝袜", "大腿袜", "thighhighs")),
 )
 
 _ENTRIES = {entry.tag: entry for entry in _TAG_ENTRIES}
