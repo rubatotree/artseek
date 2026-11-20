@@ -11,19 +11,22 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from ..config import AppConfig
-from ..core.ranking import order_tags_for_descriptor
 from ..db.repos.images import ImageRepo, ImageUpsertRecord
 from ..image_io import canonical_path, composite_on_white, perceptual_hash, point_id
 from ..vectors.index import VectorIndex
-from .captioner import flatten_caption
 from .embedder import SiglipEmbedder
 from .preprocess import PRE_SHRINK_SHORT_EDGE, draft_target, shrink_to_short_edge
-from .tagger import PredictedTags, WDTagger
+from .tag_postprocess import (
+    CAT_RATING,
+    PredictedTags,
+    build_high_density_descriptor,
+)
 
 ProgressCallback = Callable[[int, int, str], None]
 
@@ -155,7 +158,7 @@ class IndexingPipeline:
         vectors: VectorIndex,
         *,
         embedder: SiglipEmbedder,
-        tagger: WDTagger | None = None,
+        tagger: Any = None,
         cpu_workers: int = 4,
         short_edge_limit: int = PRE_SHRINK_SHORT_EDGE,
         flush_every_batches: int = 8,
@@ -330,10 +333,20 @@ class IndexingPipeline:
 
         descriptor_texts: list[str] = []
         for pred in predicted_tags:
-            ordered = order_tags_for_descriptor(pred.tags)
-            tag_text = ", ".join(tag.replace("_", " ") for tag in ordered)
-            parts = [flatten_caption(None), tag_text]
-            descriptor_texts.append("。".join(filter(None, parts)))
+            tags = list(pred.tags)
+            cats = dict(getattr(pred, "categories", {}) or {})
+            if getattr(pred, "rating", None):
+                r_tag = f"rating:{pred.rating}"
+                if r_tag not in cats:
+                    cats[r_tag] = CAT_RATING
+                    tags.append(r_tag)
+            descriptor_texts.append(
+                build_high_density_descriptor(
+                    tags,
+                    cats,
+                    drop_overlap=bool(self.config.tagger.drop_overlap),
+                )
+            )
 
         descriptor_vectors = np.array(visual_vectors, copy=True)
         nonempty_indices = [
@@ -351,6 +364,15 @@ class IndexingPipeline:
         t_db0 = time.perf_counter()
         records: list[ImageUpsertRecord] = []
         for idx, (item, pred) in enumerate(zip(batch, predicted_tags, strict=True)):
+            tags = list(pred.tags)
+            scores = dict(pred.scores)
+            cats = dict(getattr(pred, "categories", {}) or {})
+            if getattr(pred, "rating", None):
+                r_tag = f"rating:{pred.rating}"
+                if r_tag not in scores:
+                    tags.append(r_tag)
+                    scores[r_tag] = 1.0
+                    cats[r_tag] = CAT_RATING
             records.append(
                 ImageUpsertRecord(
                     point_id=item.point_id,
@@ -371,11 +393,19 @@ class IndexingPipeline:
                     phash=item.phash,
                     descriptor_text=descriptor_texts[idx],
                     caption=None,
-                    tags=list(pred.tags),
-                    tag_scores=dict(pred.scores),
+                    tags=tags,
+                    tag_scores=scores,
+                    tag_categories=cats,
                 )
             )
-        row_ids = self.images_repo.upsert_images_batch(records)
+        tag_versions = (
+            dict(getattr(self.tagger, "model_versions", {}) or {})
+            if self.tagger is not None
+            else None
+        )
+        row_ids = self.images_repo.upsert_images_batch(
+            records, tag_model_versions=tag_versions
+        )
         time.sleep(0)
         self.vectors.set_rows(
             row_ids,

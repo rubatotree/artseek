@@ -18,7 +18,6 @@ from ..vectors.index import VectorIndex
 
 if TYPE_CHECKING:
     from ..ml.embedder import SiglipEmbedder
-    from ..ml.tagger import WDTagger
 
 ProgressCallback = Callable[[int, int, str], None]
 
@@ -29,12 +28,12 @@ def _default_embedder(config: AppConfig) -> SiglipEmbedder:
     return SiglipEmbedder(config.embedding)
 
 
-def _default_tagger(config: AppConfig) -> WDTagger | None:
+def _default_tagger(config: AppConfig) -> Any | None:
     if not config.tagger.enabled:
         return None
-    from ..ml.tagger import WDTagger
+    from ..ml.tagger import build_tagger
 
-    return WDTagger(config.tagger, config.embedding)
+    return build_tagger(config.tagger, config.embedding)
 
 
 @dataclass(slots=True)
@@ -94,7 +93,7 @@ class IncrementalScanner:
         vectors: VectorIndex,
         *,
         embedder_factory: Callable[[], SiglipEmbedder] | None = None,
-        tagger_factory: Callable[[], WDTagger | None] | None = None,
+        tagger_factory: Callable[[], Any | None] | None = None,
         cpu_workers: int = 8,
     ) -> None:
         self.config = config
@@ -117,7 +116,7 @@ class IncrementalScanner:
         force: bool = False,
         remove_missing: bool = True,
         embedder: SiglipEmbedder | None = None,
-        tagger: WDTagger | None = None,
+        tagger: Any | None = None,
         progress: ProgressCallback | None = None,
         stop_event: threading.Event | None = None,
         pause_event: threading.Event | None = None,
@@ -214,7 +213,10 @@ class IncrementalScanner:
                     self.images_repo.meta_set("dimension", str(dim))
                 self.images_repo.meta_set("embedding_model", self.config.embedding.model)
                 if self.config.tagger.enabled:
-                    self.images_repo.meta_set("tagger_model", self.config.tagger.model)
+                    self.images_repo.meta_set(
+                        "tagger_model",
+                        f"{self.config.tagger.backend}:{self.config.tagger.camie_model}",
+                    )
 
             for (
                 resolved_root,

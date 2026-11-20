@@ -60,11 +60,21 @@ class EmbeddingConfig:
 @dataclass(slots=True)
 class TaggerConfig:
     enabled: bool = True
+    backend: str = "camie+pixai0.9"
     model: str = "SmilingWolf/wd-eva02-large-tagger-v3"
+    camie_model: str = "Camais03/camie-tagger-v2"
+    pixai09_model: str = "deepghs/pixai-tagger-v0.9-onnx"
+    pixai10_model: str = "pixai-labs/pixai-tagger-v1.0"
     threshold: float = 0.35
+    general_threshold: float = 0.35
+    character_threshold: float = 0.65
+    copyright_threshold: float = 0.60
+    meta_threshold: float = 0.45
     max_tags: int = 80
     batch_size: int = 8
     include_character_tags: bool = True
+    mcut_enabled: bool = True
+    drop_overlap: bool = True
 
 
 @dataclass(slots=True)
@@ -228,13 +238,24 @@ device = "auto"       # auto / cuda / cpu
 dtype = "auto"        # auto / float16 / bfloat16 / float32
 
 [tagger]
-# 面向二次元插画的 WD EVA02 标签器，能补足服装、动作、构图细节。
+# 默认启用 Camie v2 + PixAI v0.9 融合标签器（支持 IP / 角色 / 分级 / 风格与细节），
+# 可选后端：camie+pixai0.9 | camie | pixai0.9 | pixai1.0 | wd
 enabled = true
+backend = "camie+pixai0.9"
 model = "SmilingWolf/wd-eva02-large-tagger-v3"
+camie_model = "Camais03/camie-tagger-v2"
+pixai09_model = "deepghs/pixai-tagger-v0.9-onnx"
+pixai10_model = "pixai-labs/pixai-tagger-v1.0"
 threshold = 0.35
+general_threshold = 0.35
+character_threshold = 0.65
+copyright_threshold = 0.60
+meta_threshold = 0.45
 max_tags = 80
 batch_size = 8
 include_character_tags = true
+mcut_enabled = true
+drop_overlap = true
 
 [llm]
 # Ollama 不存在或未启动时会自动回退到内置中英日服装/动作词典。

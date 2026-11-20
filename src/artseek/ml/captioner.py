@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from ..config import LLMConfig
-from ..core.ranking import order_tags_for_descriptor
 from .llm import CAPTION_SCHEMA, OllamaClient, OllamaUnavailable, flatten_caption
+from .tag_postprocess import build_high_density_descriptor
 
 
 class Captioner:
@@ -24,11 +24,16 @@ class Captioner:
     def build_descriptor_text(
         tags: list[str],
         caption: dict[str, Any] | None,
+        *,
+        categories: dict[str, int] | None = None,
+        title: str | None = None,
     ) -> str:
-        ordered = order_tags_for_descriptor(tags)
-        tag_text = ", ".join(tag.replace("_", " ") for tag in ordered)
-        parts = [flatten_caption(caption), tag_text]
-        return "。".join(filter(None, parts))
+        return build_high_density_descriptor(
+            tags,
+            categories,
+            caption=caption,
+            title=title,
+        )
 
 
 __all__ = [
