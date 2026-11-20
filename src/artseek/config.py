@@ -21,7 +21,13 @@ MAX_WEB_SEARCH_LIMIT = 80
 WEB_SEARCH_LIMIT_STEP = 4
 INDEX_STATE_NAME = "index_state.sqlite3"
 PROVENANCE_NAME = "provenance.sqlite3"
+DB_NAME = "artseek.sqlite3"
+VISUAL_VECTORS_NAME = "visual.f32.npy"
+DESCRIPTOR_VECTORS_NAME = "descriptor.f32.npy"
 INDEX_SIDECAR_FILES = (
+    DB_NAME,
+    VISUAL_VECTORS_NAME,
+    DESCRIPTOR_VECTORS_NAME,
     INDEX_STATE_NAME,
     PROVENANCE_NAME,
     "folder_catalog.json",
@@ -30,6 +36,9 @@ INDEX_SIDECAR_FILES = (
     "manifest.json",
 )
 INDEX_SQLITE_EXTRAS = (
+    f"{DB_NAME}-wal",
+    f"{DB_NAME}-shm",
+    f"{DB_NAME}-journal",
     f"{INDEX_STATE_NAME}-wal",
     f"{INDEX_STATE_NAME}-shm",
     f"{INDEX_STATE_NAME}-journal",
@@ -159,6 +168,18 @@ class AppConfig:
     @property
     def provenance_path(self) -> Path:
         return self.index_dir / PROVENANCE_NAME
+
+    @property
+    def db_path(self) -> Path:
+        return self.index_dir / DB_NAME
+
+    @property
+    def visual_vectors_path(self) -> Path:
+        return self.index_dir / VISUAL_VECTORS_NAME
+
+    @property
+    def descriptor_vectors_path(self) -> Path:
+        return self.index_dir / DESCRIPTOR_VECTORS_NAME
 
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -413,6 +434,7 @@ def migrate_index_sidecars(source_dir: Path, destination: Path | str) -> tuple[P
             copied = True
     except OSError as exc:
         raise ValueError(f"复制失败：{exc}") from exc
+    _checkpoint_sqlite(dest / DB_NAME)
     _checkpoint_sqlite(dest / INDEX_STATE_NAME)
     _checkpoint_sqlite(dest / PROVENANCE_NAME)
     return dest, copied

@@ -503,5 +503,48 @@ def doctor_command(
     console.print(f"路径规范化示例：{canonical_path(cfg.data_dir)}")
 
 
+@app.command("migrate-v1")
+def migrate_v1_command(
+    config: Annotated[Path | None, typer.Option("--config", "-c")] = None,
+    qdrant_path: Annotated[Path | None, typer.Option("--qdrant-path")] = None,
+    index_dir: Annotated[Path | None, typer.Option("--index-dir")] = None,
+    notes_dir: Annotated[Path | None, typer.Option("--notes-dir")] = None,
+    output_dir: Annotated[Path | None, typer.Option("--output-dir")] = None,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """只读迁移 v1 Qdrant 与 sidecar 数据到 v2 SQLite + .npy（保留全部 v1 文件）。"""
+    from .db.migrate_v1 import migrate_v1
+
+    cfg = _config(config)
+    report = migrate_v1(
+        cfg,
+        qdrant_path=qdrant_path,
+        index_dir=index_dir,
+        notes_dir=notes_dir,
+        output_dir=output_dir,
+        status=None if json_output else console.print,
+    )
+    if json_output:
+        console.print_json(json.dumps(report.to_dict(), ensure_ascii=False))
+        return
+    table = Table(title="ArtSeek v1 -> v2 迁移报告")
+    table.add_column("项目")
+    table.add_column("v1", justify="right")
+    table.add_column("v2", justify="right")
+    table.add_row("图片总数", str(report.images_v1), str(report.images_v2))
+    table.add_row("收藏夹", str(report.collections_v1), str(report.collections_v2))
+    table.add_row("画师", str(report.artists_v1), str(report.artists_v2))
+    table.add_row("画师身份", str(report.identities_v1), str(report.identities_v2))
+    table.add_row("画师历史合并键", str(report.legacy_v1), str(report.legacy_v2))
+    table.add_row("来源记录", str(report.image_source_v1), str(report.image_source_v2))
+    table.add_row("笔记文件", str(report.notes_files_v1), str(report.notes_files_v2))
+    console.print(table)
+    console.print(
+        f"维度：{report.dimension} · 随机 20 路 Top20 重合率 "
+        f"min={report.query_overlap_min:.1%} mean={report.query_overlap_mean:.1%} · "
+        f"耗时 {report.elapsed_seconds:.2f}s"
+    )
+
+
 if __name__ == "__main__":
     app()
