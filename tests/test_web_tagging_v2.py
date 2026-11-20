@@ -377,17 +377,111 @@ class TestStageDSearchAndWebAPI(unittest.TestCase):
                 self.assertIn("hatsune_miku", retagged["tags"])
                 self.assertIn("medium:illustration", retagged["tags"])
 
-                # 6. HTML page includes new filter, scheduler, and focal controls
+                # 6. HTML page includes new filter, queue scheduler, and focal controls
                 home = client.get("/")
                 self.assertEqual(home.status_code, 200)
                 for needle in (
                     "filter-media-type",
                     "filter-rating",
+                    "filter-attr-row",
+                    "artseek-select",
                     "task-tag-backend",
+                    "moveQueuedTask",
+                    "图库扫描与标注",
                     "runCharacterSearch",
                     "focalObjectPositionStyle",
                 ):
                     self.assertIn(needle, home.text)
+
+    def test_job_queue_reorder_delete_and_auto_fill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            img_dir = root / "art"
+            img_dir.mkdir()
+            p1 = img_dir / "a.png"
+            Image.new("RGB", (64, 64), (100, 120, 255)).save(p1)
+
+            cfg = AppConfig(
+                data_dir=root / "data",
+                cache_dir=root / "cache",
+                tagger=TaggerConfig(enabled=False),
+            )
+            cfg.ensure_dirs()
+            db = Database(cfg.db_path)
+            images = ImageRepo(db)
+            fk = canonical_path(img_dir)
+            images.upsert_images_batch(
+                [
+                    ImageUpsertRecord(
+                        point_id="p1",
+                        root_key=fk,
+                        root_path=str(img_dir),
+                        folder_key=fk,
+                        folder_path=str(img_dir),
+                        folder_mtime_ns=1,
+                        path=str(p1),
+                        path_key=canonical_path(p1),
+                        name="a.png",
+                        ext=".png",
+                        mtime_ns=1,
+                        size_bytes=10,
+                        width=64,
+                        height=64,
+                        content_hash="h1",
+                        phash="0" * 16,
+                    )
+                ]
+            )
+            db.close()
+
+            app = create_app(cfg, embedder_factory=_FakeEmbedder)  # type: ignore[arg-type]
+            with TestClient(app) as client:
+                c = app.state.container
+                # Block worker on _cond briefly while inspecting pure queue ops
+                blocker = __import__("threading").Event()
+
+                def _stall_wait() -> None:
+                    blocker.wait(timeout=3.0)
+
+                try:
+                    c.job_manager._enqueue_job(
+                        "index", "stall", {}, "stalling", lambda _jid: _stall_wait()
+                    )
+                    res_fill = client.post(
+                        "/api/jobs/auto-fill", json={"backend": "camie+pixai0.9"}
+                    )
+                    self.assertEqual(res_fill.status_code, 200)
+                    added = res_fill.json()["added"]
+                    self.assertEqual(len(added), 3)  # retag, vision_enrich, ccip
+
+                    # Auto-fill again immediately should add 0 duplicates
+                    res_fill2 = client.post(
+                        "/api/jobs/auto-fill", json={"backend": "camie+pixai0.9"}
+                    )
+                    self.assertEqual(res_fill2.status_code, 200)
+                    self.assertEqual(res_fill2.json()["added"], [])
+
+                    q0 = client.get("/api/jobs/queue").json()
+                    q_ids = [j["id"] for j in q0["queued"]]
+                    self.assertEqual(q_ids, added)
+
+                    # Move last queued item (ccip) up once
+                    mv = client.post(f"/api/jobs/{added[2]}/move", json={"direction": "up"})
+                    self.assertEqual(mv.status_code, 200)
+                    self.assertTrue(mv.json()["moved"])
+                    after_mv = [j["id"] for j in mv.json()["queue"]["queued"]]
+                    self.assertEqual(after_mv, [added[0], added[2], added[1]])
+
+                    # Delete queued item
+                    dl = client.delete(f"/api/jobs/{added[2]}")
+                    self.assertEqual(dl.status_code, 200)
+                    after_del = [j["id"] for j in dl.json()["queue"]["queued"]]
+                    self.assertEqual(after_del, [added[0], added[1]])
+
+                    # Clear remaining queued jobs via stop so teardown is instant
+                    client.post("/api/jobs/stop")
+                finally:
+                    blocker.set()
 
 
 if __name__ == "__main__":

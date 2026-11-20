@@ -356,6 +356,28 @@
       min-width: 0; padding: 2px 6px; border: 1px solid var(--line);
       border-radius: 9px; background: #fff;
     }
+    .filter-attr-row {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+      min-width: 0; padding: 1px 0;
+    }
+    .artseek-select {
+      appearance: none; -webkit-appearance: none;
+      min-height: 28px; padding: 3px 26px 3px 10px;
+      border: 1px solid var(--line); border-radius: 9px;
+      background-color: #fff;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a5268' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 8px center; background-size: 12px;
+      color: var(--ink); font: inherit; font-size: 12px; line-height: 1.3;
+      cursor: pointer; outline: none;
+      transition: border-color .16s ease, box-shadow .16s ease, background-color .16s ease;
+    }
+    .artseek-select:hover { border-color: #dfc2cd; background-color: #fefbfd; }
+    .artseek-select:focus { border-color: #c97a98; box-shadow: 0 0 0 2px rgba(201,122,152,.16); }
+    .artseek-check {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 12px; color: var(--ink); cursor: pointer; user-select: none;
+    }
+    .artseek-check input { width: 14px; height: 14px; accent-color: #b85f7e; cursor: pointer; }
     .filter-control input[type="text"],
     .filter-control input[type="text"]:focus {
       flex: 1 1 72px; width: auto; min-width: 40px; padding: 5px 2px;
@@ -723,10 +745,10 @@
     .provenance-hint { color: var(--muted); font-size: 11px; line-height: 1.45; }
     .provenance-dialog {
       inset: 0; margin: auto;
-      inline-size: min(540px, calc(100vw - 24px));
+      inline-size: min(640px, calc(100vw - 24px));
       block-size: auto; max-inline-size: calc(100vw - 24px);
-      max-block-size: min(720px, calc(100dvh - 24px));
-      width: min(540px, calc(100vw - 24px)); height: auto;
+      max-block-size: min(760px, calc(100dvh - 24px));
+      width: min(640px, calc(100vw - 24px)); height: auto;
       padding: 0; border: 0; border-radius: 18px; background: #fff; color: var(--ink);
       box-shadow: 0 24px 70px rgba(42, 28, 48, .28);
     }
@@ -737,13 +759,56 @@
     }
     .provenance-dialog-head strong { flex: 1; font-size: 14px; }
     .provenance-dialog-body { display: grid; gap: 12px; padding: 14px; overflow: auto; }
+    .task-section {
+      display: grid; gap: 9px; padding: 11px 12px;
+      border: 1px solid #efe7ec; border-radius: 13px; background: #fcf9fb;
+    }
+    .task-section-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+    }
+    .task-section-head strong { font-size: 12.5px; color: var(--ink); }
+    .task-section-sub { font-size: 11px; color: var(--muted); }
     .provenance-stat-grid {
-      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px;
+      display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px;
+    }
+    @media (max-width: 560px) {
+      .provenance-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     .provenance-stat {
-      padding: 8px 10px; border-radius: 10px; background: #f8f4f7; font-size: 12px;
+      padding: 7px 9px; border-radius: 10px; background: #fff;
+      border: 1px solid #f0e8ed; font-size: 11px; color: var(--muted);
     }
-    .provenance-stat b { display: block; font-size: 16px; color: #8a5268; }
+    .provenance-stat b { display: block; font-size: 14px; color: #8a5268; font-variant-numeric: tabular-nums; }
+    .task-btn-primary {
+      background: linear-gradient(135deg, #c97392, #b85f7e) !important;
+      color: #fff !important; border: 0 !important;
+    }
+    .task-btn-primary:hover { filter: brightness(1.04); }
+    .task-queue-list { display: grid; gap: 6px; }
+    .task-queue-item {
+      display: flex; align-items: center; gap: 8px; padding: 7px 9px;
+      border-radius: 10px; background: #fff; border: 1px solid #eee5eb; font-size: 12px;
+    }
+    .task-queue-item.is-active { border-color: #dfb4c5; background: #fff7fa; }
+    .task-queue-main { flex: 1; min-width: 0; display: grid; gap: 3px; }
+    .task-queue-title { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--ink); }
+    .task-queue-meta { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .task-badge {
+      padding: 1px 6px; border-radius: 999px; font-size: 10px; font-weight: 600;
+      background: #f4eaef; color: #8a5268;
+    }
+    .task-badge.is-running { background: #fae1eb; color: #9c385f; }
+    .task-badge.is-paused { background: #f2edf4; color: #6c6173; }
+    .task-badge.is-done { background: #ebf6ef; color: #2d7a4f; }
+    .task-badge.is-failed { background: #fdecec; color: #b43c3c; }
+    .task-queue-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+    .task-mini-btn {
+      min-width: 26px; min-height: 26px; padding: 0 7px !important;
+      border-radius: 7px !important; font-size: 11px !important;
+      background: #f6f0f4 !important; color: #665866 !important;
+    }
+    .task-mini-btn:hover:not(:disabled) { background: #eedce4 !important; color: #8a5268 !important; }
+    .task-mini-btn:disabled { opacity: .4; cursor: not-allowed; }
     .provenance-progress {
       height: 6px; overflow: hidden; border-radius: 999px; background: #f1e7ec;
     }
@@ -1998,8 +2063,8 @@
         </div>
         <div id="tab-advanced" class="advanced-options" role="tabpanel" aria-labelledby="tab-btn-advanced" hidden>
           <div class="storage-block">
-            <div class="storage-title">来源元信息</div>
-            <button class="secondary" id="provenance-tools" type="button" title="扫描并补全来源元信息">来源扫描与补全</button>
+            <div class="storage-title">图库扫描与标注</div>
+            <button class="secondary" id="provenance-tools" type="button" title="管理图库扫描、打标与视觉特征任务队列">图库扫描与标注</button>
             <p class="model-hint">支持 author: 与 tag: 过滤。</p>
           </div>
           <label><input id="use-llm" type="checkbox" checked> 本地大模型理解条件</label>
@@ -2119,8 +2184,8 @@
           </div>
           <div class="filter-field-wrap">
             <label class="filter-field"><span>视觉属性</span>
-              <div class="filter-control" style="gap:8px;flex-wrap:wrap;">
-                <select id="filter-media-type" aria-label="媒介筛选">
+              <div class="filter-attr-row">
+                <select id="filter-media-type" class="artseek-select" aria-label="媒介筛选">
                   <option value="">全部媒介</option>
                   <option value="illustration">插画</option>
                   <option value="comic">漫画</option>
@@ -2128,19 +2193,19 @@
                   <option value="3d">3D</option>
                   <option value="not_painting">实拍/非绘画</option>
                 </select>
-                <select id="filter-rating" aria-label="分级筛选">
+                <select id="filter-rating" class="artseek-select" aria-label="分级筛选">
                   <option value="">全部分级</option>
                   <option value="safe">全年龄</option>
                   <option value="r15">R15</option>
                   <option value="r18">R18</option>
                 </select>
-                <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;">
+                <label class="artseek-check">
                   <input id="filter-monochrome" type="checkbox"> 黑白/线稿
                 </label>
-                <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;">
+                <label class="artseek-check">
                   <input id="filter-exclude-ai" type="checkbox"> 排除 AI
                 </label>
-                <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;">
+                <label class="artseek-check">
                   <input id="filter-aesthetic-sort" type="checkbox"> 按美学排序
                 </label>
               </div>
@@ -2246,9 +2311,9 @@
     <div id="viewer-collection-menu" class="viewer-collection-menu" role="dialog" aria-labelledby="viewer-collection-menu-title" hidden></div>
   </dialog>
   <div id="card-collection-menu" class="card-collection-menu" role="dialog" aria-labelledby="card-collection-menu-title" hidden></div>
-  <dialog id="provenance-dialog" class="provenance-dialog" aria-label="来源元信息任务">
+  <dialog id="provenance-dialog" class="provenance-dialog" aria-label="图库扫描与标注">
     <div class="provenance-dialog-head">
-      <strong>来源元信息</strong>
+      <strong>图库扫描与标注</strong>
       <button id="provenance-dialog-close" type="button" aria-label="关闭">×</button>
     </div>
     <div class="provenance-dialog-body" id="provenance-dialog-body"></div>
@@ -3579,87 +3644,202 @@
         if (seq === state.searchSeq) $('panel').classList.remove('loading');
       }
     }
-    function renderProvenanceDialog(data, taskData = null, jobsData = null) {
+    const TASK_KIND_LABELS = {
+      index: '目录索引',
+      compact: '整理压缩库',
+      retag: '自动打标',
+      vision_enrich: '视觉属性 & 人脸',
+      ccip: 'CCIP 角色特征',
+      provenance_scan: '本地扫源',
+      provenance_enrich: '补全 Pixiv/X',
+      auto_tag: '视觉补 Tag',
+      caption: 'VLM 长描述',
+    };
+    const TASK_STATUS_LABELS = {
+      queued: '排队中',
+      running: '执行中',
+      paused: '已暂停',
+      completed: '已完成',
+      failed: '失败',
+      stopped: '已停止',
+      interrupted: '已中断',
+    };
+    function describeQueueJob(job) {
+      const title = TASK_KIND_LABELS[job.kind] || job.kind;
+      const p = job.payload || {};
+      const hints = [];
+      if (p.backend) hints.push(p.backend);
+      if (p.deep) hints.push('深度扫描');
+      if (Number.isInteger(p.scope_count)) hints.push(`${p.scope_count} 张范围`);
+      if (p.skip_completed === false) hints.push('强制重跑');
+      return hints.length ? `${title} · ${hints.join(' · ')}` : title;
+    }
+    function renderProvenanceDialog(data, taskData = null, queueData = null) {
       const body = $('provenance-dialog-body');
-      const job = data.job || {};
+      const legacyJob = data.job || {};
       const counts = (taskData && taskData.counts) || {};
-      const jobs = (jobsData && jobsData.jobs) || [];
-      const activeBgJob = jobs.find((j) => ['retag', 'vision_enrich', 'ccip'].includes(j.kind) && ['queued', 'running', 'paused'].includes(j.status))
-        || jobs.find((j) => ['retag', 'vision_enrich', 'ccip'].includes(j.kind));
+      const q = queueData || { active: null, queued: [], history: [], paused: false };
+      const activeJob = q.active || null;
+      const queuedJobs = Array.isArray(q.queued) ? q.queued : [];
+      const historyJobs = Array.isArray(q.history) ? q.history.slice(0, 6) : [];
       const platforms = data.by_platform || {};
-      const count = (platform) => Object.values(platforms[platform] || {}).reduce((sum, value) => sum + Number(value || 0), 0);
       const unresolved = Object.values(platforms).reduce(
         (sum, statuses) => sum + Number((statuses || {}).unresolved || 0), 0
       );
-      const done = Number(job.done || 0);
-      const total = Number(job.total || 0);
-      const percent = total > 0 ? Math.min(100, Math.round(done * 100 / total)) : 0;
-      const bgDone = Number(activeBgJob?.done || 0);
-      const bgTotal = Number(activeBgJob?.total || 0);
-      const bgPercent = bgTotal > 0 ? Math.min(100, Math.round(bgDone * 100 / bgTotal)) : 0;
       const prevBackend = $('task-tag-backend')?.value || 'camie+pixai0.9';
       const prevSkip = $('task-skip-completed') ? $('task-skip-completed').checked : true;
-      const budgets = (job.budgets || []).map((budget) => {
+      const scopeHint = treeState.selected.size
+        ? `当前范围：已勾选 ${treeState.selected.size} 个目录`
+        : '当前范围：全图库';
+      const budgets = (legacyJob.budgets || []).map((budget) => {
         const used = Number(budget.used_today || 0);
         const limitText = budget.daily_limit == null ? '不限' : String(Number(budget.daily_limit));
         const blocked = Number(budget.blocked_until || 0);
         const blockedHint = blocked > Date.now() / 1000 ? ` · 暂停到 ${formatBudgetTime(blocked)}` : '';
-        const workers = Number(budget.concurrency || 1);
-        return `<div class="provenance-hint">${escapeHtml(budget.domain)}：今日 ${used} / ${escapeHtml(limitText)} · 并发 ${workers}${escapeHtml(blockedHint)}</div>`;
-      }).join('');
-      const controls = [];
-      controls.push('<button type="button" data-prov-job="scan">本地扫描</button>');
-      controls.push('<button type="button" data-prov-job="deep-scan">深度扫描</button>');
-      controls.push('<button type="button" data-prov-job="enrich">补全 Pixiv/X</button>');
-      if (!job.running) controls.push('<button type="button" data-prov-job="auto-tag">视觉补 Tag</button>');
-      if (job.running) {
-        controls.push(`<button type="button" data-prov-job="${job.paused ? 'resume' : 'pause'}">${job.paused ? '继续' : '暂停'}</button>`);
-        controls.push('<button type="button" data-prov-job="stop">停止</button>');
+        return `${escapeHtml(budget.domain)} 今日 ${used}/${escapeHtml(limitText)} (并发${Number(budget.concurrency || 1)})${escapeHtml(blockedHint)}`;
+      }).join(' ｜ ');
+
+      let activeHtml = '';
+      if (activeJob) {
+        const done = Number(activeJob.done || 0);
+        const total = Number(activeJob.total || 0);
+        const pct = total > 0 ? Math.min(100, Math.round(done * 100 / total)) : 0;
+        const isPaused = Boolean(q.paused || activeJob.status === 'paused');
+        activeHtml = `
+          <div class="task-queue-item is-active">
+            <div class="task-queue-main">
+              <div class="task-queue-title">
+                <span>${escapeHtml(describeQueueJob(activeJob))}</span>
+                <span class="task-badge ${isPaused ? 'is-paused' : 'is-running'}">${isPaused ? '已暂停' : '执行中'}</span>
+              </div>
+              <div class="provenance-progress"><i style="width:${pct}%"></i></div>
+              <div class="task-queue-meta">${escapeHtml(activeJob.message || '')}</div>
+            </div>
+            <div class="task-queue-actions">
+              <button type="button" class="task-mini-btn" data-bg-job="${isPaused ? 'resume' : 'pause'}">${isPaused ? '继续' : '暂停'}</button>
+              <button type="button" class="task-mini-btn" data-bg-job="stop">停止</button>
+            </div>
+          </div>`;
+      } else if (legacyJob.running) {
+        const done = Number(legacyJob.done || 0);
+        const total = Number(legacyJob.total || 0);
+        const pct = total > 0 ? Math.min(100, Math.round(done * 100 / total)) : 0;
+        activeHtml = `
+          <div class="task-queue-item is-active">
+            <div class="task-queue-main">
+              <div class="task-queue-title">
+                <span>${escapeHtml(TASK_KIND_LABELS[legacyJob.kind] || '后台扫描')}</span>
+                <span class="task-badge ${legacyJob.paused ? 'is-paused' : 'is-running'}">${legacyJob.paused ? '已暂停' : '执行中'}</span>
+              </div>
+              <div class="provenance-progress"><i style="width:${pct}%"></i></div>
+              <div class="task-queue-meta">${escapeHtml(legacyJob.message || '')}</div>
+            </div>
+            <div class="task-queue-actions">
+              <button type="button" class="task-mini-btn" data-prov-job="${legacyJob.paused ? 'resume' : 'pause'}">${legacyJob.paused ? '继续' : '暂停'}</button>
+              <button type="button" class="task-mini-btn" data-prov-job="stop">停止</button>
+            </div>
+          </div>`;
       }
+
+      const queuedHtml = queuedJobs.length
+        ? queuedJobs.map((job, idx) => `
+            <div class="task-queue-item">
+              <div class="task-queue-main">
+                <div class="task-queue-title">
+                  <span>#${idx + 1} ${escapeHtml(describeQueueJob(job))}</span>
+                  <span class="task-badge">排队中</span>
+                </div>
+                <div class="task-queue-meta">${escapeHtml(job.message || '等待执行')}</div>
+              </div>
+              <div class="task-queue-actions">
+                <button type="button" class="task-mini-btn" data-job-move="up" data-job-id="${escapeHtml(job.id)}" ${idx === 0 ? 'disabled' : ''} title="上移">↑</button>
+                <button type="button" class="task-mini-btn" data-job-move="down" data-job-id="${escapeHtml(job.id)}" ${idx === queuedJobs.length - 1 ? 'disabled' : ''} title="下移">↓</button>
+                <button type="button" class="task-mini-btn" data-job-del="${escapeHtml(job.id)}" title="移出队列">✕</button>
+              </div>
+            </div>`).join('')
+        : (!activeHtml ? '<div class="provenance-hint">当前队列空闲。可点击上方「一键填充未完成任务」或单独添加任务。</div>' : '');
+
+      const historyHtml = historyJobs.length
+        ? historyJobs.map((job) => {
+            const cls = job.status === 'completed' ? 'is-done' : (job.status === 'failed' ? 'is-failed' : 'is-paused');
+            return `
+              <div class="task-queue-item">
+                <div class="task-queue-main">
+                  <div class="task-queue-title">
+                    <span>${escapeHtml(describeQueueJob(job))}</span>
+                    <span class="task-badge ${cls}">${escapeHtml(TASK_STATUS_LABELS[job.status] || job.status)}</span>
+                  </div>
+                  <div class="task-queue-meta">${escapeHtml(job.error || job.message || '')}</div>
+                </div>
+                <div class="task-queue-actions">
+                  <button type="button" class="task-mini-btn" data-job-del="${escapeHtml(job.id)}" title="删除记录">✕</button>
+                </div>
+              </div>`;
+          }).join('')
+        : '<div class="provenance-hint">暂无近期任务记录。</div>';
+
       body.innerHTML = `
-        <div class="provenance-stat-grid">
-          <div class="provenance-stat"><b>${Number(data.total || 0).toLocaleString()}</b>已登记来源记录</div>
-          <div class="provenance-stat"><b>${unresolved.toLocaleString()}</b>未识别，需反向搜图</div>
-          <div class="provenance-stat"><b>${count('pixiv').toLocaleString()}</b>Pixiv 文件</div>
-          <div class="provenance-stat"><b>${count('twitter').toLocaleString()}</b>X/Twitter 文件</div>
-          <div class="provenance-stat"><b>${Number(data.authors || 0).toLocaleString()}</b>作者组</div>
-          <div class="provenance-stat"><b>${Number(counts.total || 0).toLocaleString()}</b>已索引图片</div>
-          <div class="provenance-stat"><b>${Number(counts.camie_v2_done || 0).toLocaleString()} / ${Number(counts.pixai_v09_done || 0).toLocaleString()}</b>Camie / PixAI0.9 标签</div>
-          <div class="provenance-stat"><b>${Number(counts.pixai_v10_done || 0).toLocaleString()}</b>PixAI 1.0 标签</div>
-          <div class="provenance-stat"><b>${Number(counts.vision_done || 0).toLocaleString()}</b>视觉属性与人脸</div>
-          <div class="provenance-stat"><b>${Number(counts.ccip_done || 0).toLocaleString()}</b>CCIP 角色向量</div>
+        <div class="task-section">
+          <div class="task-section-head">
+            <strong>图库状态概览</strong>
+            <span class="task-section-sub">${escapeHtml(scopeHint)}</span>
+          </div>
+          <div class="provenance-stat-grid">
+            <div class="provenance-stat"><b>${Number(counts.total || 0).toLocaleString()}</b>已索引图片</div>
+            <div class="provenance-stat"><b>${Number(counts.camie_v2_done || 0).toLocaleString()} / ${Number(counts.pixai_v09_done || 0).toLocaleString()}</b>Camie / PixAI0.9</div>
+            <div class="provenance-stat"><b>${Number(counts.vision_done || 0).toLocaleString()}</b>视觉属性与人脸</div>
+            <div class="provenance-stat"><b>${Number(counts.ccip_done || 0).toLocaleString()}</b>CCIP 角色向量</div>
+            <div class="provenance-stat"><b>${Number(counts.pixai_v10_done || 0).toLocaleString()}</b>PixAI 1.0 标签</div>
+            <div class="provenance-stat"><b>${Number(data.total || 0).toLocaleString()}</b>来源已登记</div>
+            <div class="provenance-stat"><b>${unresolved.toLocaleString()}</b>未识别待搜图</div>
+            <div class="provenance-stat"><b>${Number(data.authors || 0).toLocaleString()}</b>作者组</div>
+          </div>
         </div>
-        <div class="provenance-progress"><i style="width:${percent}%"></i></div>
-        <div class="provenance-row"><span>${escapeHtml(job.message || '空闲')}</span></div>
-        ${job.error ? `<div class="provenance-hint">错误：${escapeHtml(job.error)}</div>` : ''}
-        <div class="provenance-actions">${controls.join('')}</div>
-        <hr style="border:none;border-top:1px solid var(--border);margin:8px 0;">
-        <div class="provenance-row" style="gap:8px;flex-wrap:wrap;align-items:center;">
-          <strong>标签与视觉任务调度</strong>
-          <select id="task-tag-backend" aria-label="标签模型后端">
-            <option value="camie+pixai0.9">Camie v2 + PixAI v0.9（默认融合）</option>
-            <option value="pixai1.0">PixAI v1.0（1008px 精度补标）</option>
-            <option value="camie">仅 Camie Tagger v2</option>
-            <option value="pixai0.9">仅 PixAI v0.9</option>
-          </select>
-          <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;">
-            <input id="task-skip-completed" type="checkbox"${prevSkip ? ' checked' : ''}> 跳过已完成图片
-          </label>
+
+        <div class="task-section">
+          <div class="task-section-head">
+            <strong>添加任务到队列</strong>
+            <label class="artseek-check">
+              <input id="task-skip-completed" type="checkbox"${prevSkip ? ' checked' : ''}> 跳过已完成图片
+            </label>
+          </div>
+          <div class="provenance-row" style="gap:8px;flex-wrap:wrap;align-items:center;">
+            <select id="task-tag-backend" class="artseek-select" aria-label="标签模型后端">
+              <option value="camie+pixai0.9">Camie v2 + PixAI v0.9（默认融合）</option>
+              <option value="pixai1.0">PixAI v1.0（1008px 精度补标）</option>
+              <option value="camie">仅 Camie Tagger v2</option>
+              <option value="pixai0.9">仅 PixAI v0.9</option>
+            </select>
+            <button type="button" class="task-btn-primary" data-bg-job="auto-fill">一键填充未完成任务</button>
+          </div>
+          <div class="provenance-actions">
+            <button type="button" data-bg-job="retag">+ 自动打标</button>
+            <button type="button" data-bg-job="vision">+ 视觉属性 &amp; 人脸</button>
+            <button type="button" data-bg-job="ccip">+ CCIP 角色向量</button>
+            <button type="button" data-bg-job="pscan">+ 本地增量扫源</button>
+            <button type="button" data-bg-job="pscan-deep">+ 深度扫源</button>
+            <button type="button" data-bg-job="penrich">+ 补全 Pixiv/X</button>
+          </div>
         </div>
-        <div class="provenance-actions">
-          <button type="button" data-bg-job="retag">安排自动标签任务</button>
-          <button type="button" data-bg-job="vision">提取视觉属性 & 人脸居中</button>
-          <button type="button" data-bg-job="ccip">提取 CCIP 角色向量</button>
-          ${activeBgJob && ['queued', 'running', 'paused'].includes(activeBgJob.status)
-            ? '<button type="button" data-bg-job="stop">停止后台任务</button>'
-            : ''}
+
+        <div class="task-section">
+          <div class="task-section-head">
+            <strong>执行队列（${queuedJobs.length} 项待执行）</strong>
+          </div>
+          <div class="task-queue-list">
+            ${activeHtml}
+            ${queuedHtml}
+          </div>
         </div>
-        ${activeBgJob ? `
-          <div class="provenance-progress"><i style="width:${bgPercent}%"></i></div>
-          <div class="provenance-row"><span>后台任务：${escapeHtml(activeBgJob.message || activeBgJob.status)}</span></div>
-          ${activeBgJob.error ? `<div class="provenance-hint">任务错误：${escapeHtml(activeBgJob.error)}</div>` : ''}
-        ` : ''}
-        <div>${budgets}</div>
+
+        <div class="task-section">
+          <div class="task-section-head">
+            <strong>近期执行记录</strong>
+            ${historyJobs.length ? '<button type="button" class="task-mini-btn" data-bg-job="clear-history">清空记录</button>' : ''}
+          </div>
+          <div class="task-queue-list">${historyHtml}</div>
+          ${budgets ? `<div class="provenance-hint">${budgets}</div>` : ''}
+        </div>
       `;
       if ($('task-tag-backend')) $('task-tag-backend').value = prevBackend;
       body.querySelectorAll('[data-prov-job]').forEach((button) => {
@@ -3668,21 +3848,25 @@
       body.querySelectorAll('[data-bg-job]').forEach((button) => {
         button.addEventListener('click', () => runBackgroundTaskAction(button.dataset.bgJob));
       });
+      body.querySelectorAll('[data-job-move]').forEach((button) => {
+        button.addEventListener('click', () => moveQueuedTask(button.dataset.jobId, button.dataset.jobMove));
+      });
+      body.querySelectorAll('[data-job-del]').forEach((button) => {
+        button.addEventListener('click', () => deleteQueuedOrFinishedTask(button.dataset.jobDel));
+      });
     }
     async function refreshProvenanceDialog() {
       if (!$('provenance-dialog').open) return;
       try {
-        const [data, taskData, jobsData] = await Promise.all([
+        const [data, taskData, queueData] = await Promise.all([
           parseResponse(await fetch('/api/provenance/stats')),
           parseResponse(await fetch('/api/jobs/task-stats')).catch(() => ({ counts: {} })),
-          parseResponse(await fetch('/api/jobs')).catch(() => ({ jobs: [] })),
+          parseResponse(await fetch('/api/jobs/queue')).catch(() => ({ active: null, queued: [], history: [] })),
         ]);
-        renderProvenanceDialog(data, taskData, jobsData);
+        renderProvenanceDialog(data, taskData, queueData);
         clearTimeout(state.provenancePoll);
-        const bgRunning = (jobsData.jobs || []).some(
-          (j) => ['retag', 'vision_enrich', 'ccip'].includes(j.kind) && ['queued', 'running', 'paused'].includes(j.status),
-        );
-        if ((data.job && data.job.running) || bgRunning) {
+        const bgActive = Boolean(queueData.active || (queueData.queued && queueData.queued.length));
+        if ((data.job && data.job.running) || bgActive) {
           state.provenanceIdlePolls = 3;
           state.provenancePoll = setTimeout(refreshProvenanceDialog, 1200);
         } else if (state.provenanceIdlePolls > 0) {
@@ -3690,7 +3874,7 @@
           state.provenancePoll = setTimeout(refreshProvenanceDialog, 1000);
         }
       } catch (error) {
-        $('provenance-dialog-body').innerHTML = `<p class="provenance-hint">来源统计读取失败：${escapeHtml(error.message)}</p>`;
+        $('provenance-dialog-body').innerHTML = `<p class="provenance-hint">状态读取失败：${escapeHtml(error.message)}</p>`;
       }
     }
     async function openProvenanceDialog() {
@@ -3728,15 +3912,44 @@
       }
       await refreshProvenanceDialog();
     }
+    async function moveQueuedTask(jobId, direction) {
+      if (!jobId) return;
+      try {
+        await parseResponse(await fetch(`/api/jobs/${encodeURIComponent(jobId)}/move`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ direction }),
+        }));
+      } catch (error) {
+        $('provenance-dialog-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">调整顺序失败：${escapeHtml(error.message)}</p>`);
+      }
+      await refreshProvenanceDialog();
+    }
+    async function deleteQueuedOrFinishedTask(jobId) {
+      if (!jobId) return;
+      try {
+        await parseResponse(await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { method: 'DELETE' }));
+      } catch (error) {
+        $('provenance-dialog-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">删除失败：${escapeHtml(error.message)}</p>`);
+      }
+      await refreshProvenanceDialog();
+    }
     async function runBackgroundTaskAction(action) {
       const skipCompleted = $('task-skip-completed') ? $('task-skip-completed').checked : true;
       const backend = $('task-tag-backend')?.value || 'camie+pixai0.9';
       const folderKeys = treeState.selected.size ? [...treeState.selected] : null;
       const spec = {
+        'auto-fill': { url: '/api/jobs/auto-fill', body: { backend, folder_keys: folderKeys, include_provenance: false } },
         retag: { url: '/api/jobs/retag', body: { backend, folder_keys: folderKeys, skip_completed: skipCompleted } },
         vision: { url: '/api/jobs/vision-enrich', body: { folder_keys: folderKeys, skip_completed: skipCompleted } },
         ccip: { url: '/api/jobs/ccip', body: { folder_keys: folderKeys, skip_completed: skipCompleted } },
+        pscan: { url: '/api/jobs/provenance-scan', body: { deep: false, only_new: true, auto_enrich: true } },
+        'pscan-deep': { url: '/api/jobs/provenance-scan', body: { deep: true, only_new: false, auto_enrich: true } },
+        penrich: { url: '/api/jobs/provenance-enrich', body: { platforms: ['pixiv', 'twitter'] } },
+        pause: { url: '/api/jobs/pause', body: {} },
+        resume: { url: '/api/jobs/resume', body: {} },
         stop: { url: '/api/jobs/stop', body: {} },
+        'clear-history': { url: '/api/jobs/clear-finished', body: {} },
       }[action];
       if (!spec) return;
       try {
