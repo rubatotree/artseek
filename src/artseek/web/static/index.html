@@ -342,6 +342,7 @@
       display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px;
       margin: 7px 0 1px; padding: 8px; border: 1px solid var(--line);
       border-radius: 12px; background: #fcf8fa;
+      animation: artseekPopReveal .18s cubic-bezier(.22,1,.36,1);
     }
     .search-filters[hidden] { display: none; }
     .filter-field-wrap { position: relative; display: block; min-width: 0; }
@@ -538,12 +539,34 @@
       box-shadow: 0 4px 14px rgba(58,47,64,.06);
     }
     .view-controls-slot { display: flex; align-items: center; flex: 0 0 auto; min-height: 32px; }
-    .floating-controls { display: flex; align-items: center; gap: 6px; }
+    .floating-controls {
+      display: flex; align-items: center; gap: 6px;
+      transition: opacity .22s cubic-bezier(.22,1,.36,1), transform .24s cubic-bezier(.22,1,.36,1);
+    }
     .floating-controls.is-floating {
       position: fixed; top: 12px; right: 14px; z-index: 48;
-      padding: 4px; border: 1px solid rgba(255,255,255,.92); border-radius: 14px;
-      background: rgba(255,255,255,.84); box-shadow: 0 7px 22px rgba(58,47,64,.1);
-      backdrop-filter: blur(14px);
+      padding: 0; border: 0; border-radius: 0;
+      background: transparent; box-shadow: none; backdrop-filter: none;
+      animation: artseekFloatIn .22s cubic-bezier(.22,1,.36,1);
+    }
+    .floating-controls.is-floating .collection-sort-toggle,
+    .floating-controls.is-floating .collection-sort-pin {
+      background: rgba(255,255,255,.9);
+      box-shadow: 0 4px 12px rgba(58,47,64,.12);
+      backdrop-filter: blur(10px);
+    }
+    .floating-controls.is-floating.is-hidden {
+      opacity: 0; transform: translateY(-16px) scale(.94);
+      pointer-events: none;
+      animation: none;
+    }
+    @keyframes artseekFloatIn {
+      from { opacity: 0; transform: translateY(-10px) scale(.95); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes artseekPopReveal {
+      from { opacity: 0; transform: translateY(-6px) scale(.98); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
     }
     .search-panel-toggle svg {
       width: 17px; height: 17px; fill: none; stroke: currentColor;
@@ -587,6 +610,7 @@
       display: grid; gap: 2px; width: min(250px, calc(100vw - 24px)); padding: 6px;
       border: 1px solid #e2d6dd; border-radius: 12px; background: #fff;
       box-shadow: 0 14px 30px rgba(69, 51, 76, .16);
+      animation: artseekPopReveal .16s cubic-bezier(.22,1,.36,1);
     }
     .collection-sort-menu[hidden] { display: none; }
     .collection-sort-title {
@@ -1577,10 +1601,19 @@
       display: grid; place-items: center; border: 1px solid #e4d9e1; border-radius: 999px;
       background: rgba(255,255,255,.96); color: #8a5268;
       box-shadow: 0 8px 22px rgba(69,51,76,.18);
+      opacity: 1; transform: translateY(0) scale(1); visibility: visible;
+      transition: opacity .2s ease, transform .22s cubic-bezier(.22,1,.36,1), visibility .22s ease;
     }
-    .scroll-top[hidden] { display: none; }
+    .scroll-top[hidden] {
+      display: grid; opacity: 0; transform: translateY(12px) scale(.9);
+      visibility: hidden; pointer-events: none;
+    }
     .scroll-top svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-    .scroll-top:hover { transform: none; background: #fff; }
+    .scroll-top:hover { transform: translateY(-2px); background: #fff; }
+    @media (prefers-reduced-motion: reduce) {
+      .floating-controls, .scroll-top { transition: none; }
+      .floating-controls.is-floating, .search-filters, .collection-sort-menu { animation: none; }
+    }
     @media (max-width: 900px) {
       :root { --page-gutter: 12px; }
       .shell { padding-inline: 0; width: 100%; }
@@ -5411,13 +5444,35 @@
     function compactInfo() {
       return window.matchMedia('(max-width: 720px)').matches;
     }
+    let lastFloatingScrollY = window.scrollY;
+    let floatingControlsHidden = false;
     function syncFloatingControls() {
       const slot = $('view-controls-slot');
       const controls = $('floating-controls');
       if (!slot || !controls) return;
       const rect = slot.getBoundingClientRect();
+      const wasFloating = controls.classList.contains('is-floating');
       const floating = rect.bottom < 0;
+      const currentY = Math.max(0, window.scrollY);
+      const delta = currentY - lastFloatingScrollY;
+      lastFloatingScrollY = currentY;
+      const sortMenuOpen = Boolean($('collection-sort-menu') && !$('collection-sort-menu').hidden);
+      const focusedInside = controls.contains(document.activeElement);
+
+      if (!floating) {
+        floatingControlsHidden = false;
+      } else if (sortMenuOpen || focusedInside) {
+        floatingControlsHidden = false;
+      } else if (!wasFloating && floating) {
+        floatingControlsHidden = delta >= 0;
+      } else if (delta > 6) {
+        floatingControlsHidden = true;
+      } else if (delta < -6) {
+        floatingControlsHidden = false;
+      }
+
       controls.classList.toggle('is-floating', floating);
+      controls.classList.toggle('is-hidden', floating && floatingControlsHidden);
     }
     function settleGalleryScroll() {
       requestAnimationFrame(() => {
