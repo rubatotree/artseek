@@ -688,6 +688,54 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(data["author"]["pixiv_ids"], ["1554775"])
         self.assertEqual(data["author"]["image_count"], 1)
 
+    @patch("artseek.web.app.PixivClient.fetch_author")
+    @patch("artseek.web.app.PixivClient.fetch")
+    def test_manual_save_with_unchanged_url_skips_refetch(self, fetch, fetch_author) -> None:
+        self.store.upsert_scan(
+            "p1", self.payload, ParsedSource(parse_filename(self.image.name))
+        )
+        self.store.set_fetch_result(
+            "p1",
+            {
+                "platform": "pixiv",
+                "source_id": "12345678",
+                "page": 0,
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "status": "ok",
+                "title": "自动标题",
+            },
+        )
+        author = self.store.ensure_author("pixiv", "100", name="Alice")
+        response = self.client.put(
+            "/api/images/p1/provenance",
+            json={
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "title": "手动标题",
+                "author_key": author,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["record"]["title"], "手动标题")
+        self.assertEqual(data["record"]["author_key"], author)
+        self.assertEqual(data["record"]["status"], "ok")
+        fetch.assert_not_called()
+        fetch_author.assert_not_called()
+
+        self.store.set_status("p1", "not_found", "deleted")
+        response = self.client.put(
+            "/api/images/p1/provenance",
+            json={
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "title": "第二次手动标题",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["record"]["title"], "第二次手动标题")
+        self.assertEqual(response.json()["record"]["status"], "not_found")
+        fetch.assert_not_called()
+        fetch_author.assert_not_called()
+
     def test_search_author_token_aligns_linked_social_accounts(self) -> None:
         pixiv = self.store.ensure_author(
             "pixiv", "3952", name="おにねこ", handle="onineko"

@@ -2644,7 +2644,11 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 key = store.ensure_manual_author(name)
             if key:
                 fields["author_key"] = key
-        if ref is not None:
+        should_fetch = ref is not None and (
+            ref.url != str(record.get("url") or "")
+            or str(record.get("status") or "") == "pending"
+        )
+        if should_fetch:
             store.set_manual(point_id, fields, ref=ref)
             record = store.get(point_id)
             if record is not None and record.get("platform") in {"pixiv", "twitter"}:
