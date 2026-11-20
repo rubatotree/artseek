@@ -59,6 +59,7 @@ class RatingFilterApiTests(unittest.TestCase):
             db.close()
 
         self.folder_key = folder_key
+        self.image_dir = img_dir
         self.client = TestClient(create_app(cfg)).__enter__()
 
     def tearDown(self) -> None:
@@ -108,6 +109,12 @@ class RatingFilterApiTests(unittest.TestCase):
         self.assertEqual(self._ids(safe_only.json()), {"safe-id"})
         self.assertEqual(safe_only.json()["total"], 1)
 
+        r15_only = self.client.post(
+            "/api/scope-images", json={**base, "ratings": ["r15"]}
+        )
+        self.assertEqual(r15_only.status_code, 200)
+        self.assertEqual(self._ids(r15_only.json()), {"r15-id"})
+
         up_to_r15 = self.client.post(
             "/api/scope-images", json={**base, "ratings": ["safe", "r15"]}
         )
@@ -155,6 +162,48 @@ class RatingFilterApiTests(unittest.TestCase):
         )
         self.assertEqual(get_scope.status_code, 200)
         self.assertEqual(self._ids(get_scope.json()), {"safe-id"})
+
+    def test_author_images_honor_folder_scope(self) -> None:
+        other_dir = self.image_dir / "other"
+        other_dir.mkdir()
+        other = other_dir / "other.png"
+        Image.new("RGB", (32, 32), (50, 90, 180)).save(other)
+        container = self.client.app.state.container
+        container.images.upsert_images_batch(
+            [
+                self._record(
+                    "other-id",
+                    other,
+                    canonical_path(other_dir),
+                    other_dir,
+                    400,
+                    "3" * 16,
+                )
+            ]
+        )
+        author = container.prov_repo.ensure_author("pixiv", "1", name="Scope Author")
+        with container.db.write_tx() as conn:
+            for point_id in ("safe-id", "other-id"):
+                conn.execute(
+                    "INSERT INTO image_source ("
+                    "point_id, platform, source_id, url, author_key, updated_at"
+                    ") VALUES (?, 'pixiv', ?, 'https://example.com/x', ?, 1)",
+                    (point_id, point_id, author),
+                )
+
+        scoped = self.client.post(
+            f"/api/artists/{author}/images",
+            json={"folder_keys": [self.folder_key], "limit": 10},
+        )
+        self.assertEqual(scoped.status_code, 200)
+        self.assertEqual(self._ids(scoped.json()), {"safe-id"})
+
+        unscoped = self.client.post(
+            f"/api/artists/{author}/images",
+            json={"limit": 10},
+        )
+        self.assertEqual(unscoped.status_code, 200)
+        self.assertEqual(self._ids(unscoped.json()), {"safe-id", "other-id"})
 
 
 if __name__ == "__main__":

@@ -356,8 +356,8 @@ class ArtistService:
             for value in author_keys
             if str(value or "").strip()
         )
-        after_ns = day_start_ns(mtime_after) if folder_keys is not None else None
-        before_ns = day_end_ns(mtime_before) if folder_keys is not None else None
+        after_ns = day_start_ns(mtime_after)
+        before_ns = day_end_ns(mtime_before)
         time_range = (
             (after_ns, before_ns) if (after_ns is not None or before_ns is not None) else None
         )

@@ -382,7 +382,7 @@ class TestStageDSearchAndWebAPI(unittest.TestCase):
                 self.assertEqual(home.status_code, 200)
                 for needle in (
                     "filter-media-type",
-                    "filter-rating",
+                    "rating-filter",
                     "filter-attr-row",
                     "artseek-select",
                     "task-tag-backend",
@@ -392,6 +392,7 @@ class TestStageDSearchAndWebAPI(unittest.TestCase):
                     "focalObjectPositionStyle",
                 ):
                     self.assertIn(needle, home.text)
+                self.assertNotIn("支持 author: 与 tag: 过滤。", home.text)
 
     def test_job_queue_reorder_delete_and_auto_fill(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

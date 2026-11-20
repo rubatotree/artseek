@@ -554,6 +554,33 @@
       position: relative; display: flex; align-items: center; gap: 8px;
       min-height: 32px; margin: 18px 2px 8px;
     }
+    .rating-filter { position: relative; flex: 0 0 auto; }
+    .rating-filter > summary {
+      list-style: none; position: relative; display: inline-flex; align-items: center;
+      min-height: 28px; padding: 3px 26px 3px 10px;
+      border: 1px solid var(--line); border-radius: 9px; background: #fff;
+      color: var(--ink); font-size: 12px; line-height: 1.3; white-space: nowrap;
+      cursor: pointer; user-select: none;
+    }
+    .rating-filter > summary::-webkit-details-marker { display: none; }
+    .rating-filter > summary::after {
+      content: ""; position: absolute; right: 9px; top: 50%; width: 6px; height: 6px;
+      border-right: 1.8px solid #8a5268; border-bottom: 1.8px solid #8a5268;
+      transform: translateY(-70%) rotate(45deg); transition: transform .16s ease;
+    }
+    .rating-filter[open] > summary { border-color: #c97a98; box-shadow: 0 0 0 2px rgba(201,122,152,.16); }
+    .rating-filter[open] > summary::after { transform: translateY(-30%) rotate(-135deg); }
+    .rating-filter-options {
+      position: absolute; z-index: 30; top: calc(100% + 5px); left: 0; min-width: 150px;
+      display: grid; gap: 3px; padding: 6px; border: 1px solid var(--line);
+      border-radius: 10px; background: #fff; box-shadow: 0 12px 28px rgba(58,47,64,.14);
+    }
+    .rating-filter-options label {
+      display: flex; align-items: center; gap: 7px; padding: 5px 7px;
+      border-radius: 7px; color: var(--ink); font-size: 12px; white-space: nowrap; cursor: pointer;
+    }
+    .rating-filter-options label:hover { background: var(--rose-soft); }
+    .rating-filter-options input { width: 14px; height: 14px; accent-color: #b85f7e; cursor: pointer; }
     body.mobile-search-open .results-head {
       position: sticky; top: var(--search-panel-bottom, 76px); z-index: 25;
       padding: 5px 6px; border-radius: 12px;
@@ -2065,7 +2092,6 @@
           <div class="storage-block">
             <div class="storage-title">图库扫描与标注</div>
             <button class="secondary" id="provenance-tools" type="button" title="管理图库扫描、打标与视觉特征任务队列">图库扫描与标注</button>
-            <p class="model-hint">支持 author: 与 tag: 过滤。</p>
           </div>
           <label><input id="use-llm" type="checkbox" checked> 本地大模型理解条件</label>
           <label><input id="strict-tags" type="checkbox"> 细节标签至少命中一项</label>
@@ -2193,11 +2219,14 @@
                   <option value="3d">3D</option>
                   <option value="not_painting">实拍/非绘画</option>
                 </select>
-                <select id="filter-rating" class="artseek-select" aria-label="分级筛选" title="开启后隐藏无分级标签与超出所选分级的图片">
-                  <option value="">全部</option>
-                  <option value="safe">全年龄</option>
-                  <option value="r15" title="显示全年龄与 R15">R15</option>
-                </select>
+                <details id="rating-filter" class="rating-filter">
+                  <summary id="rating-filter-summary" aria-label="分级筛选" title="勾选要显示的分级；未勾选「全部」时会隐藏未标注分级与 R18 图片">全部</summary>
+                  <div class="rating-filter-options" role="group" aria-label="分级筛选">
+                    <label><input id="rating-filter-all" type="checkbox" checked> 全部</label>
+                    <label><input id="rating-filter-r15" type="checkbox" checked> R15</label>
+                    <label><input id="rating-filter-safe" type="checkbox" checked> 全年龄</label>
+                  </div>
+                </details>
                 <label class="artseek-check">
                   <input id="filter-monochrome" type="checkbox"> 黑白/线稿
                 </label>
@@ -2371,43 +2400,79 @@
     const GALLERY_VIEW_STORAGE_KEY = 'artseek.galleryView';
     const SIDEBAR_COLLAPSED_STORAGE_KEY = 'artseek.sidebarCollapsed';
     const RATING_FILTER_STORAGE_KEY = 'artseek.ratingFilter';
-    const RATING_FILTER_MODES = new Set(['safe', 'r15']);
+    const RATING_FILTER_KEYS = ['all', 'r15', 'safe'];
     function loadRatingFilter() {
       try {
         const stored = localStorage.getItem(RATING_FILTER_STORAGE_KEY);
-        return RATING_FILTER_MODES.has(stored) ? stored : '';
+        if (!stored) return new Set(RATING_FILTER_KEYS);
+        if (stored === 'safe') return new Set(['safe']);
+        if (stored === 'r15') return new Set(['safe', 'r15']);
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          const valid = parsed.filter((value) => RATING_FILTER_KEYS.includes(value));
+          if (valid.includes('all')) return new Set(RATING_FILTER_KEYS);
+          if (valid.length) return new Set(valid);
+        }
       } catch {
-        // Storage can be unavailable in private contexts; keep the safe default.
+        // Storage can be unavailable or contain an older value; use the default.
       }
-      return '';
+      return new Set(RATING_FILTER_KEYS);
     }
-    function persistRatingFilter(value) {
+    function selectedRatingFilter() {
+      const selected = new Set();
+      for (const key of RATING_FILTER_KEYS) {
+        if ($(`rating-filter-${key}`)?.checked) selected.add(key);
+      }
+      return selected;
+    }
+    function persistRatingFilter(selected = selectedRatingFilter()) {
       try {
-        if (RATING_FILTER_MODES.has(value)) {
-          localStorage.setItem(RATING_FILTER_STORAGE_KEY, value);
-        } else {
+        if (selected.size === RATING_FILTER_KEYS.length) {
           localStorage.removeItem(RATING_FILTER_STORAGE_KEY);
+        } else {
+          localStorage.setItem(RATING_FILTER_STORAGE_KEY, JSON.stringify([...selected]));
         }
       } catch {
         // Keep the in-memory selection when storage is unavailable.
       }
     }
-    function ratingFilterValues(value = $('filter-rating')?.value || '') {
-      if (value === 'safe') return ['safe'];
-      if (value === 'r15') return ['safe', 'r15'];
-      return [];
+    function ratingFilterValues() {
+      const selected = selectedRatingFilter();
+      if (selected.has('all')) return [];
+      const values = [];
+      if (selected.has('r15')) values.push('r15');
+      if (selected.has('safe')) values.push('safe');
+      return values;
     }
     function filterItemsByRating(items) {
-      const allowed = new Set(ratingFilterValues());
-      if (!allowed.size) return items;
-      return items.filter((item) => (
-        item.kind === 'artist'
-        || allowed.has(String(item.rating || '').trim().toLowerCase())
-      ));
+      const selected = selectedRatingFilter();
+      if (selected.has('all')) return items;
+      return items.filter((item) => {
+        if (item.kind === 'artist') return true;
+        const rating = String(item.rating || '').trim().toLowerCase();
+        if (rating === 'safe') return selected.has('safe');
+        if (rating === 'r15') return selected.has('r15');
+        return false;
+      });
+    }
+    function ratingFilterSummary(selected = selectedRatingFilter()) {
+      if (selected.has('all')) return '全部';
+      const labels = [];
+      if (selected.has('r15')) labels.push('R15');
+      if (selected.has('safe')) labels.push('全年龄');
+      return labels.length ? labels.join(' + ') : '未选择';
+    }
+    function updateRatingFilterSummary() {
+      const summary = $('rating-filter-summary');
+      if (summary) summary.textContent = ratingFilterSummary();
     }
     function applyStoredRatingFilter() {
-      const select = $('filter-rating');
-      if (select) select.value = loadRatingFilter();
+      const selected = loadRatingFilter();
+      for (const key of RATING_FILTER_KEYS) {
+        const checkbox = $(`rating-filter-${key}`);
+        if (checkbox) checkbox.checked = selected.has(key);
+      }
+      updateRatingFilterSummary();
     }
     function appendRatingParams(params) {
       for (const rating of ratingFilterValues()) params.append('ratings', rating);
@@ -5403,6 +5468,10 @@
       }, 180);
     }
     async function refreshForRatingChange() {
+      if (state.libraryView === 'artists' && state.mode !== 'author') {
+        if (artistViewActive()) return fetchArtistGallery({ reset: true });
+        return undefined;
+      }
       if (state.mode === 'search') return fetchResults({ reset: true });
       if (state.mode === 'collection' && state.collectionId) {
         return fetchCollectionImages({ reset: true });
@@ -5626,6 +5695,7 @@
     }
     function updateFilterBadge() {
       const filters = readAdvancedFilters();
+      const ratingFiltered = !selectedRatingFilter().has('all');
       const count = [
         ...filters.authors,
         filters.title_query,
@@ -5633,7 +5703,7 @@
         filters.tag_expression,
         ...filters.text_tags,
         ...(filters.media_types || []),
-        ...(filters.ratings || []),
+        ratingFiltered ? 'rating' : '',
         filters.monochrome === true ? 'mono' : '',
         filters.exclude_ai === true ? 'no_ai' : '',
         filters.aesthetic_sort ? 'aesthetic' : '',
@@ -5666,10 +5736,36 @@
         scheduleFilterApply();
       });
     });
-    $('filter-rating')?.addEventListener('change', () => {
-      persistRatingFilter($('filter-rating').value);
+    function handleRatingFilterChange(event) {
+      const all = $('rating-filter-all');
+      const r15 = $('rating-filter-r15');
+      const safe = $('rating-filter-safe');
+      if (!all || !r15 || !safe) return;
+      if (event.target === all) {
+        if (all.checked) {
+          r15.checked = true;
+          safe.checked = true;
+        }
+      } else {
+        if (all.checked && (!r15.checked || !safe.checked)) all.checked = false;
+        if (!r15.checked && !safe.checked) {
+          if (event.target === r15) r15.checked = true;
+          else safe.checked = true;
+        }
+      }
+      persistRatingFilter();
+      updateRatingFilterSummary();
       updateFilterBadge();
       void refreshForRatingChange();
+    }
+    ['rating-filter-all', 'rating-filter-r15', 'rating-filter-safe'].forEach((id) => {
+      $(id)?.addEventListener('change', handleRatingFilterChange);
+    });
+    document.addEventListener('click', (event) => {
+      const details = $('rating-filter');
+      if (details?.open && event.target instanceof Node && !details.contains(event.target)) {
+        details.open = false;
+      }
     });
     Object.entries(FILTER_CHIP_CONFIG).forEach(([kind, config]) => {
       $(config.input).addEventListener('keydown', (event) => {
@@ -7700,14 +7796,24 @@
       try {
         const sort = effectiveAuthorSort();
         if (sort === 'random' && state.authorSeed == null) state.authorSeed = newRandomSeed();
-        const params = new URLSearchParams({
-          sort,
-          limit: String(Number($('limit').value) || 40),
-          offset: String(reset ? 0 : state.results.length),
-        });
-        if (sort === 'random' && state.authorSeed != null) params.set('seed', String(state.authorSeed));
-        appendRatingParams(params);
-        const data = await parseResponse(await fetch(`/api/authors/${encodeURIComponent(state.authorKey)}/images?${params}`));
+        const timeRange = currentTimeRange();
+        const data = await parseResponse(await fetch(
+          `/api/artists/${encodeURIComponent(state.authorKey)}/images`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              folder_keys: treeState.selected.size ? [...treeState.selected] : null,
+              mtime_after: timeRange.after || null,
+              mtime_before: timeRange.before || null,
+              sort,
+              seed: sort === 'random' ? state.authorSeed : null,
+              offset: reset ? 0 : state.results.length,
+              limit: Number($('limit').value) || 40,
+              ratings: ratingFilterValues(),
+            }),
+          },
+        ));
         if (seq !== state.searchSeq) return;
         const incoming = data.results || [];
         const author = data.author || {};
@@ -9238,7 +9344,11 @@
     }
 
     function refreshDefaultGallery() {
-      if (['search', 'collection', 'author', 'random'].includes(state.mode)) return;
+      if (state.mode === 'author') {
+        void fetchAuthorImages({ reset: true });
+        return;
+      }
+      if (['search', 'collection', 'random'].includes(state.mode)) return;
       if (treeState.selected.size) {
         startScopeBrowse({ skipRoute: true });
         return;
