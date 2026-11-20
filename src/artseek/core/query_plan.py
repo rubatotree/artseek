@@ -7,6 +7,9 @@ import shlex
 from dataclasses import dataclass, field
 from typing import Any
 
+from .tag_dictionary import fuzzy_tag_entries
+from .transliterate import lookup_keys, transliteration_keys
+
 
 def normalize_tag(value: str) -> str:
     return re.sub(r"\s+", "_", value.strip().lower()).strip("_,")
@@ -192,6 +195,39 @@ ILLUSTRATION_LEXICON: dict[str, tuple[str, ...]] = {
     "冬日": ("winter",),
 }
 
+_LEXICON_FUZZY: dict[str, tuple[str, ...]] | None = None
+
+
+def _lexicon_fuzzy_tags(value: str, *, limit: int = 12) -> list[str]:
+    global _LEXICON_FUZZY
+    needles = lookup_keys(value)
+    if not needles:
+        return []
+    if _LEXICON_FUZZY is None:
+        index: dict[str, set[str]] = {}
+        for alias, tags in ILLUSTRATION_LEXICON.items():
+            for key in transliteration_keys(alias):
+                index.setdefault(key, set()).update(tags)
+        _LEXICON_FUZZY = {
+            key: tuple(sorted(tags)) for key, tags in index.items()
+        }
+    scored: dict[str, int] = {}
+    for key, tags in _LEXICON_FUZZY.items():
+        best = 0
+        for needle in needles:
+            if key == needle:
+                best = max(best, 3)
+            elif key.startswith(needle):
+                best = max(best, 2)
+            elif needle in key:
+                best = max(best, 1)
+        if not best:
+            continue
+        for tag in tags:
+            scored[tag] = max(scored.get(tag, 0), best)
+    ranked = sorted(scored.items(), key=lambda item: (-item[1], item[0]))
+    return [tag for tag, _ in ranked[: max(1, int(limit))]]
+
 
 @dataclass(slots=True)
 class QueryPlan:
@@ -250,8 +286,19 @@ def static_expand(query: str) -> QueryPlan:
             term = token[1:]
             mapped = ILLUSTRATION_LEXICON.get(term, (term,))
             negative.extend(mapped)
+            negative.extend(entry.tag for entry in fuzzy_tag_entries(term))
+            negative.extend(_lexicon_fuzzy_tags(term))
         elif re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_ -]{1,50}", token):
             positive.append(token)
+
+    negative_match = re.search(
+        r"(?:不要|排除|不含|没有|无)\s*([A-Za-z0-9_ -]+)",
+        query,
+    )
+    negative_text = negative_match.group(1).strip() if negative_match else ""
+    if negative_text:
+        negative.extend(entry.tag for entry in fuzzy_tag_entries(negative_text))
+        negative.extend(_lexicon_fuzzy_tags(negative_text))
 
     for alias, tags in ILLUSTRATION_LEXICON.items():
         if alias.lower() in lowered:
@@ -260,6 +307,12 @@ def static_expand(query: str) -> QueryPlan:
                 lowered,
             )
             (negative if negative_context else positive).extend(tags)
+
+    positive_text = re.sub(r"(?:^|\s)-\S+", " ", query)
+    positive_text = re.sub(r"(?:不要|排除|不含|没有|无)\s*[A-Za-z0-9_ -]+", " ", positive_text)
+    if positive_text.strip():
+        positive.extend(entry.tag for entry in fuzzy_tag_entries(positive_text))
+        positive.extend(_lexicon_fuzzy_tags(positive_text))
 
     return QueryPlan(
         original=query,

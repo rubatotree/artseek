@@ -395,6 +395,18 @@ class V2ServicesTests(unittest.TestCase):
         self.assertTrue(local["metadata_search"])
         self.assertEqual([r["id"] for r in local["results"]], [self.items["pixiv_1"]])
 
+        # Pinyin/romaji aliases resolve to the same tags.
+        pinyin = self.search.local_search(query="guoxiwa", folder_keys=all_folders, limit=10)
+        self.assertEqual([r["id"] for r in pinyin["results"]], [self.items["pixiv_1"]])
+        lexicon = self.search.local_search(query="jixiu", folder_keys=all_folders, limit=10)
+        self.assertEqual(
+            {r["id"] for r in lexicon["results"]},
+            {self.items["pixiv_1"], self.items["pixiv_2_dup"], self.items["plain_1"]},
+        )
+        # Artist names no longer match images; artists are matched by the mixed search.
+        by_artist = self.search.local_search(query="alice", folder_keys=all_folders, limit=10)
+        self.assertEqual(by_artist["results"], [])
+
         # 3. Hybrid search with negative tag + strict_tags + dedupe + snapshot
         hybrid = self.search.search(
             query="姬袖 -站立",

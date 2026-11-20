@@ -15,6 +15,7 @@ ArtSeek 是一个完全本地运行的插画图片收藏检索工具。它不会
 
 - 增量扫描一个或多个目录；只重算新增或发生变化的图片；
 - 中文、日文、英文自然语言搜索；
+- 中文拼音、日文假名罗马音模糊搜索（如 `lanse toufa`、`ronguhea`、`seeraafuku`）；
 - 服装、动作、镜头、构图、色彩等关键词搜索；
 - `-关键词`、`不要……`、`排除……`等负向条件；
 - 上传、拖入或粘贴参考图进行以图搜图；
@@ -250,6 +251,7 @@ ruff check src tests
 - [SigLIP 2](https://huggingface.co/google/siglip2-base-patch16-256)：Apache-2.0；多语言图文检索；
 - [WD EVA02 Large Tagger v3](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3)：Apache-2.0；插画多标签分类；
 - [Qwen3](https://ollama.com/library/qwen3) 与 [Qwen3-VL](https://ollama.com/library/qwen3-vl)：通过 Ollama 可选安装；
+- [pypinyin](https://github.com/mozillazg/python-pinyin)：MIT；中文标签的拼音检索键。
 - [Qdrant Python Client](https://github.com/qdrant/qdrant-client)：Apache-2.0；仅用于只读解析 v1 数据，v2 索引与检索不再使用 Qdrant 服务。
 
 ArtSeek 自身使用 MIT 许可证。模型权重仍受各自模型许可证约束。

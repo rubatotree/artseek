@@ -6,6 +6,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from .transliterate import lookup_keys, transliteration_keys
+
 
 @dataclass(frozen=True)
 class TagEntry:
@@ -17,18 +19,36 @@ class TagEntry:
 _TAG_ENTRIES: tuple[TagEntry, ...] = (
     TagEntry("long_hair", "长发", ("长发", "长头发", "ロングヘア", "long hair")),
     TagEntry("short_hair", "短发", ("短发", "ショートヘア", "short hair")),
-    TagEntry("blue_eyes", "蓝眼", ("蓝眼", "蓝色眼睛", "青い目", "blue eyes")),
+    TagEntry(
+        "blue_eyes",
+        "蓝眼",
+        ("蓝眼", "蓝色眼睛", "青い目", "あおいめ", "aoi me", "blue eyes"),
+    ),
     TagEntry("red_eyes", "红眼", ("红眼", "红色眼睛", "red eyes")),
     TagEntry("green_eyes", "绿眼", ("绿眼", "绿色眼睛", "green eyes")),
     TagEntry("blonde_hair", "金发", ("金发", "blonde hair")),
     TagEntry("black_hair", "黑发", ("黑发", "black hair")),
     TagEntry("white_hair", "白发", ("白发", "银发", "white hair")),
+    TagEntry(
+        "blue_hair",
+        "蓝发",
+        ("蓝发", "蓝色头发", "蓝头发", "青い髪", "あおいかみ", "aoi kami", "blue hair"),
+    ),
+    TagEntry("red_hair", "红发", ("红发", "红色头发", "赤发", "red hair")),
+    TagEntry("green_hair", "绿发", ("绿发", "绿色头发", "green hair")),
+    TagEntry("purple_hair", "紫发", ("紫发", "紫色头发", "purple hair")),
+    TagEntry("pink_hair", "粉发", ("粉发", "粉色头发", "粉红色头发", "pink hair")),
+    TagEntry("brown_hair", "棕发", ("棕发", "棕色头发", "茶色头发", "brown hair")),
     TagEntry("twintails", "双马尾", ("双马尾", "ツインテール", "twintails")),
     TagEntry("ponytail", "马尾", ("马尾", "ponytail")),
     TagEntry("cat_ears", "猫耳", ("猫耳", "猫耳朵", "猫耳", "cat ears")),
     TagEntry("animal_ears", "兽耳", ("兽耳", "animal ears")),
     TagEntry("school_uniform", "校服", ("校服", "制服", "学校制服", "school uniform")),
-    TagEntry("serafuku", "水手服", ("水手服", "セーラー服", "sailor uniform", "serafuku")),
+    TagEntry(
+        "serafuku",
+        "水手服",
+        ("水手服", "セーラー服", "せーらーふく", "seeraafuku", "sailor uniform", "serafuku"),
+    ),
     TagEntry("maid", "女仆", ("女仆", "女仆装", "maid")),
     TagEntry("dress", "连衣裙", ("连衣裙", "裙子", "dress")),
     TagEntry("kimono", "和服", ("和服", "着物", "kimono")),
@@ -101,6 +121,72 @@ def _load_generated_translations() -> list[TagEntry]:
 _GENERATED_ENTRIES = _load_generated_translations()
 _GENERATED_BY_TAG = {entry.tag.casefold(): entry for entry in _GENERATED_ENTRIES}
 
+_FUZZY_INDEX: list[tuple[TagEntry, tuple[str, ...]]] | None = None
+
+
+def _fuzzy_index() -> list[tuple[TagEntry, tuple[str, ...]]]:
+    global _FUZZY_INDEX
+    if _FUZZY_INDEX is None:
+        indexed: list[tuple[TagEntry, tuple[str, ...]]] = []
+        for entry in (*_TAG_ENTRIES, *_GENERATED_ENTRIES):
+            keys: set[str] = set()
+            for value in (entry.tag, entry.zh, *entry.aliases):
+                keys.update(transliteration_keys(value))
+            if keys:
+                indexed.append((entry, tuple(sorted(keys))))
+        _FUZZY_INDEX = indexed
+    return _FUZZY_INDEX
+
+
+def fuzzy_tag_entries(value: str, *, limit: int = 8) -> list[TagEntry]:
+    """Find entries by pinyin/romaji lookup keys, best match first."""
+    needles = lookup_keys(value)
+    if not needles:
+        return []
+    scored: list[tuple[int, int, TagEntry]] = []
+    for entry, keys in _fuzzy_index():
+        best = 0
+        best_length = 10_000
+        for key in keys:
+            for needle in needles:
+                if key == needle:
+                    score = 3
+                elif key.startswith(needle):
+                    score = 2
+                elif needle in key:
+                    score = 1
+                else:
+                    continue
+                if score > best or (score == best and len(key) < best_length):
+                    best = score
+                    best_length = len(key)
+        if best:
+            scored.append((best, best_length, entry))
+    scored.sort(key=lambda item: (-item[0], item[1], item[2].tag))
+    result: list[TagEntry] = []
+    seen: set[str] = set()
+    for _, _, entry in scored:
+        if entry.tag in seen:
+            continue
+        seen.add(entry.tag)
+        result.append(entry)
+        if len(result) >= max(1, int(limit)):
+            break
+    return result
+
+
+def _fuzzy_fields(value: str, *, limit: int = 6) -> set[str] | None:
+    matches = fuzzy_tag_entries(value, limit=limit)
+    if not matches:
+        return None
+    fields: set[str] = set()
+    for entry in matches:
+        fields.add(entry.tag)
+        fields.add(entry.zh)
+        fields.update(entry.aliases)
+    return fields
+
+
 
 def expand_tag_aliases(value: str) -> set[str]:
     needle = str(value or "").strip().casefold()
@@ -117,6 +203,9 @@ def expand_tag_aliases(value: str) -> set[str]:
     for entry in _GENERATED_ENTRIES:
         if entry.zh.casefold() == needle:
             return {entry.tag, entry.zh}
+    fuzzy = _fuzzy_fields(value)
+    if fuzzy:
+        return fuzzy
     return {str(value).strip().lower().replace(" ", "_")}
 
 
@@ -130,7 +219,11 @@ def tag_info(tag: str) -> TagEntry | None:
         fields.update(alias.casefold() for alias in entry.aliases)
         if text in fields:
             return entry
-    return _GENERATED_BY_TAG.get(text)
+    generated = _GENERATED_BY_TAG.get(text)
+    if generated is not None:
+        return generated
+    fuzzy = fuzzy_tag_entries(tag, limit=1)
+    return fuzzy[0] if fuzzy else None
 
 
 def search_tags(query: str, *, limit: int = 40) -> list[TagEntry]:
@@ -139,8 +232,20 @@ def search_tags(query: str, *, limit: int = 40) -> list[TagEntry]:
     if not needle:
         return entries[: max(1, int(limit))]
     result: list[TagEntry] = []
-    for entry in entries:
+    seen: set[str] = set()
+    fuzzy_matches = fuzzy_tag_entries(query, limit=limit)
+    fuzzy_tags = {entry.tag for entry in fuzzy_matches}
+    for entry in (*fuzzy_matches, *entries):
+        if entry.tag in seen:
+            continue
         fields = (entry.tag, entry.zh, *entry.aliases)
-        if any(needle in value.casefold() for value in fields):
+        include = entry.tag in fuzzy_tags or any(
+            needle in value.casefold() for value in fields
+        )
+        if include:
+            seen.add(entry.tag)
             result.append(entry)
-    return result[: max(1, int(limit))]
+        if len(result) >= max(1, int(limit)):
+            break
+    return result
+

@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from ...core.query_plan import normalize_tag
 from ...provenance.parser import ParsedSource, SourceRef, XiaohongshuName
 from ...provenance.store import ProvenanceStore, _loads
 from ..connection import Database
@@ -448,43 +449,88 @@ class ProvenanceRepo(ProvenanceStore):
         return [str(r["point_id"]) for r in rows]
 
     def point_ids_for_metadata_search(
-        self, term_groups: Sequence[str | Sequence[str]]
+        self, term_groups: Sequence[str | Sequence[str] | tuple[str, Sequence[str]]]
     ) -> list[str]:
-        groups: list[list[str]] = []
+        groups: list[tuple[str, list[str]]] = []
         for group in term_groups:
-            values = [group] if isinstance(group, str) else list(group)
-            clean = [str(value).strip().lstrip("#") for value in values]
-            clean = list(dict.fromkeys(value for value in clean if value))
-            if clean:
-                groups.append(clean)
+            if isinstance(group, str):
+                original = group
+                aliases = [group]
+            elif (
+                isinstance(group, tuple)
+                and len(group) == 2
+                and not isinstance(group[1], str)
+            ):
+                original = str(group[0])
+                aliases = [str(value) for value in group[1]]
+            else:
+                aliases = [str(value) for value in group]
+                original = aliases[0] if aliases else ""
+            values = [
+                value.strip().lstrip("#")
+                for value in (original, *aliases)
+                if value.strip().lstrip("#")
+            ]
+            values = list(dict.fromkeys(values))
+            if values:
+                groups.append((original.strip().lstrip("#"), values))
         if not groups:
             return []
-        clauses: list[str] = []
+        group_sqls: list[str] = []
         params: list[str] = []
-        for group in groups:
-            alternatives: list[str] = []
-            for term in group:
-                like = f"%{term.casefold()}%"
-                alternatives.append(
-                    "(EXISTS (SELECT 1 FROM source_tags AS st "
-                    "WHERE st.point_id = image_source.point_id AND st.tag_norm LIKE ?) "
-                    "OR LOWER(COALESCE(title, '')) LIKE ? "
-                    "OR EXISTS (SELECT 1 FROM artist "
-                    "WHERE artist.id = image_source.artist_id "
-                    "AND (LOWER(COALESCE(artist.name, '')) LIKE ? "
-                    "OR LOWER(COALESCE(artist.name_key, '')) LIKE ? "
-                    "OR EXISTS (SELECT 1 FROM artist_identity "
-                    "WHERE artist_identity.artist_id = artist.id "
-                    "AND (artist_identity.identity LIKE ? "
-                    "OR LOWER(artist_identity.display) LIKE ?)))))"
+        for original, values in groups:
+            tag_names = sorted(
+                {normalize_tag(value) for value in values if normalize_tag(value)}
+            )
+            tag_norms = sorted(
+                {
+                    value.casefold()
+                    for value in (*values, *tag_names)
+                    if value.casefold()
+                }
+            )
+            selects: list[str] = []
+            if tag_names:
+                marks = ",".join("?" for _ in tag_names)
+                selects.append(
+                    "SELECT it.image_id AS id FROM image_tags AS it "
+                    "JOIN tags AS t ON t.id = it.tag_id "
+                    f"WHERE t.name IN ({marks})"
                 )
-                params.extend([like, like, like, like, like, like])
-            clauses.append("(" + " OR ".join(alternatives) + ")")
+                params.extend(tag_names)
+            if tag_norms:
+                marks = ",".join("?" for _ in tag_norms)
+                selects.append(
+                    "SELECT st.image_id AS id FROM source_tags AS st "
+                    f"WHERE st.image_id IS NOT NULL AND st.tag_norm IN ({marks})"
+                )
+                params.extend(tag_norms)
+                selects.append(
+                    "SELECT i2.id AS id FROM source_tags AS st "
+                    "JOIN images AS i2 ON i2.point_id = st.point_id "
+                    f"WHERE st.tag_norm IN ({marks})"
+                )
+                params.extend(tag_norms)
+            like = f"%{original.casefold()}%"
+            selects.append(
+                "SELECT i2.id AS id FROM images AS i2 "
+                "WHERE LOWER(COALESCE(i2.name, '')) LIKE ?"
+            )
+            params.append(like)
+            selects.append(
+                "SELECT s.image_id AS id FROM image_source AS s "
+                "WHERE s.image_id IS NOT NULL "
+                "AND LOWER(COALESCE(s.title, '')) LIKE ?"
+            )
+            params.append(like)
+            group_sqls.append("SELECT id FROM (" + " UNION ".join(selects) + ")")
+        combined = " INTERSECT ".join(group_sqls)
         with self._read() as conn:
             rows = conn.execute(
-                "SELECT point_id FROM image_source WHERE "
-                + " AND ".join(clauses)
-                + " ORDER BY mtime_ns IS NULL, mtime_ns DESC, updated_at DESC, point_id",
+                "SELECT i.point_id FROM images AS i "
+                f"JOIN ({combined}) AS m ON m.id = i.id "
+                "WHERE i.deleted = 0 "
+                "ORDER BY i.mtime_ns IS NULL, i.mtime_ns DESC, i.id DESC",
                 params,
             ).fetchall()
         return [str(r["point_id"]) for r in rows]

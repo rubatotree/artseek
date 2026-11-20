@@ -691,10 +691,13 @@ class SearchService:
             if term.lstrip("#")
         ]
         if not terms:
-            raise ServiceError(400, "请输入 tag、标题或作者关键词")
-        point_ids = self.prov.point_ids_for_metadata_search(
-            [sorted(expand_tag_aliases(term)) for term in terms]
-        )
+            raise ServiceError(400, "请输入 tag、标题或文件名关键词")
+        groups: list[tuple[str, list[str]]] = []
+        for term in terms:
+            aliases = set(expand_tag_aliases(term))
+            aliases.update(static_expand(term).positive_tags)
+            groups.append((term, sorted(aliases)))
+        point_ids = self.prov.point_ids_for_metadata_search(groups)
         resolved_folders = resolve_folder_keys_from_db(self.images, folder_keys)
         after_ns = day_start_ns(mtime_after)
         before_ns = day_end_ns(mtime_before)
