@@ -2941,6 +2941,7 @@
         if (win) win.focus();
       } catch (error) {
         if (win) win.close();
+        if (currentImageId() !== pointId) return;
         $('provenance-body').insertAdjacentHTML(
           'afterbegin',
           `<p class="provenance-hint">上传到 ${action.label} 失败：${escapeHtml(error.message)}</p>`,
@@ -3121,9 +3122,10 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ point_id: pointId }),
           }));
-          await loadProvenance(pointId);
+          if (currentImageId() === pointId) await loadProvenance(pointId);
           if (artistViewActive()) await fetchArtistGallery({ reset: true });
         } catch (error) {
+          if (currentImageId() !== pointId) return;
           $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">设置代表图失败：${escapeHtml(error.message)}</p>`);
         }
       });
@@ -3229,21 +3231,34 @@
       body.querySelector('#prov-clear')?.addEventListener('click', async () => {
         const pointId = currentImageId();
         if (!pointId) return;
+        const seq = ++state.provenance.seq;
         try {
           const data = await parseResponse(await fetch(`/api/images/${encodeURIComponent(pointId)}/provenance`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ clear_manual: true }),
           }));
-          state.provenance.data = data;
-          renderProvenance(data);
-          if (data.record && data.record.url) {
+          if (seq !== state.provenance.seq) return;
+          const applied = applyProvenanceData(pointId, data);
+          if (applied && data.record && data.record.url) {
             await resolveProvenanceUrl(data.record.url, { silent: true });
           }
         } catch (error) {
+          if (seq !== state.provenance.seq || currentImageId() !== pointId) return;
           $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">恢复失败：${escapeHtml(error.message)}</p>`);
         }
       });
+    }
+    function applyProvenanceData(pointId, data) {
+      const title = viewerTitleModel(data, (data && data.path) || '');
+      if (title.title) cacheViewerTitle(pointId, title);
+      if (state.provenance.imageId !== pointId || currentImageId() !== pointId) return false;
+      state.provenance.data = data;
+      if (state.current && state.current.id === pointId) {
+        renderViewerTitle(state.current, title);
+      }
+      renderProvenance(data);
+      return true;
     }
     async function loadProvenance(pointId = currentImageId()) {
       if (!pointId) return;
@@ -3253,13 +3268,7 @@
       try {
         const data = await parseResponse(await fetch(`/api/images/${encodeURIComponent(pointId)}/provenance`));
         if (seq !== state.provenance.seq || state.provenance.imageId !== pointId) return;
-        state.provenance.data = data;
-        const title = viewerTitleModel(data, (state.current && state.current.path) || '');
-        if (title.title) cacheViewerTitle(pointId, title);
-        if (state.current && state.current.id === pointId) {
-          renderViewerTitle(state.current, title);
-        }
-        renderProvenance(data);
+        applyProvenanceData(pointId, data);
       } catch (error) {
         if (seq !== state.provenance.seq) return;
         $('provenance-body').innerHTML = `<p class="provenance-hint">来源读取失败：${escapeHtml(error.message)}</p>`;
@@ -3275,21 +3284,19 @@
         await loadProvenance(pointId);
         return;
       }
+      const seq = ++state.provenance.seq;
       try {
         const data = await parseResponse(await fetch(`/api/images/${encodeURIComponent(pointId)}/provenance/resolve`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url }),
         }));
-        state.provenance.data = data;
-        const title = viewerTitleModel(data, (state.current && state.current.path) || '');
-        if (title.title) cacheViewerTitle(pointId, title);
-        if (state.current && state.current.id === pointId) {
-          renderViewerTitle(state.current, title);
-        }
-        renderProvenance(data);
+        if (seq !== state.provenance.seq) return;
+        applyProvenanceData(pointId, data);
       } catch (error) {
-        if (!silent) $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">解析失败：${escapeHtml(error.message)}</p>`);
+        if (!silent && seq === state.provenance.seq && currentImageId() === pointId) {
+          $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">解析失败：${escapeHtml(error.message)}</p>`);
+        }
       }
     }
     async function saveProvenanceForm() {
@@ -3308,20 +3315,17 @@
       else if (authorQuery) body.author_query = authorQuery;
       const url = $('prov-url').value.trim();
       if (url) body.url = url;
+      const seq = ++state.provenance.seq;
       try {
         const data = await parseResponse(await fetch(`/api/images/${encodeURIComponent(pointId)}/provenance`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         }));
-        state.provenance.data = data;
-        const title = viewerTitleModel(data, (state.current && state.current.path) || '');
-        if (title.title) cacheViewerTitle(pointId, title);
-        if (state.current && state.current.id === pointId) {
-          renderViewerTitle(state.current, title);
-        }
-        renderProvenance(data);
+        if (seq !== state.provenance.seq) return;
+        applyProvenanceData(pointId, data);
       } catch (error) {
+        if (seq !== state.provenance.seq || currentImageId() !== pointId) return;
         $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">保存失败：${escapeHtml(error.message)}</p>`);
       }
     }
@@ -6601,7 +6605,41 @@
     });
     $('gallery-view-toggle').addEventListener('click', () => cycleGalleryView());
     let artistSearchTimer = 0;
+    let quickSearchTimer = 0;
+    let quickSearchComposing = false;
+    let quickSearchLast = '';
+    function quickSearchEligible() {
+      return !librarySearchRefs().length
+        && !state.references.some((ref) => ref.file)
+        && !hasAdvancedFilters();
+    }
+    function runQuickSearch() {
+      if (state.libraryView !== 'images') return;
+      const query = $('query').value.trim();
+      if (!query || !quickSearchEligible()) return;
+      if (query === quickSearchLast) return;
+      quickSearchLast = query;
+      const firstSearch = state.mode !== 'search';
+      void fetchResults({ reset: true });
+      if (firstSearch) window.scrollTo({ top: 0, behavior: 'auto' });
+    }
+    function scheduleQuickSearch(value) {
+      clearTimeout(quickSearchTimer);
+      quickSearchTimer = 0;
+      const query = String(value || '').trim();
+      if (!query) {
+        quickSearchLast = '';
+        return;
+      }
+      if (state.libraryView !== 'images' || !quickSearchEligible()) return;
+      quickSearchTimer = setTimeout(() => {
+        quickSearchTimer = 0;
+        runQuickSearch();
+      }, 320);
+    }
     function triggerArtistSearch() {
+      clearTimeout(quickSearchTimer);
+      quickSearchTimer = 0;
       state.artistView.query = $('query').value.trim();
       clearTimeout(artistSearchTimer);
       artistSearchTimer = 0;
@@ -6612,16 +6650,27 @@
       void fetchArtistGallery({ reset: true });
     }
     function scheduleArtistSearch(value) {
-      state.artistView.query = String(value || '').trim();
       clearTimeout(artistSearchTimer);
+      state.artistView.query = String(value || '').trim();
       artistSearchTimer = setTimeout(() => {
         artistSearchTimer = 0;
         triggerArtistSearch();
       }, 180);
     }
+    $('query').addEventListener('compositionstart', () => {
+      quickSearchComposing = true;
+    });
+    $('query').addEventListener('compositionend', (event) => {
+      quickSearchComposing = false;
+      if (state.libraryView === 'images') scheduleQuickSearch(event.currentTarget.value);
+    });
     $('query').addEventListener('input', (event) => {
-      if (state.libraryView !== 'artists') return;
-      scheduleArtistSearch(event.currentTarget.value);
+      if (state.libraryView === 'artists') {
+        scheduleArtistSearch(event.currentTarget.value);
+        return;
+      }
+      if (event.isComposing || quickSearchComposing) return;
+      scheduleQuickSearch(event.currentTarget.value);
     });
     $('query').addEventListener('keydown', (event) => {
       if (state.libraryView !== 'artists' || event.key !== 'Enter') return;
@@ -7254,6 +7303,8 @@
     }
 
     async function runSearch() {
+      clearTimeout(quickSearchTimer);
+      quickSearchTimer = 0;
       if (state.libraryView === 'artists') {
         triggerArtistSearch();
         return;
@@ -7296,7 +7347,11 @@
       if (state.mode === 'author' && value === 'artists') return;
       const scrollY = window.scrollY;
       state.libraryView = value;
-      if (value === 'artists') state.artistView.query = $('query').value.trim();
+      if (value === 'artists') {
+        clearTimeout(quickSearchTimer);
+        quickSearchTimer = 0;
+        state.artistView.query = $('query').value.trim();
+      }
       try {
         localStorage.setItem(LIBRARY_VIEW_STORAGE_KEY, value);
         if (value === 'artists') localStorage.setItem(ARTIST_SEEN_STORAGE_KEY, '1');
@@ -8854,7 +8909,7 @@
         }
         const data = await parseResponse(response);
         const artistPayload = artistPromise ? await artistPromise : null;
-        if (seq !== state.searchSeq) return;
+        if (seq !== state.searchSeq || state.libraryView === 'artists') return;
         const incoming = data.results || [];
         const artists = reset && mixedArtistSearch && Array.isArray(artistPayload?.authors)
           ? artistPayload.authors
@@ -8940,7 +8995,7 @@
         }
         if (!filterOnly) fetchModelStatus().catch(() => {});
       } catch (error) {
-        if (seq !== state.searchSeq) return;
+        if (seq !== state.searchSeq || state.libraryView === 'artists') return;
         if (reset) renderSearchFailure(error, '查询失败');
         else $('load-more').textContent = `继续载入失败：${error.message}`;
         if (!reset) state.hasMore = false;
@@ -8948,7 +9003,9 @@
         if (seq === state.searchSeq) {
           $('panel').classList.remove('loading');
           state.loadingMore = false;
-          if (!state.hasMore && state.results.length) $('load-more').hidden = true;
+          if (state.libraryView !== 'artists' && !state.hasMore && state.results.length) {
+            $('load-more').hidden = true;
+          }
         }
       }
     }
