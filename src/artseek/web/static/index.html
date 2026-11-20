@@ -955,7 +955,17 @@
       border-color: #d9a7bc;
       box-shadow: 0 9px 24px rgba(138, 82, 104, .16);
     }
-    .card.artist-collection-card .artist-card-label { gap: 5px; }
+    .card.artist-collection-card .artist-card-label {
+      position: relative;
+      gap: 5px;
+      padding-right: 48px;
+    }
+    .card.artist-collection-card .artist-card-label > .artist-card-kind {
+      position: absolute;
+      top: 9px;
+      right: 10px;
+      margin: 0;
+    }
     .card.artist-collection-card.card-list { background: #fffafc; }
     .card.artist-collection-card.card-list .artist-card-kind { margin-right: 6px; vertical-align: 1px; }
     .artist-collection-card.is-square {
