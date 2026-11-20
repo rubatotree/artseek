@@ -191,10 +191,13 @@ def clear_finished_jobs(c: AppContainer = Depends(get_container)) -> dict[str, A
 
 @router.post("/api/jobs/purge-legacy-tags")
 def purge_legacy_tags(c: AppContainer = Depends(get_container)) -> dict[str, Any]:
-    if c.index_job.running or c.job_manager.is_busy(("retag", "index", "compact")):
-        raise HTTPException(409, "正在执行索引或打标任务，请先停止后再清理旧标签")
-    summary = c.job_manager.purge_legacy_auto_tags(keep_new_models=True)
-    return {"summary": summary, "counts": c.job_manager.task_summary()}
+    """Queue the legacy auto-tag cleanup; it runs on the shared worker instead of blocking."""
+    if c.index_job.running:
+        raise HTTPException(409, "正在索引图片，请稍后再安排清理任务")
+    if c.job_manager.is_busy(("purge_legacy",)):
+        raise HTTPException(409, "清理旧标签任务已在队列中")
+    job_id = c.job_manager.submit_purge_legacy_job(keep_new_models=True)
+    return {"job_id": job_id, "job": c.jobs_repo.get(job_id)}
 
 
 @router.get("/api/jobs/{job_id}")

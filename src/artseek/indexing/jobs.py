@@ -51,6 +51,7 @@ JOB_PRIORITIES: dict[str, int] = {
     "auto_tag": 50,
     "vision_enrich": 55,
     "ccip": 60,
+    "purge_legacy": 70,
     "caption": 90,
 }
 
@@ -369,11 +370,64 @@ class JobManager:
     def clear_finished_jobs(self) -> int:
         return self.jobs_repo.clear_finished()
 
-    def purge_legacy_auto_tags(self, *, keep_new_models: bool = True) -> dict[str, int]:
-        summary = self.images.purge_legacy_auto_tags(keep_new_models=keep_new_models)
+    def submit_purge_legacy_job(self, *, keep_new_models: bool = True) -> str:
+        """Queue the legacy auto-tag cleanup so it runs after tagging instead of blocking."""
+        return self._enqueue_job(
+            "purge_legacy",
+            "purge",
+            {"keep_new_models": bool(keep_new_models)},
+            "等待清理旧版自动标签…",
+            lambda jid: self._execute_purge_legacy(jid, keep_new_models=keep_new_models),
+            use_priority=True,
+        )
+
+    def _execute_purge_legacy(self, job_id: str, *, keep_new_models: bool = True) -> None:
+        self.jobs_repo.update(job_id, status="running", message="正在统计待清理图片…")
+
+        def _progress(done: int, total: int, label: str) -> None:
+            self.jobs_repo.update(
+                job_id,
+                done=done,
+                total=total,
+                message=f"{label} {done}/{total}",
+            )
+
+        try:
+            summary = self.images.purge_legacy_auto_tags(
+                keep_new_models=keep_new_models,
+                progress=_progress,
+                stop_event=self._stop_event,
+                pause_event=self._pause_event,
+            )
+        except Exception as exc:
+            self.jobs_repo.update(
+                job_id,
+                status="failed",
+                message="旧版自动标签清理失败",
+                error=str(exc),
+            )
+            return
+
         if callable(self._on_caches_invalidated):
             self._on_caches_invalidated()
-        return summary
+        stopped = bool(summary.get("stopped"))
+        message = (
+            f"旧版标签清理已停止：已处理 {summary.get('purged_images', 0)} 张"
+            if stopped
+            else (
+                f"旧版标签清理完成：处理 {summary.get('purged_images', 0)} 张，"
+                f"删除 {summary.get('deleted_tag_links', 0)} 条旧自动标签、"
+                f"{summary.get('purged_source_auto_tags', 0)} 条旧来源自动标签"
+            )
+        )
+        self.jobs_repo.update(
+            job_id,
+            status="stopped" if stopped else "completed",
+            done=int(summary.get("purged_images", 0)),
+            total=int(summary.get("purged_images", 0)),
+            message=message,
+            summary=summary,
+        )
 
     def _sync_provenance_auto_tags(
         self,

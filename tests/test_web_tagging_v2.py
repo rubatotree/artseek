@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -640,7 +641,20 @@ class TestStageDSearchAndWebAPI(unittest.TestCase):
 
                 purge = client.post("/api/jobs/purge-legacy-tags")
                 self.assertEqual(purge.status_code, 200)
-                summary = purge.json()["summary"]
+                purge_job = purge.json()
+                job_id = purge_job["job_id"]
+                self.assertEqual(purge_job["job"]["kind"], "purge_legacy")
+                # The cleanup now runs on the shared worker, so wait for it to finish.
+                deadline = time.time() + 15
+                job = None
+                while time.time() < deadline:
+                    job = client.get(f"/api/jobs/{job_id}").json()
+                    if job["status"] in {"completed", "failed", "stopped"}:
+                        break
+                    time.sleep(0.05)
+                self.assertIsNotNone(job)
+                self.assertEqual(job["status"], "completed", job)
+                summary = job["summary"]
                 self.assertEqual(summary["purged_images"], 1)
                 self.assertGreaterEqual(summary["deleted_tag_links"], 1)
                 self.assertEqual(summary["purged_source_auto_tags"], 1)

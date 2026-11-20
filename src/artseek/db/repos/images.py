@@ -6,7 +6,7 @@ import json
 import os
 import sqlite3
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -1337,86 +1337,142 @@ class ImageRepo:
             tag_scores=dict(tag_scores or {}),
         )
 
-    def purge_legacy_auto_tags(self, *, keep_new_models: bool = True) -> dict[str, int]:
-        """Clear legacy pre-Camie/PixAI auto tags from `image_tags` and `image_source`."""
-        now = int(time.time())
-        with self.db.write_tx() as conn:
-            conn.execute("DROP TABLE IF EXISTS temp._purge_targets")
-            if keep_new_models:
-                conn.execute(
-                    """
-                    CREATE TEMP TABLE _purge_targets AS
-                    SELECT i.id AS image_id, i.point_id
-                    FROM images AS i
-                    LEFT JOIN image_task_state AS ts ON ts.point_id = i.point_id
-                    WHERE i.deleted = 0
-                      AND COALESCE(ts.tag_models_json, '{}') NOT LIKE '%camie_v2%'
-                      AND COALESCE(ts.tag_models_json, '{}') NOT LIKE '%pixai_v09%'
-                      AND COALESCE(ts.tag_models_json, '{}') NOT LIKE '%pixai_v10%'
-                    """
+    # Tag categories produced by the current vision pipeline (rating/medium/attribute)
+    # are kept on purpose: they are not legacy tagger output.
+    _PURGE_KEEP_CATEGORIES = (6, 7, 8)
+    _PURGE_NEW_MODEL_MARKERS = ("camie_v2", "pixai_v09", "pixai_v10")
+
+    def _purge_target_where(self, keep_new_models: bool) -> str:
+        if not keep_new_models:
+            return "i.deleted = 0"
+        markers = " AND ".join(
+            f"COALESCE(ts.tag_models_json, '{{}}') NOT LIKE '%{marker}%'"
+            for marker in self._PURGE_NEW_MODEL_MARKERS
+        )
+        return f"i.deleted = 0 AND {markers}"
+
+    def count_purge_targets(self, *, keep_new_models: bool = True) -> int:
+        """Number of images whose legacy auto tags would be purged."""
+        conn = self.db.read_conn()
+        where = self._purge_target_where(keep_new_models)
+        return int(
+            conn.execute(
+                "SELECT COUNT(*) FROM images AS i "
+                "LEFT JOIN image_task_state AS ts ON ts.point_id = i.point_id "
+                f"WHERE {where}"
+            ).fetchone()[0]
+        )
+
+    def purge_legacy_auto_tags(
+        self,
+        *,
+        keep_new_models: bool = True,
+        chunk_size: int = 4000,
+        progress: Callable[[int, int, str], None] | None = None,
+        stop_event: Any = None,
+        pause_event: Any = None,
+    ) -> dict[str, int]:
+        """Clear legacy pre-Camie/PixAI auto tags from `image_tags` and `image_source`.
+
+        Works in id-ordered chunks so a queued job can report progress, pause, and stop
+        without holding one long write transaction over the whole library.
+        """
+        total = self.count_purge_targets(keep_new_models=keep_new_models)
+        if progress is not None:
+            progress(0, total, "已统计待清理图片")
+
+        keep_list = ",".join(str(c) for c in self._PURGE_KEEP_CATEGORIES)
+        where = self._purge_target_where(keep_new_models)
+        conn = self.db.read_conn()
+        purged_images = 0
+        deleted_tag_links = 0
+        purged_source_auto_tags = 0
+        cleared_descriptors = 0
+        # Image ids start at 0, so keyset pagination must start below the first row.
+        last_id = -(2**62)
+        step = max(200, int(chunk_size))
+
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                break
+            if pause_event is not None:
+                while pause_event.is_set() and not (
+                    stop_event is not None and stop_event.is_set()
+                ):
+                    time.sleep(0.05)
+                if stop_event is not None and stop_event.is_set():
+                    break
+
+            batch = conn.execute(
+                "SELECT i.id AS image_id, i.point_id AS point_id FROM images AS i "
+                "LEFT JOIN image_task_state AS ts ON ts.point_id = i.point_id "
+                f"WHERE {where} AND i.id > ? ORDER BY i.id LIMIT ?",
+                (last_id, step),
+            ).fetchall()
+            if not batch:
+                break
+            ids_json = json.dumps([int(r["image_id"]) for r in batch])
+            pids_json = json.dumps([str(r["point_id"]) for r in batch])
+            last_id = int(batch[-1]["image_id"])
+            now = int(time.time())
+
+            with self.db.write_tx() as tx:
+                cur_tags = tx.execute(
+                    f"""
+                    DELETE FROM image_tags
+                    WHERE image_id IN (SELECT value FROM json_each(?))
+                      AND tag_id IN (SELECT id FROM tags WHERE category NOT IN ({keep_list}))
+                    """,
+                    (ids_json,),
                 )
-            else:
-                conn.execute(
+                deleted_tag_links += int(cur_tags.rowcount or 0)
+                cur_desc = tx.execute(
                     """
-                    CREATE TEMP TABLE _purge_targets AS
-                    SELECT i.id AS image_id, i.point_id
-                    FROM images AS i
-                    WHERE i.deleted = 0
-                    """
+                    UPDATE images
+                    SET descriptor_text = ''
+                    WHERE id IN (SELECT value FROM json_each(?))
+                      AND descriptor_text <> ''
+                    """,
+                    (ids_json,),
                 )
-            purged_images = int(
-                conn.execute("SELECT COUNT(*) FROM _purge_targets").fetchone()[0]
-            )
-            cur_tags = conn.execute(
-                """
-                DELETE FROM image_tags
-                WHERE image_id IN (SELECT image_id FROM _purge_targets)
-                  AND tag_id IN (SELECT id FROM tags WHERE category NOT IN (6, 7, 8))
-                """
-            )
-            deleted_tag_links = int(cur_tags.rowcount or 0)
-            conn.execute(
-                """
-                UPDATE images
-                SET descriptor_text = ''
-                WHERE id IN (SELECT image_id FROM _purge_targets)
-                """
-            )
-            conn.execute(
-                """
-                UPDATE image_task_state
-                SET tag_models_json = '{}', descriptor_done = 0, updated_at = ?
-                WHERE point_id IN (SELECT point_id FROM _purge_targets)
-                """,
-                (now,),
-            )
-            conn.execute(
-                """
-                UPDATE image_source
-                SET auto_tags_json = '[]', auto_tag_scores_json = '{}',
-                    auto_tagged_at = NULL, updated_at = ?
-                WHERE point_id IN (SELECT point_id FROM _purge_targets)
-                  AND COALESCE(auto_tags_json, '[]') NOT IN ('', '[]')
-                """,
-                (now,),
-            )
-            conn.execute(
-                """
-                UPDATE image_source
-                SET auto_tagged_at = NULL
-                WHERE point_id IN (SELECT point_id FROM _purge_targets)
-                  AND auto_tagged_at IS NOT NULL
-                """
-            )
-            cur_src_tags = conn.execute(
-                """
-                DELETE FROM source_tags
-                WHERE origin = 'auto'
-                  AND point_id IN (SELECT point_id FROM _purge_targets)
-                """
-            )
-            purged_source_auto_tags = int(cur_src_tags.rowcount or 0)
-            conn.execute(
+                cleared_descriptors += int(cur_desc.rowcount or 0)
+                tx.execute(
+                    """
+                    UPDATE image_task_state
+                    SET tag_models_json = '{}', descriptor_done = 0, updated_at = ?
+                    WHERE point_id IN (SELECT value FROM json_each(?))
+                      AND (tag_models_json <> '{}' OR descriptor_done <> 0)
+                    """,
+                    (now, pids_json),
+                )
+                tx.execute(
+                    """
+                    UPDATE image_source
+                    SET auto_tags_json = '[]', auto_tag_scores_json = '{}',
+                        auto_tagged_at = NULL, updated_at = ?
+                    WHERE point_id IN (SELECT value FROM json_each(?))
+                      AND (COALESCE(auto_tags_json, '[]') NOT IN ('', '[]')
+                           OR auto_tagged_at IS NOT NULL)
+                    """,
+                    (now, pids_json),
+                )
+                cur_src_tags = tx.execute(
+                    """
+                    DELETE FROM source_tags
+                    WHERE origin = 'auto'
+                      AND point_id IN (SELECT value FROM json_each(?))
+                    """,
+                    (pids_json,),
+                )
+                purged_source_auto_tags += int(cur_src_tags.rowcount or 0)
+
+            purged_images += len(batch)
+            if progress is not None:
+                progress(purged_images, total, "正在清理旧版自动标签")
+
+        # Recompute tag document counts once, then drop the tags that lost every image.
+        with self.db.write_tx() as tx:
+            tx.execute(
                 """
                 UPDATE tags
                 SET doc_count = (
@@ -1427,10 +1483,12 @@ class ImageRepo:
                 )
                 """
             )
-            conn.execute("DELETE FROM tags WHERE doc_count = 0")
-            conn.execute("DROP TABLE IF EXISTS temp._purge_targets")
-            return {
-                "purged_images": purged_images,
-                "deleted_tag_links": deleted_tag_links,
-                "purged_source_auto_tags": purged_source_auto_tags,
-            }
+            tx.execute("DELETE FROM tags WHERE doc_count = 0")
+
+        return {
+            "purged_images": purged_images,
+            "deleted_tag_links": deleted_tag_links,
+            "purged_source_auto_tags": purged_source_auto_tags,
+            "cleared_descriptors": cleared_descriptors,
+            "stopped": 1 if (stop_event is not None and stop_event.is_set()) else 0,
+        }

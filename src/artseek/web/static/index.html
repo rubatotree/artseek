@@ -2671,6 +2671,7 @@
       tagName: '', tagTotal: 0,
       provenance: { open: false, imageId: '', data: null, seq: 0, loading: false },
       provenancePoll: 0, provenanceIdlePolls: 0,
+      purgeJobId: '', purgeNotice: '', purgeWatchSeq: 0,
       viewerTitleCache: new Map(), viewerTitlePending: new Set(), viewerTitleTimer: 0,
       viewerMenuTrigger: null, viewerMenuSession: 0,
       cardMenuItem: null, cardMenuTrigger: null, cardMenuSession: 0,
@@ -3759,6 +3760,7 @@
       ccip: 'CCIP 角色特征',
       provenance_scan: '本地扫源',
       provenance_enrich: '补全 Pixiv/X',
+      purge_legacy: '清理旧版标签',
       auto_tag: '视觉补 Tag',
       caption: 'VLM 长描述',
     };
@@ -3886,12 +3888,13 @@
         : '<div class="provenance-hint">暂无近期任务记录。</div>';
 
       body.innerHTML = `
+        ${state.purgeNotice ? `<p class="provenance-hint">${escapeHtml(state.purgeNotice)}</p>` : ''}
         <div class="task-section">
           <div class="task-section-head">
             <strong>图库状态概览</strong>
             <div style="display:flex;align-items:center;gap:8px;">
               <span class="task-section-sub">${escapeHtml(scopeHint)}</span>
-              <button type="button" class="task-mini-btn" data-bg-job="purge-legacy" title="清理尚未用 Camie/PixAI 重标图片的旧版错误自动标签（保留手动与 Pixiv/X 来源标签）">清理旧版错误标签</button>
+              <button type="button" class="task-mini-btn" data-bg-job="purge-legacy" title="加入队列：清理尚未用 Camie/PixAI 重标图片的旧版错误自动标签（保留手动与 Pixiv/X 来源标签）">清理旧版错误标签</button>
             </div>
           </div>
           <div class="provenance-stat-grid">
@@ -3929,6 +3932,7 @@
             <button type="button" data-bg-job="pscan">+ 本地增量扫源</button>
             <button type="button" data-bg-job="pscan-deep">+ 深度扫源</button>
             <button type="button" data-bg-job="penrich">+ 补全 Pixiv/X</button>
+            <button type="button" data-bg-job="purge-legacy">+ 清理旧版标签</button>
           </div>
         </div>
 
@@ -4044,21 +4048,69 @@
       }
       await refreshProvenanceDialog();
     }
+    function purgeJobNotice(job) {
+      if (!job) return '';
+      const sum = job.summary || {};
+      const imgs = Number(sum.purged_images || 0).toLocaleString();
+      const links = Number(sum.deleted_tag_links || 0).toLocaleString();
+      const src = Number(sum.purged_source_auto_tags || 0).toLocaleString();
+      if (job.status === 'completed') {
+        return `清理旧版标签完成：处理 ${imgs} 张，删除 ${links} 条旧自动标签、${src} 条旧来源自动标签。`;
+      }
+      if (job.status === 'stopped') {
+        return `清理旧版标签已停止：已处理 ${imgs} 张，删除 ${links} 条旧自动标签。`;
+      }
+      if (job.status === 'failed') {
+        return `清理旧版标签失败：${job.error || '未知错误'}`;
+      }
+      return job.message || '正在清理旧版标签…';
+    }
+    function applyPurgeToClientState() {
+      const strip = (item) => {
+        if (item && Array.isArray(item.tags) && item.tags.length) item.tags = [];
+      };
+      (state.results || []).forEach(strip);
+      strip(state.current);
+      if (state.current && typeof refreshViewerTitle === 'function') refreshViewerTitle(state.current);
+    }
+    async function watchPurgeJob(jobId) {
+      if (!jobId) return;
+      const seq = ++state.purgeWatchSeq;
+      for (let tick = 0; tick < 900; tick += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (seq !== state.purgeWatchSeq) return;
+        let job = null;
+        try {
+          job = await parseResponse(await fetch(`/api/jobs/${encodeURIComponent(jobId)}`));
+        } catch (_) {
+          return;
+        }
+        if (seq !== state.purgeWatchSeq || !job) return;
+        state.purgeNotice = purgeJobNotice(job);
+        const status = String(job.status || '');
+        if (!['completed', 'failed', 'stopped', 'interrupted'].includes(status)) continue;
+        if (status === 'completed' || status === 'stopped') {
+          applyPurgeToClientState();
+          await reloadCurrentGallery();
+        }
+        if ($('provenance-dialog').open) await refreshProvenanceDialog();
+        return;
+      }
+    }
     async function runBackgroundTaskAction(action) {
       if (action === 'purge-legacy') {
-        if (!window.confirm('将清理尚未完成 Camie/PixAI 新打标图片的旧版错误自动标签与旧来源自动标签（不会影响手动标签、Pixiv/X 官方标签及已重标的新标签），确认继续？')) {
+        if (!window.confirm('将清理尚未完成 Camie/PixAI 新打标图片的旧版错误自动标签与旧来源自动标签（不会影响手动标签、Pixiv/X 官方标签及已重标的新标签），确认加入队列？')) {
           return;
         }
         try {
           const res = await parseResponse(await fetch('/api/jobs/purge-legacy-tags', { method: 'POST' }));
-          const sum = res.summary || {};
-          $('provenance-dialog-body').insertAdjacentHTML(
-            'afterbegin',
-            `<p class="provenance-hint">已清理 ${Number(sum.purged_images || 0)} 张旧图的 ${Number(sum.deleted_tag_links || 0)} 条旧自动标签，以及 ${Number(sum.purged_source_auto_tags || 0)} 条旧来源自动标签。</p>`,
-          );
+          state.purgeJobId = res.job_id || (res.job && res.job.id) || '';
+          state.purgeNotice = '清理旧版标签任务已加入队列。';
+          if (state.purgeJobId) void watchPurgeJob(state.purgeJobId);
         } catch (error) {
-          $('provenance-dialog-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">清理失败：${escapeHtml(error.message)}</p>`);
+          state.purgeNotice = `加入队列失败：${error.message}`;
         }
+        state.provenanceIdlePolls = 3;
         await refreshProvenanceDialog();
         return;
       }
