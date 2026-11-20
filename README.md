@@ -181,6 +181,7 @@ artseek search "泡泡袖 低头" --json
 | `artseek search TEXT` | 文字或图文组合搜索 |
 | `artseek similar IMAGE` | 以图搜图 |
 | `artseek stats` | 查看各目录图片数量 |
+| `artseek migrate-v1` | 只读迁移 v1 Qdrant 与 sidecar 数据到 v2 SQLite + numpy；保留全部 v1 文件 |
 | `artseek serve` | 启动本地网页界面；模型在首次检索时载入；加 `--open` 可打开浏览器 |
 
 ## 如何理解三种检索模式
@@ -194,7 +195,7 @@ artseek search "泡泡袖 低头" --json
 ## 数据与隐私
 
 - 图片始终从本地路径读取；原图不会上传到远端；
-- Qdrant 以嵌入式本地模式运行，无需 Docker 或数据库服务；
+- 元数据、来源、收藏与向量索引全部保存在本地 `artseek.sqlite3` + `.npy`，无需 Docker 或数据库服务；
 - Ollama 请求只发送到配置的 `127.0.0.1` 地址；
 - 首次 `pull-models` 会联网下载模型；之后可以离线；
 - 缩略图、模型缓存与向量数据库位于系统用户缓存/数据目录，不会写入图片收藏目录。
@@ -249,6 +250,6 @@ ruff check src tests
 - [SigLIP 2](https://huggingface.co/google/siglip2-base-patch16-256)：Apache-2.0；多语言图文检索；
 - [WD EVA02 Large Tagger v3](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3)：Apache-2.0；插画多标签分类；
 - [Qwen3](https://ollama.com/library/qwen3) 与 [Qwen3-VL](https://ollama.com/library/qwen3-vl)：通过 Ollama 可选安装；
-- [Qdrant Python Client](https://github.com/qdrant/qdrant-client)：Apache-2.0，本项目使用其持久化本地模式。
+- [Qdrant Python Client](https://github.com/qdrant/qdrant-client)：Apache-2.0；仅用于只读解析 v1 数据，v2 索引与检索不再使用 Qdrant 服务。
 
 ArtSeek 自身使用 MIT 许可证。模型权重仍受各自模型许可证约束。
