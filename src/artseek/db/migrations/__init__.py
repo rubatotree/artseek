@@ -5,12 +5,13 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 
-from . import v001_initial, v002_perf_indexes, v003_natural_sort
+from . import v001_initial, v002_perf_indexes, v003_natural_sort, v004_vision_attributes
 
 MIGRATIONS: tuple[tuple[int, Callable[[sqlite3.Connection], None]], ...] = (
     (1, v001_initial.upgrade),
     (2, v002_perf_indexes.upgrade),
     (3, v003_natural_sort.upgrade),
+    (4, v004_vision_attributes.upgrade),
 )
 LATEST_VERSION = MIGRATIONS[-1][0]
 

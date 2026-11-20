@@ -128,6 +128,7 @@ def scan_payloads(
         ):
             store.reset_for_replacement(point_id)
             before = store.get(point_id)
+        manual_fields = set(before.get("manual_fields") or []) if before is not None else set()
         if (
             before is not None
             and digest
@@ -136,6 +137,7 @@ def scan_payloads(
             and (
                 (before.get("status") == "ok" and bool(before.get("author_key")))
                 or before.get("source_origin") == "manual"
+                or ("url_ignored" in manual_fields and bool(before.get("author_key")))
             )
         ):
             summary["skipped"] += 1

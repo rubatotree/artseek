@@ -6,7 +6,7 @@ import json
 import os
 import sqlite3
 import time
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -17,6 +17,7 @@ from ...core.sort_keys import natural_sort_text
 from ...image_io import canonical_path
 from ...query import normalize_tag
 from ..connection import Database
+from .task_state import sync_task_state_from_index_locked
 
 _SQL_CHUNK = 400
 
@@ -43,6 +44,7 @@ class ImageUpsertRecord:
     caption: dict[str, Any] | None = None
     tags: list[str] = field(default_factory=list)
     tag_scores: dict[str, float] = field(default_factory=dict)
+    tag_categories: dict[str, int] = field(default_factory=dict)
     indexed_at: int | None = None
 
 
@@ -183,6 +185,7 @@ class ImageRepo:
         tags_entry: tuple[list[str], dict[str, float]] | None,
     ) -> dict[str, Any]:
         tags, scores = tags_entry if tags_entry is not None else ([], {})
+        keys = set(row.keys())
         return {
             "row_id": int(row["id"]),
             "id": str(row["point_id"]),
@@ -204,6 +207,39 @@ class ImageRepo:
             "tag_scores": dict(scores),
             "caption": _decode_caption(row["caption_json"]),
             "descriptor_text": str(row["descriptor_text"] or ""),
+            "media_type": row["media_type"] if "media_type" in keys else None,
+            "rating": row["rating"] if "rating" in keys else None,
+            "is_monochrome": (
+                bool(row["is_monochrome"])
+                if "is_monochrome" in keys and row["is_monochrome"] is not None
+                else None
+            ),
+            "is_ai": (
+                bool(row["is_ai"])
+                if "is_ai" in keys and row["is_ai"] is not None
+                else None
+            ),
+            "ai_score": (
+                float(row["ai_score"])
+                if "ai_score" in keys and row["ai_score"] is not None
+                else None
+            ),
+            "aesthetic_score": (
+                float(row["aesthetic_score"])
+                if "aesthetic_score" in keys and row["aesthetic_score"] is not None
+                else None
+            ),
+            "shot_type": row["shot_type"] if "shot_type" in keys else None,
+            "focal_x": (
+                float(row["focal_x"])
+                if "focal_x" in keys and row["focal_x"] is not None
+                else 0.5
+            ),
+            "focal_y": (
+                float(row["focal_y"])
+                if "focal_y" in keys and row["focal_y"] is not None
+                else 0.5
+            ),
         }
 
     def get_by_point_id(self, point_id: str) -> dict[str, Any] | None:
@@ -493,7 +529,75 @@ class ImageRepo:
         return parent_id
 
     # ---------------------------------------------------------------- mutations
-    def upsert_images_batch(self, records: Sequence[ImageUpsertRecord]) -> list[int]:
+    @staticmethod
+    def _ensure_tags_locked(
+        conn: sqlite3.Connection,
+        tag_categories: Mapping[str, int],
+    ) -> dict[str, int]:
+        tag_cache: dict[str, int] = {}
+        if not tag_categories:
+            return tag_cache
+        names = sorted(tag_categories)
+        for chunk in _chunks(names):
+            marks = ",".join("?" for _ in chunk)
+            for r in conn.execute(
+                f"SELECT id, name, category FROM tags WHERE name IN ({marks})",
+                tuple(chunk),
+            ).fetchall():
+                name = str(r["name"])
+                tid = int(r["id"])
+                tag_cache[name] = tid
+                new_cat = int(tag_categories.get(name, 0))
+                if new_cat and int(r["category"]) != new_cat:
+                    conn.execute(
+                        "UPDATE tags SET category = ? WHERE id = ?",
+                        (new_cat, tid),
+                    )
+        missing = [t for t in names if t not in tag_cache]
+        if missing:
+            conn.executemany(
+                "INSERT OR IGNORE INTO tags(name, category) VALUES (?, ?)",
+                [(t, int(tag_categories.get(t, 0))) for t in missing],
+            )
+            for chunk in _chunks(missing):
+                marks = ",".join("?" for _ in chunk)
+                for r in conn.execute(
+                    f"SELECT id, name FROM tags WHERE name IN ({marks})",
+                    tuple(chunk),
+                ).fetchall():
+                    tag_cache[str(r["name"])] = int(r["id"])
+        return tag_cache
+
+    @staticmethod
+    def _refresh_tag_doc_counts_locked(
+        conn: sqlite3.Connection,
+        tag_ids: Iterable[int],
+    ) -> None:
+        unique = sorted({int(tid) for tid in tag_ids})
+        if not unique:
+            return
+        for chunk in _chunks(unique):
+            marks = ",".join("?" for _ in chunk)
+            conn.execute(
+                f"""
+                UPDATE tags
+                SET doc_count = (
+                    SELECT COUNT(*)
+                    FROM image_tags AS it
+                    JOIN images AS i ON i.id = it.image_id AND i.deleted = 0
+                    WHERE it.tag_id = tags.id
+                )
+                WHERE id IN ({marks})
+                """,
+                tuple(chunk),
+            )
+
+    def upsert_images_batch(
+        self,
+        records: Sequence[ImageUpsertRecord],
+        *,
+        tag_model_versions: dict[str, int] | None = None,
+    ) -> list[int]:
         """Insert or update a batch of images atomically, returning 0-based row IDs."""
         if not records:
             return []
@@ -504,35 +608,24 @@ class ImageRepo:
 
             root_cache: dict[str, int] = {}
             folder_cache: dict[str, int] = {}
-            tag_cache: dict[str, int] = {}
-
-            all_tags = {
-                normalize_tag(tag)
-                for rec in records
-                for tag in rec.tags
-                if normalize_tag(tag)
-            }
-            if all_tags:
-                for chunk in _chunks(sorted(all_tags)):
-                    marks = ",".join("?" for _ in chunk)
-                    for r in conn.execute(
-                        f"SELECT id, name FROM tags WHERE name IN ({marks})", tuple(chunk)
-                    ).fetchall():
-                        tag_cache[str(r["name"])] = int(r["id"])
-                missing = sorted(t for t in all_tags if t not in tag_cache)
-                if missing:
-                    conn.executemany(
-                        "INSERT OR IGNORE INTO tags(name) VALUES (?)",
-                        [(t,) for t in missing],
+            tag_categories: dict[str, int] = {}
+            for rec in records:
+                for raw_tag in rec.tags:
+                    norm = normalize_tag(raw_tag)
+                    if not norm:
+                        continue
+                    cat = int(
+                        rec.tag_categories.get(
+                            raw_tag, rec.tag_categories.get(norm, 0)
+                        )
                     )
-                    for chunk in _chunks(missing):
-                        marks = ",".join("?" for _ in chunk)
-                        for r in conn.execute(
-                            f"SELECT id, name FROM tags WHERE name IN ({marks})", tuple(chunk)
-                        ).fetchall():
-                            tag_cache[str(r["name"])] = int(r["id"])
+                    if norm not in tag_categories or (cat and not tag_categories[norm]):
+                        tag_categories[norm] = cat
+            tag_cache = self._ensure_tags_locked(conn, tag_categories)
+            touched_tag_ids: set[int] = set(tag_cache.values())
 
             assigned_ids: list[int] = []
+            task_entries: list[tuple[str, int, str, bool]] = []
             for rec in records:
                 root_id = root_cache.get(rec.root_key)
                 if root_id is None:
@@ -608,6 +701,10 @@ class ImageRepo:
                         natural_sort_text(rec.name),
                     ),
                 )
+                old_tids = conn.execute(
+                    "SELECT tag_id FROM image_tags WHERE image_id = ?", (img_id,)
+                ).fetchall()
+                touched_tag_ids.update(int(r[0]) for r in old_tids)
                 conn.execute("DELETE FROM image_tags WHERE image_id = ?", (img_id,))
                 tag_rows: list[tuple[int, int, float]] = []
                 seen_tags: set[int] = set()
@@ -639,7 +736,223 @@ class ImageRepo:
                     (img_id, rec.point_id),
                 )
                 assigned_ids.append(img_id)
+                task_entries.append(
+                    (
+                        rec.point_id,
+                        img_id,
+                        rec.content_hash,
+                        bool(rec.descriptor_text.strip()),
+                    )
+                )
+            self._refresh_tag_doc_counts_locked(conn, touched_tag_ids)
+            sync_task_state_from_index_locked(
+                conn,
+                task_entries,
+                tag_model_versions=tag_model_versions,
+            )
             return assigned_ids
+
+    def update_tags_and_descriptor_batch(
+        self,
+        updates: Sequence[
+            tuple[int, Sequence[str], Mapping[str, float], Mapping[str, int], str]
+        ],
+    ) -> None:
+        """Replace predicted tags (preserving attribute categories 6/7/8) and descriptor_text."""
+        if not updates:
+            return
+        with self.db.write_tx() as conn:
+            tag_categories: dict[str, int] = {}
+            for _, tags, _, cats, _ in updates:
+                for raw_tag in tags:
+                    norm = normalize_tag(raw_tag)
+                    if not norm:
+                        continue
+                    cat = int(cats.get(raw_tag, cats.get(norm, 0)))
+                    if norm not in tag_categories or (cat and not tag_categories[norm]):
+                        tag_categories[norm] = cat
+            tag_cache = self._ensure_tags_locked(conn, tag_categories)
+            touched: set[int] = set(tag_cache.values())
+            for img_id, tags, scores, _, desc_text in updates:
+                old_rows = conn.execute(
+                    """
+                    SELECT it.tag_id, t.category
+                    FROM image_tags AS it
+                    JOIN tags AS t ON t.id = it.tag_id
+                    WHERE it.image_id = ?
+                    """,
+                    (int(img_id),),
+                ).fetchall()
+                keep_attr_ids: set[int] = set()
+                for r in old_rows:
+                    tid = int(r["tag_id"])
+                    if int(r["category"]) in {6, 7, 8}:
+                        keep_attr_ids.add(tid)
+                    else:
+                        touched.add(tid)
+                conn.execute(
+                    """
+                    DELETE FROM image_tags
+                    WHERE image_id = ?
+                      AND tag_id IN (SELECT id FROM tags WHERE category NOT IN (6, 7, 8))
+                    """,
+                    (int(img_id),),
+                )
+                tag_rows: list[tuple[int, int, float]] = []
+                seen: set[int] = set(keep_attr_ids)
+                for raw_tag in tags:
+                    norm = normalize_tag(raw_tag)
+                    if not norm:
+                        continue
+                    tid = tag_cache.get(norm)
+                    if tid is None or tid in seen:
+                        continue
+                    seen.add(tid)
+                    score = float(scores.get(raw_tag, scores.get(norm, 1.0)))
+                    tag_rows.append((int(img_id), tid, score))
+                if tag_rows:
+                    conn.executemany(
+                        "INSERT OR REPLACE INTO image_tags(image_id, tag_id, score) "
+                        "VALUES (?, ?, ?)",
+                        tag_rows,
+                    )
+                conn.execute(
+                    "UPDATE images SET descriptor_text = ? WHERE id = ?",
+                    (desc_text, int(img_id)),
+                )
+            self._refresh_tag_doc_counts_locked(conn, touched)
+
+    def update_vision_attributes_batch(
+        self,
+        updates: Sequence[dict[str, Any]],
+    ) -> None:
+        """Persist structured vision attributes and project searchable attribute tags."""
+        if not updates:
+            return
+        now = int(time.time())
+        with self.db.write_tx() as conn:
+            tag_categories: dict[str, int] = {}
+            for item in updates:
+                for raw_tag, cat in (item.get("attr_tags") or {}).items():
+                    norm = normalize_tag(raw_tag)
+                    if norm:
+                        tag_categories[norm] = int(cat)
+            tag_cache = self._ensure_tags_locked(conn, tag_categories)
+            touched: set[int] = set(tag_cache.values())
+
+            for item in updates:
+                img_id = int(item["image_id"])
+                conn.execute(
+                    """
+                    UPDATE images
+                    SET media_type = COALESCE(?, media_type),
+                        rating = COALESCE(?, rating),
+                        is_monochrome = COALESCE(?, is_monochrome),
+                        monochrome_score = COALESCE(?, monochrome_score),
+                        is_ai = COALESCE(?, is_ai),
+                        ai_source = COALESCE(?, ai_source),
+                        ai_score = COALESCE(?, ai_score),
+                        aesthetic_score = COALESCE(?, aesthetic_score),
+                        shot_type = COALESCE(?, shot_type),
+                        focal_x = COALESCE(?, focal_x),
+                        focal_y = COALESCE(?, focal_y),
+                        character_crop_json = COALESCE(?, character_crop_json),
+                        vision_meta_version = ?,
+                        vision_meta_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        item.get("media_type"),
+                        item.get("rating"),
+                        item.get("is_monochrome"),
+                        item.get("monochrome_score"),
+                        item.get("is_ai"),
+                        item.get("ai_source"),
+                        item.get("ai_score"),
+                        item.get("aesthetic_score"),
+                        item.get("shot_type"),
+                        item.get("focal_x"),
+                        item.get("focal_y"),
+                        item.get("character_crop_json"),
+                        int(item.get("vision_meta_version", 1)),
+                        now,
+                        img_id,
+                    ),
+                )
+                old_attr = conn.execute(
+                    """
+                    SELECT it.tag_id
+                    FROM image_tags AS it
+                    JOIN tags AS t ON t.id = it.tag_id
+                    WHERE it.image_id = ? AND t.category IN (6, 7, 8)
+                    """,
+                    (img_id,),
+                ).fetchall()
+                touched.update(int(r[0]) for r in old_attr)
+                conn.execute(
+                    """
+                    DELETE FROM image_tags
+                    WHERE image_id = ?
+                      AND tag_id IN (SELECT id FROM tags WHERE category IN (6, 7, 8))
+                    """,
+                    (img_id,),
+                )
+                attr_scores = item.get("attr_scores") or {}
+                rows: list[tuple[int, int, float]] = []
+                for raw_tag in (item.get("attr_tags") or {}):
+                    norm = normalize_tag(raw_tag)
+                    tid = tag_cache.get(norm)
+                    if tid is not None:
+                        rows.append((img_id, tid, float(attr_scores.get(raw_tag, 1.0))))
+                if rows:
+                    conn.executemany(
+                        "INSERT OR REPLACE INTO image_tags(image_id, tag_id, score) "
+                        "VALUES (?, ?, ?)",
+                        rows,
+                    )
+            self._refresh_tag_doc_counts_locked(conn, touched)
+
+    def _soft_delete_image_ids_locked(
+        self, conn: sqlite3.Connection, ids: Sequence[int]
+    ) -> None:
+        if not ids:
+            return
+        touched: set[int] = set()
+        for chunk in _chunks(list(dict.fromkeys(int(i) for i in ids))):
+            id_marks = ",".join("?" for _ in chunk)
+            touched.update(
+                int(r[0])
+                for r in conn.execute(
+                    f"SELECT DISTINCT tag_id FROM image_tags WHERE image_id IN ({id_marks})",
+                    tuple(chunk),
+                ).fetchall()
+            )
+            conn.execute(
+                f"UPDATE images SET deleted = 1 WHERE id IN ({id_marks})",
+                tuple(chunk),
+            )
+            conn.execute(
+                f"DELETE FROM image_tags WHERE image_id IN ({id_marks})",
+                tuple(chunk),
+            )
+            conn.execute(
+                f"UPDATE source_tags SET image_id = NULL WHERE image_id IN ({id_marks})",
+                tuple(chunk),
+            )
+            conn.execute(
+                f"UPDATE image_source SET image_id = NULL WHERE image_id IN ({id_marks})",
+                tuple(chunk),
+            )
+            conn.execute(
+                f"UPDATE collection_items SET image_id = NULL WHERE image_id IN ({id_marks})",
+                tuple(chunk),
+            )
+            conn.execute(
+                "UPDATE image_task_state SET image_id = NULL, index_done = 0 "
+                f"WHERE image_id IN ({id_marks})",
+                tuple(chunk),
+            )
+        self._refresh_tag_doc_counts_locked(conn, touched)
 
     def soft_delete_by_point_ids(self, point_ids: Sequence[str]) -> list[int]:
         unique = [pid for pid in dict.fromkeys(point_ids) if pid]
@@ -656,27 +969,7 @@ class ImageRepo:
                 ids = [int(r["id"]) for r in rows]
                 if not ids:
                     continue
-                id_marks = ",".join("?" for _ in ids)
-                conn.execute(
-                    f"UPDATE images SET deleted = 1 WHERE id IN ({id_marks})",
-                    tuple(ids),
-                )
-                conn.execute(
-                    f"DELETE FROM image_tags WHERE image_id IN ({id_marks})",
-                    tuple(ids),
-                )
-                conn.execute(
-                    f"UPDATE source_tags SET image_id = NULL WHERE image_id IN ({id_marks})",
-                    tuple(ids),
-                )
-                conn.execute(
-                    f"UPDATE image_source SET image_id = NULL WHERE image_id IN ({id_marks})",
-                    tuple(ids),
-                )
-                conn.execute(
-                    f"UPDATE collection_items SET image_id = NULL WHERE image_id IN ({id_marks})",
-                    tuple(ids),
-                )
+                self._soft_delete_image_ids_locked(conn, ids)
                 deleted_rows.extend(ids)
         return deleted_rows
 
@@ -704,28 +997,7 @@ class ImageRepo:
             ).fetchall()
             row_ids = [int(r["id"]) for r in imgs]
             point_ids = [str(r["point_id"]) for r in imgs]
-            if row_ids:
-                i_marks = ",".join("?" for _ in row_ids)
-                conn.execute(
-                    f"UPDATE images SET deleted = 1 WHERE id IN ({i_marks})",
-                    tuple(row_ids),
-                )
-                conn.execute(
-                    f"DELETE FROM image_tags WHERE image_id IN ({i_marks})",
-                    tuple(row_ids),
-                )
-                conn.execute(
-                    f"UPDATE source_tags SET image_id = NULL WHERE image_id IN ({i_marks})",
-                    tuple(row_ids),
-                )
-                conn.execute(
-                    f"UPDATE image_source SET image_id = NULL WHERE image_id IN ({i_marks})",
-                    tuple(row_ids),
-                )
-                conn.execute(
-                    f"UPDATE collection_items SET image_id = NULL WHERE image_id IN ({i_marks})",
-                    tuple(row_ids),
-                )
+            self._soft_delete_image_ids_locked(conn, row_ids)
             conn.execute(
                 f"UPDATE folders SET selected = 0 WHERE id IN ({f_marks})",
                 tuple(fids),
@@ -747,6 +1019,8 @@ class ImageRepo:
             conn.execute("UPDATE image_source SET image_id = NULL")
             conn.execute("UPDATE source_tags SET image_id = NULL")
             conn.execute("DELETE FROM image_tags")
+            conn.execute("UPDATE tags SET doc_count = 0")
+            conn.execute("UPDATE image_task_state SET image_id = NULL, index_done = 0")
             conn.execute("DELETE FROM images")
             conn.execute("DELETE FROM folders")
             conn.execute("DELETE FROM roots")
@@ -892,15 +1166,19 @@ class ImageRepo:
         conn = self.db.read_conn()
         total = self.count()
         rows = conn.execute(
-            """
-            SELECT t.name, COUNT(*) AS cnt
-            FROM image_tags AS it
-            JOIN tags AS t ON t.id = it.tag_id
-            JOIN images AS i ON i.id = it.image_id AND i.deleted = 0
-            GROUP BY t.id
-            """
+            "SELECT name, doc_count FROM tags WHERE doc_count > 0"
         ).fetchall()
-        return total, {str(r["name"]): int(r["cnt"]) for r in rows}
+        if not rows:
+            rows = conn.execute(
+                """
+                SELECT t.name, COUNT(*) AS doc_count
+                FROM image_tags AS it
+                JOIN tags AS t ON t.id = it.tag_id
+                JOIN images AS i ON i.id = it.image_id AND i.deleted = 0
+                GROUP BY t.id
+                """
+            ).fetchall()
+        return total, {str(r["name"]): int(r["doc_count"]) for r in rows}
 
     def load_scope_state(self) -> dict[str, Any]:
         conn = self.db.read_conn()

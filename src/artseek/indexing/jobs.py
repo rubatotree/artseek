@@ -19,6 +19,7 @@ from ..db.connection import Database
 from ..db.repos.images import ImageRepo
 from ..db.repos.jobs import JobRepo
 from ..db.repos.provenance import ProvenanceRepo
+from ..db.repos.task_state import TaskStateRepo
 from ..ml.captioner import Captioner
 from ..ml.llm import OllamaUnavailable
 from ..services.model_lifecycle import ModelLifecycle
@@ -69,6 +70,7 @@ class JobManager:
         self.images = images
         self.prov_repo = prov_repo
         self.jobs_repo = jobs_repo
+        self.task_state = TaskStateRepo(db)
         self.vectors = vectors
         self.lifecycle = lifecycle
         self.provenance_service = provenance_service
@@ -410,6 +412,7 @@ class JobManager:
                     tags = list(payload.get("tags", [])) if payload else []
                     desc_text = captioner.build_descriptor_text(tags, cap)
                     self.images.update_caption_and_descriptor(img_id, cap, desc_text)
+                    self.task_state.mark_caption_done(img_id)
                     if desc_text.strip():
                         desc_vec = embedder.encode_texts([desc_text])[0]
                         vis_vec = self.vectors.visual_vectors([img_id]).get(img_id)

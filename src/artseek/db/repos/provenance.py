@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
+import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -13,6 +15,7 @@ from ...core.query_plan import normalize_tag
 from ...provenance.parser import ParsedSource, SourceRef, XiaohongshuName
 from ...provenance.store import ProvenanceStore, _loads
 from ..connection import Database
+from .task_state import sync_task_state_from_provenance_locked
 
 
 class _NoCommitConn:
@@ -96,6 +99,7 @@ def _sync_point_links_and_tags(
                 """,
                 tag_rows,
             )
+        sync_task_state_from_provenance_locked(conn, batch)
 
 
 class ProvenanceRepo(ProvenanceStore):
@@ -211,6 +215,27 @@ class ProvenanceRepo(ProvenanceStore):
         with self._tx() as conn:
             super().set_auto_tags_many(entries)
             _sync_point_links_and_tags(conn, [pid for pid, _, _ in entries if pid])
+
+    def set_url_ignored(self, point_id: str, ignored: bool = True) -> dict[str, Any] | None:
+        """Mark or unmark a point_id as local-only (no remote source URL needed)."""
+        with self._tx() as conn:
+            row = conn.execute(
+                "SELECT manual_fields FROM image_source WHERE point_id = ?",
+                (point_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            manual = set(_loads(row["manual_fields"], []))
+            if ignored:
+                manual.add("url_ignored")
+            else:
+                manual.discard("url_ignored")
+            conn.execute(
+                "UPDATE image_source SET manual_fields = ?, updated_at = ? WHERE point_id = ?",
+                (json.dumps(sorted(manual), ensure_ascii=False), int(time.time()), point_id),
+            )
+            sync_task_state_from_provenance_locked(conn, [point_id])
+        return self.get(point_id)
 
     @staticmethod
     def _sync_artist_id_locked(conn: sqlite3.Connection, artist_key: str) -> None:

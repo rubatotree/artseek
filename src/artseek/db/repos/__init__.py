@@ -6,6 +6,7 @@ from .jobs import JobRepo
 from .notes import NotesIndexRepo
 from .provenance import ProvenanceRepo
 from .query_cache import QueryPlanCacheRepo
+from .task_state import TaskStateRepo
 
 __all__ = [
     "CollectionRepo",
@@ -15,4 +16,5 @@ __all__ = [
     "NotesIndexRepo",
     "ProvenanceRepo",
     "QueryPlanCacheRepo",
+    "TaskStateRepo",
 ]
