@@ -121,11 +121,23 @@ def _scan_root_images(root: Path, *, recursive: bool) -> Iterator[Path]:
             continue
 
 
+def composite_on_white(image: Image.Image) -> Image.Image:
+    """Flatten alpha/palette transparency onto a solid white RGB canvas."""
+    has_alpha = image.mode in {"RGBA", "LA", "PA"} or (
+        image.mode == "P" and "transparency" in image.info
+    )
+    if has_alpha:
+        rgba = image.convert("RGBA")
+        canvas = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        return Image.alpha_composite(canvas, rgba).convert("RGB")
+    return image if image.mode == "RGB" else image.convert("RGB")
+
+
 def load_rgb(path: Path | str) -> Image.Image:
     try:
         with Image.open(path) as image:
             image.seek(0)
-            return ImageOps.exif_transpose(image).convert("RGB")
+            return composite_on_white(ImageOps.exif_transpose(image))
     except (OSError, UnidentifiedImageError) as exc:
         raise ValueError(f"无法读取图片：{path}") from exc
 

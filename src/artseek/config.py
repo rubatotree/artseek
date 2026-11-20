@@ -64,7 +64,7 @@ class TaggerConfig:
     threshold: float = 0.35
     max_tags: int = 80
     batch_size: int = 8
-    include_character_tags: bool = False
+    include_character_tags: bool = True
 
 
 @dataclass(slots=True)
@@ -234,7 +234,7 @@ model = "SmilingWolf/wd-eva02-large-tagger-v3"
 threshold = 0.35
 max_tags = 80
 batch_size = 8
-include_character_tags = false
+include_character_tags = true
 
 [llm]
 # Ollama 不存在或未启动时会自动回退到内置中英日服装/动作词典。

@@ -16,8 +16,9 @@ import numpy as np
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from ..config import AppConfig
+from ..core.ranking import order_tags_for_descriptor
 from ..db.repos.images import ImageRepo, ImageUpsertRecord
-from ..image_io import canonical_path, perceptual_hash, point_id
+from ..image_io import canonical_path, composite_on_white, perceptual_hash, point_id
 from ..vectors.index import VectorIndex
 from .captioner import flatten_caption
 from .embedder import SiglipEmbedder
@@ -106,7 +107,7 @@ def decode_and_prepare_image(
             if target is not None:
                 img.draft("RGB", target)
             transposed = ImageOps.exif_transpose(img)
-            rgb = transposed.convert("RGB")
+            rgb = composite_on_white(transposed)
 
         rgb = shrink_to_short_edge(rgb, short_edge_limit)
         phash = perceptual_hash(rgb)
@@ -329,7 +330,8 @@ class IndexingPipeline:
 
         descriptor_texts: list[str] = []
         for pred in predicted_tags:
-            tag_text = ", ".join(tag.replace("_", " ") for tag in pred.tags)
+            ordered = order_tags_for_descriptor(pred.tags)
+            tag_text = ", ".join(tag.replace("_", " ") for tag in ordered)
             parts = [flatten_caption(None), tag_text]
             descriptor_texts.append("。".join(filter(None, parts)))
 

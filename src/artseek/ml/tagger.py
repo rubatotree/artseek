@@ -18,6 +18,7 @@ from PIL import Image
 
 from ..compute import configure_inference, release_accelerator, resolve_device, resolve_dtype
 from ..config import EmbeddingConfig, TaggerConfig
+from ..image_io import composite_on_white
 
 
 @dataclass(slots=True)
@@ -129,47 +130,51 @@ class WDTagger:
     def _preprocess_images_gpu(
         self, images: Sequence[Image.Image | np.ndarray]
     ) -> torch.Tensor:
-        """Exact GPU equivalent of timm Resize(short_edge=scale_size) + CenterCrop + Normalize."""
+        """WD-Tagger preprocessing: white-pad to square, bicubic resize, RGB->BGR, normalize."""
         target_h = self._input_h
         target_w = self._input_w
-        scale_size = self._scale_size
         mode = self._interp_mode
         use_aa = mode in {"bilinear", "bicubic"}
         non_blocking = self.device.type == "cuda"
 
-        cropped: list[torch.Tensor] = []
+        prepared: list[torch.Tensor] = []
         for item in images:
             if isinstance(item, np.ndarray):
                 arr = np.array(item, dtype=np.uint8, copy=not item.flags.writeable)
             else:
-                rgb = item if item.mode == "RGB" else item.convert("RGB")
+                rgb = composite_on_white(item)
                 arr = np.array(rgb, dtype=np.uint8, copy=True)
             tensor = torch.from_numpy(arr).to(
                 device=self.device, non_blocking=non_blocking
             )
             chw = tensor.permute(2, 0, 1).unsqueeze(0).to(dtype=torch.float32) / 255.0
             cur_h, cur_w = int(chw.shape[-2]), int(chw.shape[-1])
-            if cur_h <= cur_w:
-                new_h = scale_size
-                new_w = max(target_w, int(scale_size * cur_w / max(cur_h, 1)))
-            else:
-                new_w = scale_size
-                new_h = max(target_h, int(scale_size * cur_h / max(cur_w, 1)))
-            if new_h != cur_h or new_w != cur_w:
+            if cur_h != cur_w:
+                max_dim = max(cur_h, cur_w)
+                pad_top = (max_dim - cur_h) // 2
+                pad_bottom = max_dim - cur_h - pad_top
+                pad_left = (max_dim - cur_w) // 2
+                pad_right = max_dim - cur_w - pad_left
+                chw = F.pad(
+                    chw,
+                    (pad_left, pad_right, pad_top, pad_bottom),
+                    mode="constant",
+                    value=1.0,
+                )
+            if int(chw.shape[-2]) != target_h or int(chw.shape[-1]) != target_w:
                 chw = F.interpolate(
                     chw,
-                    size=(new_h, new_w),
+                    size=(target_h, target_w),
                     mode=mode,
                     align_corners=False if use_aa else None,
                     antialias=use_aa,
                 )
-            top = max(0, (new_h - target_h) // 2)
-            left = max(0, (new_w - target_w) // 2)
-            chw = chw[:, :, top : top + target_h, left : left + target_w]
-            cropped.append(chw)
+            prepared.append(chw)
             time.sleep(0)
 
-        batch = torch.cat(cropped, dim=0)
+        batch = torch.cat(prepared, dim=0)
+        # SmilingWolf WD v3 expects BGR channel order.
+        batch = batch[:, [2, 1, 0], :, :]
         mean = torch.tensor(self._mean, device=self.device, dtype=torch.float32).view(
             1, 3, 1, 1
         )
