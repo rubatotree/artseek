@@ -4099,7 +4099,7 @@
     }
     async function runBackgroundTaskAction(action) {
       if (action === 'purge-legacy') {
-        if (!window.confirm('将清理尚未完成 Camie/PixAI 新打标图片的旧版错误自动标签与旧来源自动标签（不会影响手动标签、Pixiv/X 官方标签及已重标的新标签），确认加入队列？')) {
+        if (!window.confirm('将清理尚未完成 Camie/PixAI 新打标图片的旧版错误自动标签与旧来源自动标签（不会删除来源标签、手动标签与已重标的新标签），确认加入队列？')) {
           return;
         }
         try {
