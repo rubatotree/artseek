@@ -306,6 +306,11 @@
     .search-row #query:focus { border: 0; box-shadow: none; }
     #query::placeholder { color: #b7aab5; opacity: 1; }
     .search-actions { display: flex; gap: 8px; }
+    body.artist-view .search-actions,
+    body.artist-view #ref-drop-zone,
+    body.artist-view #filter-toggle,
+    body.artist-view #search-filters { display: none !important; }
+    body.artist-view .search-input-wrap { flex: 1 1 auto; }
     #search {
       display: grid; place-items: center;
       width: 42px; min-width: 42px; min-height: 42px; padding: 0; border-radius: 12px;
@@ -804,18 +809,6 @@
     }
     .gallery.view-list .card-favorite:hover,
     .gallery.view-list .card-remove:hover { transform: none; color: #8a5268; }
-    .artist-mode-bar {
-      display: flex; align-items: center; gap: 8px;
-      flex: 0 0 auto; min-width: 0;
-    }
-    .artist-mode-bar[hidden] { display: none; }
-    .artist-search {
-      flex: 0 1 240px; min-width: 0; margin-left: auto;
-    }
-    .artist-search input {
-      width: 100%; min-height: 32px; padding: 5px 10px; border-radius: 10px;
-      font-size: 12px; line-height: 1.2;
-    }
     .gallery.view-artists { display: block; padding-bottom: 48px; }
     .artist-list { display: grid; gap: 14px; }
     .artist-row {
@@ -1051,8 +1044,6 @@
     .artist-dialog-status.is-error { color: #a63d5e; }
     .artist-dialog-status.is-ok { color: #4c7a5c; }
     @media (max-width: 720px) {
-      .artist-mode-bar { flex-wrap: wrap; }
-      .artist-search { flex: 1 1 100%; margin-left: 0; }
       .artist-row { padding: 10px 8px 8px; border-radius: 15px; }
       .artist-thumb { width: 92px; height: 92px; border-radius: 12px; }
       .artist-thumb .card-summary,
@@ -2066,11 +2057,6 @@
       <div class="results-column">
         <div class="results-head">
           <div id="query-info" class="query-info"></div>
-          <div id="artist-mode-bar" class="artist-mode-bar" hidden>
-            <div class="artist-search">
-              <input id="artist-search" type="text" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" inputmode="search" enterkeyhint="search" placeholder="搜索画师名、UID 或社交账号" aria-label="搜索画师">
-            </div>
-          </div>
           <div class="view-controls-slot" id="view-controls-slot">
             <div class="floating-controls" id="floating-controls">
               <button class="collection-sort-toggle search-panel-toggle" id="search-panel-toggle" type="button" aria-label="展开搜索面板" title="展开搜索面板" aria-controls="panel" aria-expanded="false">
@@ -2383,7 +2369,7 @@
       viewerReturnRoute: '', viewerScrollPosition: null, viewerScrollRoute: '',
       provenanceTagAliasCache: new Map(),
       tempReturn: null,
-      searchSort: 'mtime_desc', searchSeed: null,
+      searchSort: 'mtime_desc', searchSeed: null, searchArtistTotal: 0,
       mobileSearchOpen: false, mobileSearchIgnoreScrollUntil: 0,
       cardActionRevealCard: null, cardActionRevealTimer: 0, viewerUiHidden: false,
       authorSort: 'mtime', authorSeed: null, tagSort: 'mtime', tagSeed: null,
@@ -5141,6 +5127,10 @@
       if (event.key === 'Escape') closeAllFilterSuggestions();
     });
     function syncQueryPlaceholder() {
+      if (state.libraryView === 'artists') {
+        $('query').placeholder = '搜索画师名、UID 或社交账号';
+        return;
+      }
       const width = window.innerWidth;
       $('query').placeholder = width <= 360
         ? '搜索画面或标签'
@@ -6611,24 +6601,32 @@
     });
     $('gallery-view-toggle').addEventListener('click', () => cycleGalleryView());
     let artistSearchTimer = 0;
+    function triggerArtistSearch() {
+      state.artistView.query = $('query').value.trim();
+      clearTimeout(artistSearchTimer);
+      artistSearchTimer = 0;
+      if (state.mode === 'idle') {
+        if (treeState.selected.size) void startScopeBrowse({ skipRoute: true });
+        return;
+      }
+      void fetchArtistGallery({ reset: true });
+    }
     function scheduleArtistSearch(value) {
       state.artistView.query = String(value || '').trim();
       clearTimeout(artistSearchTimer);
       artistSearchTimer = setTimeout(() => {
         artistSearchTimer = 0;
-        void fetchArtistGallery({ reset: true });
+        triggerArtistSearch();
       }, 180);
     }
-    $('artist-search').addEventListener('input', (event) => {
+    $('query').addEventListener('input', (event) => {
+      if (state.libraryView !== 'artists') return;
       scheduleArtistSearch(event.currentTarget.value);
     });
-    $('artist-search').addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter') return;
+    $('query').addEventListener('keydown', (event) => {
+      if (state.libraryView !== 'artists' || event.key !== 'Enter') return;
       event.preventDefault();
-      clearTimeout(artistSearchTimer);
-      artistSearchTimer = 0;
-      state.artistView.query = $('artist-search').value.trim();
-      void fetchArtistGallery({ reset: true });
+      triggerArtistSearch();
     });
     $('artist-dialog-close').addEventListener('click', () => $('artist-dialog').close());
     $('artist-dialog').addEventListener('click', (event) => {
@@ -7256,6 +7254,10 @@
     }
 
     async function runSearch() {
+      if (state.libraryView === 'artists') {
+        triggerArtistSearch();
+        return;
+      }
       window.scrollTo({ top: 0, behavior: 'auto' });
       commitAllFilterInputs();
       clearTimeout(state.filterApplyTimer);
@@ -7294,15 +7296,20 @@
       if (state.mode === 'author' && value === 'artists') return;
       const scrollY = window.scrollY;
       state.libraryView = value;
+      if (value === 'artists') state.artistView.query = $('query').value.trim();
       try {
         localStorage.setItem(LIBRARY_VIEW_STORAGE_KEY, value);
         if (value === 'artists') localStorage.setItem(ARTIST_SEEN_STORAGE_KEY, '1');
       } catch (_) { /* keep in-memory */ }
-      renderLibraryViewSwitch();
+      renderArtistBar();
       renderGalleryView();
       if (value === 'artists') {
         state.artistView.scrollTarget = scrollY;
-        void fetchArtistGallery({ reset: true });
+        if (state.mode === 'idle') {
+          if (treeState.selected.size) void startScopeBrowse({ skipRoute: true });
+        } else {
+          void fetchArtistGallery({ reset: true });
+        }
         restoreGalleryScroll(scrollY);
         return;
       }
@@ -7347,6 +7354,15 @@
         snapshot_id: '',
       };
       const range = currentTimeRange();
+      if (state.libraryView === 'artists' && state.mode === 'search') {
+        const frozen = state.searchRequest;
+        scope.folder_keys = frozen && Array.isArray(frozen.folder_keys)
+          ? [...frozen.folder_keys]
+          : [...treeState.selected];
+        scope.mtime_after = frozen ? (frozen.mtime_after || null) : (range.after || null);
+        scope.mtime_before = frozen ? (frozen.mtime_before || null) : (range.before || null);
+        return scope;
+      }
       if (state.mode === 'search') {
         const frozen = state.searchRequest;
         if (frozen) {
@@ -7403,13 +7419,22 @@
       return (artistScopePayload().author_keys || []).includes('none');
     }
     function renderArtistBar() {
-      const active = artistViewActive();
-      $('artist-mode-bar').hidden = !active;
+      const artistMode = state.libraryView === 'artists';
+      document.body.classList.toggle('artist-view', artistMode);
       renderLibraryViewSwitch();
-      if (!active) return;
-      const search = $('artist-search');
-      if (search.value !== state.artistView.query) search.value = state.artistView.query;
-      renderCollectionSort();
+      const query = $('query');
+      const placeholder = artistMode
+        ? '搜索画师名、UID 或社交账号'
+        : '搜索画面、标签、作者或作品链接';
+      if (query.placeholder !== placeholder) query.placeholder = placeholder;
+      if (query.getAttribute('aria-label') !== placeholder) {
+        query.setAttribute('aria-label', placeholder);
+      }
+      if (artistMode) {
+        if (query.value !== state.artistView.query) query.value = state.artistView.query;
+        if (!$('search-filters').hidden) setFilterPanelOpen(false);
+      }
+      if (artistViewActive()) renderCollectionSort();
     }
     function applyArtistSort(value) {
       if (!ARTIST_SORT_LABELS[value]) return;
@@ -7717,7 +7742,88 @@
         members: author.members || [],
         image_count: author.image_count || 0,
         cover: author.cover || null,
+        width: Number(author.cover?.width || 0),
+        height: Number(author.cover?.height || 0),
       };
+    }
+    function keywordTerms(value) {
+      return String(value || '')
+        .toLowerCase()
+        .split(/\s+/)
+        .map((term) => term.replace(/^#+/, '').replaceAll('_', ' ').trim())
+        .filter(Boolean);
+    }
+    function keywordValue(value) {
+      return String(value || '').toLowerCase().replaceAll('_', ' ');
+    }
+    function keywordValueScore(term, value) {
+      if (!term || !value) return 0;
+      if (value === term) return 1;
+      if (value.startsWith(term)) return 0.92;
+      if (value.includes(term)) return 0.82;
+      if (term.includes(value)) return 0.76;
+      return 0;
+    }
+    function keywordBestScore(terms, values) {
+      let best = 0;
+      for (const value of values) {
+        const text = keywordValue(value);
+        if (!text) continue;
+        for (const term of terms) best = Math.max(best, keywordValueScore(term, text));
+      }
+      return best;
+    }
+    function imageKeywordScore(item, terms) {
+      if (!item || !terms.length) return 0;
+      const source = item.source || {};
+      const members = source.author_members || [];
+      const strong = [
+        source.title,
+        source.description,
+        source.author_name,
+        ...(source.tags || []),
+        ...(source.manual_tags || []),
+        ...(source.auto_tags || []),
+        ...members.flatMap((member) => [member.name, member.handle, member.platform_id]),
+      ];
+      const weak = [item.name, ...(item.tags || [])];
+      return Math.max(keywordBestScore(terms, strong), keywordBestScore(terms, weak) * 0.96);
+    }
+    function artistKeywordScore(author, terms) {
+      if (!author || !terms.length) return 0;
+      const members = author.members || [];
+      const values = [
+        author.name,
+        author.handle,
+        author.key,
+        ...members.flatMap((member) => [
+          member.name,
+          member.handle,
+          member.platform_id,
+        ]),
+      ];
+      return Math.max(
+        Number(author.score) || 0,
+        keywordBestScore(terms, values),
+      );
+    }
+    function mergeKeywordSearch(images, authors, query) {
+      const terms = keywordTerms(query);
+      if (!terms.length) return images;
+      const entries = [];
+      authors.forEach((author, order) => {
+        const score = artistKeywordScore(author, terms);
+        if (score > 0) entries.push({ item: artistPageItem(author), score, order, artist: true });
+      });
+      images.forEach((item, order) => {
+        const score = imageKeywordScore(item, terms);
+        if (score > 0) entries.push({ item, score, order, artist: false });
+      });
+      entries.sort((left, right) => (
+        right.score - left.score
+        || (left.artist === right.artist ? left.order - right.order : (left.artist ? -1 : 1))
+      ));
+      return entries.map((entry) => entry.item);
     }
     function artistCardElement(author) {
       const key = String(author.key || '');
@@ -8610,7 +8716,11 @@
       }
       if (!reset && (state.loadingMore || !state.hasMore)) return;
       const seq = reset ? ++state.searchSeq : state.searchSeq;
-      const offset = reset ? 0 : state.results.length;
+      const imageResults = state.results.filter((item) => item.kind !== 'artist');
+      const offset = reset ? 0 : imageResults.length;
+      const mixedArtistSearch = Boolean(
+        reset && metadataSearch && query && state.libraryView === 'images',
+      );
       if (reset) {
         state.offset = 0;
         state.hasMore = false;
@@ -8619,7 +8729,7 @@
           try { await fetchModelStatus(); } catch { /* keep last known load state */ }
         }
         $('query-info').textContent = metadataSearch
-          ? '正在匹配 tag、标题与作者……'
+          ? '正在匹配画师、tag、标题与作者……'
           : (filterOnly
             ? '正在按筛选条件查找……'
             : (modelUi.loaded ? '正在本地检索……' : '正在载入图文向量模型并检索……'));
@@ -8651,7 +8761,7 @@
           text_tags: frozen.text_tags || [],
           sort: frozen.sort || state.searchSort,
           seed: frozen.seed ?? state.searchSeed,
-          exclude_ids: state.results.map((item) => item.id),
+          exclude_ids: imageResults.map((item) => item.id),
           snapshot_id: keepSnapshot ? (state.searchSnapshotId || '') : '',
         } : {
           query,
@@ -8672,9 +8782,30 @@
           text_tags: advanced.text_tags || [],
           sort: effectiveSearchSort(),
           seed: effectiveSearchSort() === 'random' ? state.searchSeed : null,
-          exclude_ids: reset ? [] : state.results.map((item) => item.id),
+          exclude_ids: reset ? [] : imageResults.map((item) => item.id),
           snapshot_id: keepSnapshot && !reset ? (state.searchSnapshotId || '') : '',
         };
+        let artistPromise = null;
+        if (mixedArtistSearch) {
+          artistPromise = fetch('/api/artists/gallery', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              q: common.query,
+              folder_keys: Array.isArray(common.folder_keys)
+                ? common.folder_keys
+                : [...treeState.selected],
+              mtime_after: common.mtime_after || null,
+              mtime_before: common.mtime_before || null,
+              sort: 'latest_desc',
+              include_unassigned: false,
+              offset: 0,
+              limit: 12,
+              image_sort: 'mtime_desc',
+              image_limit: 1,
+            }),
+          }).then((res) => parseResponse(res)).catch(() => null);
+        }
         if (fileRefs.length) {
           const form = new FormData();
           form.append('query', common.query);
@@ -8722,8 +8853,21 @@
           );
         }
         const data = await parseResponse(response);
+        const artistPayload = artistPromise ? await artistPromise : null;
         if (seq !== state.searchSeq) return;
         const incoming = data.results || [];
+        const artists = reset && mixedArtistSearch && Array.isArray(artistPayload?.authors)
+          ? artistPayload.authors
+          : [];
+        if (reset) state.searchArtistTotal = artists.length;
+        data.artist_total = state.searchArtistTotal;
+        const visible = reset && artists.length
+          ? mergeKeywordSearch(incoming, artists, common.query)
+          : incoming;
+        if (reset) {
+          state.searchArtistTotal = visible.filter((item) => item.kind === 'artist').length;
+          data.artist_total = state.searchArtistTotal;
+        }
         if (reset) {
           state.searchRequest = {
             query: common.query,
@@ -8773,7 +8917,7 @@
           }
         }
         if (reset) {
-          state.results = incoming;
+          state.results = visible;
           renderGallery(state.results, { append: false });
           if (window.matchMedia('(max-width: 900px)').matches) {
             $('tree-panel').classList.remove('is-open');
@@ -8823,14 +8967,18 @@
       if (filters.tag_expression) filterChips.push(`<span class="chip">Tag：${escapeHtml(filters.tag_expression)}</span>`);
       const onlyFilters = !(data.query_plan && data.query_plan.original);
       const label = data.metadata_search
-        ? '本地元信息匹配'
+        ? '本地关键词匹配'
         : (onlyFilters ? '筛选' : (plan.used_llm ? '本地大模型已解析' : '内置插画词典已解析'));
       const warning = data.llm_warning ? ` · Ollama 未就绪，已自动回退` : '';
       const resultTotal = Number.isFinite(Number(data.total)) ? Number(data.total) : total;
+      const artistTotal = Number(data.artist_total || 0);
+      const resultLabel = artistTotal
+        ? `${artistTotal} 位画师 · ${resultTotal} 张图片`
+        : `${resultTotal} 个结果`;
       if (compactInfo()) {
-        $('query-info').textContent = `${label} · ${resultTotal} 个结果`;
+        $('query-info').textContent = `${label} · ${resultLabel}`;
       } else {
-        $('query-info').innerHTML = `${label}${warning} · ${resultTotal} 个结果　${positive}${negative}${filterChips.join('')}`;
+        $('query-info').innerHTML = `${label}${warning} · ${resultLabel}　${positive}${negative}${filterChips.join('')}`;
       }
     }
 
@@ -8914,6 +9062,9 @@
       const removeAction = inCollection
         ? `<button class="card-remove" type="button" data-card-action="remove" aria-label="从收藏夹移除：${escapeHtml(item.name)}">${CARD_CLOSE_ICON}</button>`
         : '';
+      const favoriteAction = inCollection
+        ? ''
+        : `<button class="card-favorite" type="button" data-card-action="favorite" draggable="false" aria-label="收藏画师：${escapeHtml(item.name)}" aria-haspopup="dialog" aria-expanded="false" aria-controls="card-collection-menu">${CARD_HEART_ICON}</button>`;
       const image = cover ? `<img src="/thumb/${cover.id}" loading="lazy" alt="${escapeHtml(item.name)}" draggable="false">` : '';
       const meta = `${item.handle ? `@${escapeHtml(item.handle)}` : `UID ${escapeHtml(item.artist_key)}`} · ${Number(item.image_count || 0)} 张`;
       if (listMode) {
@@ -8923,11 +9074,11 @@
             <a class="list-title list-title-link" href="/author/${encodeURIComponent(item.artist_key)}" target="_blank" rel="noopener">${escapeHtml(item.name)}</a>
             <div class="list-sub"><span class="list-author">${escapeHtml(item.name)}</span><span class="list-sep">·</span><span class="list-tags">${meta}</span></div>
           </div>
-          <div class="card-list-actions">${orderHandle}${removeAction}</div>
+          <div class="card-list-actions">${orderHandle}${favoriteAction}${removeAction}</div>
         </article>`;
       }
       return `<article class="card artist-collection-card${squareCard ? ' is-square' : ''}" data-index="${index}" data-point-id="${escapeHtml(item.id)}" data-artist-collection>
-        <div class="image-wrap"${ratio} draggable="true" data-gallery-drag data-artist-collection-cover tabindex="0" role="link" aria-label="打开画师：${escapeHtml(item.name)}">${orderHandle}${removeAction}${image}</div>
+        <div class="image-wrap"${ratio} draggable="true" data-gallery-drag data-artist-collection-cover tabindex="0" role="link" aria-label="打开画师：${escapeHtml(item.name)}">${orderHandle}${removeAction}${image}${favoriteAction}</div>
         <div class="artist-card-label">
           <a class="artist-card-name" href="/author/${encodeURIComponent(item.artist_key)}" target="_blank" rel="noopener">${escapeHtml(item.name)}</a>
           <div class="artist-card-meta"><span class="artist-sub">${meta}</span></div>
@@ -11440,6 +11591,7 @@
         }),
       ]);
       syncQueryPlaceholder();
+      renderArtistBar();
       syncFloatingControls();
       syncSearchPanelOffset();
       syncScrollTopVisibility();
