@@ -338,6 +338,14 @@ class TestStageDSearchAndWebAPI(unittest.TestCase):
                 self.assertAlmostEqual(loc_res[0]["focal_y"], 0.27, places=2)
                 self.assertEqual(loc_res[0]["media_type"], "illustration")
 
+                # 2b. Filter-only /api/search sorted by aesthetic_desc with no query
+                aes = client.post(
+                    "/api/search",
+                    json={"query": "", "folder_keys": [fk], "sort": "aesthetic_desc"},
+                )
+                self.assertEqual(aes.status_code, 200)
+                self.assertEqual([r["id"] for r in aes.json()["results"]], ["id1", "id2"])
+
                 # 3. CCIP character search from id1 finds id2
                 char_res = client.post(
                     "/api/search/character",

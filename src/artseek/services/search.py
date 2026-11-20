@@ -471,6 +471,7 @@ class SearchService:
             or clean_ratings
             or monochrome is not None
             or exclude_ai is not None
+            or sort == "aesthetic_desc"
         )
 
         scope = ImageScope(
