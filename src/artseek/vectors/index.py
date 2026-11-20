@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-Channel = Literal["visual", "descriptor"]
+Channel = Literal["visual", "descriptor", "ccip"]
 
 
 def _load_npy_contiguous(path: Path) -> np.ndarray:
@@ -48,25 +48,35 @@ def _l2_normalize_rows(matrix: np.ndarray) -> np.ndarray:
 
 
 class VectorIndex:
-    """Dual-channel (visual + descriptor) vector matrix aligned 1:1 with SQLite images.id."""
+    """Tri-channel (visual + descriptor + optional CCIP) matrices aligned 1:1 with images.id."""
 
     def __init__(
         self,
         visual_path: Path,
         descriptor_path: Path,
         *,
+        ccip_path: Path | None = None,
         active_rows: np.ndarray | Sequence[int] | None = None,
     ) -> None:
         self.visual_path = Path(visual_path)
         self.descriptor_path = Path(descriptor_path)
+        self.ccip_path = (
+            Path(ccip_path)
+            if ccip_path is not None
+            else self.visual_path.with_name("ccip.f32.npy")
+        )
         self._lock = threading.RLock()
         self._visual: np.ndarray = np.zeros((0, 0), dtype=np.float32)
         self._descriptor: np.ndarray = np.zeros((0, 0), dtype=np.float32)
+        self._ccip: np.ndarray | None = None
+        self._ccip_dim: int = 0
+        self._ccip_dirty: bool = False
         self._count: int = 0
         self._dimension: int = 0
         self._active: np.ndarray = np.zeros(0, dtype=bool)
         self._cuda_visual: Any = None
         self._cuda_descriptor: Any = None
+        self._cuda_ccip: Any = None
         self._cuda_device: Any = None
         self._dirty: bool = False
         self.reload(active_rows=active_rows)
@@ -89,19 +99,25 @@ class VectorIndex:
     @property
     def dirty(self) -> bool:
         with self._lock:
-            return self._dirty
+            return self._dirty or self._ccip_dirty
 
     def reopen(
         self,
         visual_path: Path,
         descriptor_path: Path,
         *,
+        ccip_path: Path | None = None,
         active_rows: np.ndarray | Sequence[int] | None = None,
     ) -> None:
         """Switch backing `.npy` file paths and reload into memory."""
         with self._lock:
             self.visual_path = Path(visual_path)
             self.descriptor_path = Path(descriptor_path)
+            self.ccip_path = (
+                Path(ccip_path)
+                if ccip_path is not None
+                else self.visual_path.with_name("ccip.f32.npy")
+            )
             self.reload(active_rows=active_rows)
 
     def reload(self, *, active_rows: np.ndarray | Sequence[int] | None = None) -> None:
@@ -123,8 +139,40 @@ class VectorIndex:
                 self._descriptor = np.zeros((0, 0), dtype=np.float32)
                 self._count = 0
                 self._dimension = 0
+            self._ccip = None
+            self._ccip_dim = 0
+            self._ccip_dirty = False
             self.sync_active_mask(active_rows)
             self._dirty = False
+
+    def _ensure_ccip_loaded(self) -> np.ndarray | None:
+        if self._ccip is not None:
+            return self._ccip
+        if self.ccip_path and self.ccip_path.is_file():
+            arr = _load_npy_contiguous(self.ccip_path)
+            self._ccip = arr
+            self._ccip_dim = int(arr.shape[1]) if arr.ndim == 2 else 0
+            return self._ccip
+        return None
+
+    def _ensure_ccip_capacity(self, min_rows: int, dim: int) -> None:
+        if dim <= 0:
+            raise ValueError(f"CCIP 向量维度必须为正数，得到 {dim}")
+        existing = self._ensure_ccip_loaded()
+        target_rows = max(min_rows, self._count)
+        if existing is None or existing.ndim != 2 or existing.shape[1] != dim:
+            self._ccip = np.zeros((max(target_rows, 64), dim), dtype=np.float32)
+            self._ccip_dim = dim
+            return
+        if existing.shape[0] >= target_rows:
+            return
+        new_cap = max(target_rows, int(existing.shape[0] * 1.25) + 64)
+        grown = np.zeros((new_cap, dim), dtype=np.float32)
+        copy_n = min(existing.shape[0], target_rows)
+        if copy_n > 0:
+            grown[:copy_n] = existing[:copy_n]
+        self._ccip = grown
+        self._ccip_dim = dim
 
     def sync_active_mask(self, active_rows: np.ndarray | Sequence[int] | None) -> None:
         """Align the boolean active mask with live SQLite images.id rows."""
@@ -216,6 +264,25 @@ class VectorIndex:
             self._descriptor[ids] = desc
             self._dirty = True
 
+    def set_ccip_rows(
+        self,
+        row_ids: Sequence[int] | np.ndarray,
+        vectors: np.ndarray,
+    ) -> None:
+        ids = np.asarray(row_ids, dtype=np.int64)
+        if ids.size == 0:
+            return
+        vecs = _l2_normalize_rows(vectors)
+        if vecs.shape[0] != ids.size:
+            raise ValueError("更新 CCIP 向量行数与 row_ids 不匹配")
+        with self._lock:
+            self._cuda_ccip = None
+            max_id = int(ids.max())
+            self._ensure_ccip_capacity(max_id + 1, int(vecs.shape[1]))
+            assert self._ccip is not None
+            self._ccip[ids] = vecs
+            self._ccip_dirty = True
+
     def zero_rows(self, row_ids: Sequence[int] | np.ndarray) -> None:
         ids = np.asarray(row_ids, dtype=np.int64)
         if ids.size == 0:
@@ -229,18 +296,29 @@ class VectorIndex:
             self._descriptor[valid] = 0.0
             self._active[valid] = False
             self._dirty = True
+            ccip_mat = self._ensure_ccip_loaded()
+            if ccip_mat is not None:
+                c_valid = valid[valid < ccip_mat.shape[0]]
+                if c_valid.size:
+                    ccip_mat[c_valid] = 0.0
+                    self._ccip_dirty = True
 
     def clear(self) -> None:
         with self._lock:
             self.release_cuda()
             self._visual = np.zeros((0, 0), dtype=np.float32)
             self._descriptor = np.zeros((0, 0), dtype=np.float32)
+            self._ccip = None
+            self._ccip_dim = 0
+            self._ccip_dirty = False
             self._active = np.zeros(0, dtype=bool)
             self._count = 0
             self._dimension = 0
             self._dirty = False
             self.visual_path.unlink(missing_ok=True)
             self.descriptor_path.unlink(missing_ok=True)
+            if self.ccip_path:
+                self.ccip_path.unlink(missing_ok=True)
 
     def flush(self) -> int:
         """Atomically persist active slice [0:count] to disk."""
@@ -255,6 +333,15 @@ class VectorIndex:
                 desc_out = self._descriptor[:n]
             _save_npy_atomic(self.visual_path, vis_out)
             _save_npy_atomic(self.descriptor_path, desc_out)
+            if self._ccip_dirty and self._ccip is not None and self.ccip_path:
+                cdim = self._ccip_dim or int(self._ccip.shape[1])
+                if n > 0 and cdim > 0:
+                    if self._ccip.shape[0] < n:
+                        self._ensure_ccip_capacity(n, cdim)
+                    _save_npy_atomic(self.ccip_path, self._ccip[:n])
+                elif cdim > 0:
+                    _save_npy_atomic(self.ccip_path, np.zeros((0, cdim), dtype=np.float32))
+                self._ccip_dirty = False
             self._dirty = False
             return n
 
@@ -265,16 +352,27 @@ class VectorIndex:
             self.release_cuda()
             dim = self._dimension
             m = int(order.size)
+            ccip_mat = self._ensure_ccip_loaded()
             if m == 0 or dim == 0:
                 self._visual = np.zeros((0, dim), dtype=np.float32)
                 self._descriptor = np.zeros((0, dim), dtype=np.float32)
                 self._active = np.zeros(0, dtype=bool)
                 self._count = 0
+                if ccip_mat is not None:
+                    self._ccip = np.zeros((0, self._ccip_dim), dtype=np.float32)
+                    self._ccip_dirty = True
             else:
                 self._visual = np.ascontiguousarray(self._visual[order], dtype=np.float32)
                 self._descriptor = np.ascontiguousarray(self._descriptor[order], dtype=np.float32)
                 self._active = np.ones(m, dtype=bool)
                 self._count = m
+                if ccip_mat is not None:
+                    new_ccip = np.zeros((m, self._ccip_dim), dtype=np.float32)
+                    valid_mask = (order >= 0) & (order < ccip_mat.shape[0])
+                    if np.any(valid_mask):
+                        new_ccip[valid_mask] = ccip_mat[order[valid_mask]]
+                    self._ccip = np.ascontiguousarray(new_ccip, dtype=np.float32)
+                    self._ccip_dirty = True
             self._dirty = True
             return self.flush()
 
@@ -299,9 +397,14 @@ class VectorIndex:
 
     def release_cuda(self) -> None:
         with self._lock:
-            had_cuda = self._cuda_visual is not None or self._cuda_descriptor is not None
+            had_cuda = (
+                self._cuda_visual is not None
+                or self._cuda_descriptor is not None
+                or self._cuda_ccip is not None
+            )
             self._cuda_visual = None
             self._cuda_descriptor = None
+            self._cuda_ccip = None
             self._cuda_device = None
         if had_cuda:
             from ..compute import release_accelerator
@@ -316,6 +419,19 @@ class VectorIndex:
                 if 0 <= row < self._count and self._active[row]:
                     out[row] = self._visual[row].copy()
             return out
+
+    def ccip_vector(self, row_id: int) -> np.ndarray | None:
+        """Return normalized CCIP vector for `row_id`, or None if unpopulated."""
+        with self._lock:
+            ccip_mat = self._ensure_ccip_loaded()
+            if ccip_mat is None or not (0 <= row_id < min(self._count, ccip_mat.shape[0])):
+                return None
+            if not self._active[row_id]:
+                return None
+            vec = ccip_mat[row_id]
+            if float(np.linalg.norm(vec)) <= 1e-8:
+                return None
+            return vec.copy()
 
     def search(
         self,
@@ -333,7 +449,13 @@ class VectorIndex:
 
         with self._lock:
             n = self._count
-            if n == 0 or self._dimension == 0 or q.shape[0] != self._dimension:
+            if n == 0:
+                return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float32)
+
+            if channel == "ccip":
+                return self._search_ccip_locked(q, k, rows)
+
+            if self._dimension == 0 or q.shape[0] != self._dimension:
                 return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float32)
 
             if rows is not None:
@@ -403,6 +525,37 @@ class VectorIndex:
                 part = np.argpartition(-scores, k - 1)[:k]
                 order = part[np.argsort(-scores[part], kind="stable")]
             return cand[order].astype(np.int64), scores[order].astype(np.float32)
+
+    def _search_ccip_locked(
+        self,
+        q: np.ndarray,
+        k: int,
+        rows: np.ndarray | Sequence[int] | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        ccip_mat = self._ensure_ccip_loaded()
+        if ccip_mat is None or self._ccip_dim == 0 or q.shape[0] != self._ccip_dim:
+            return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float32)
+        n = min(self._count, int(ccip_mat.shape[0]))
+        if n == 0:
+            return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float32)
+        has_vec = np.linalg.norm(ccip_mat[:n], axis=1) > 1e-8
+        eligible = self._active[:n] & has_vec
+        if rows is not None:
+            cand = np.asarray(rows, dtype=np.int64)
+            cand = cand[(cand >= 0) & (cand < n)]
+            cand = cand[eligible[cand]]
+        else:
+            cand = np.flatnonzero(eligible)
+        if cand.size == 0:
+            return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float32)
+        scores = ccip_mat[cand] @ q
+        total = int(cand.size)
+        if k >= total:
+            order = np.argsort(-scores, kind="stable")
+        else:
+            part = np.argpartition(-scores, k - 1)[:k]
+            order = part[np.argsort(-scores[part], kind="stable")]
+        return cand[order].astype(np.int64), scores[order].astype(np.float32)
 
     def neighbor_tag_votes(
         self,

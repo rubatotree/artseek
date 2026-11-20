@@ -24,10 +24,12 @@ PROVENANCE_NAME = "provenance.sqlite3"
 DB_NAME = "artseek.sqlite3"
 VISUAL_VECTORS_NAME = "visual.f32.npy"
 DESCRIPTOR_VECTORS_NAME = "descriptor.f32.npy"
+CCIP_VECTORS_NAME = "ccip.f32.npy"
 INDEX_SIDECAR_FILES = (
     DB_NAME,
     VISUAL_VECTORS_NAME,
     DESCRIPTOR_VECTORS_NAME,
+    CCIP_VECTORS_NAME,
     INDEX_STATE_NAME,
     PROVENANCE_NAME,
     "folder_catalog.json",
@@ -190,6 +192,10 @@ class AppConfig:
     @property
     def descriptor_vectors_path(self) -> Path:
         return self.index_dir / DESCRIPTOR_VECTORS_NAME
+
+    @property
+    def ccip_vectors_path(self) -> Path:
+        return self.index_dir / CCIP_VECTORS_NAME
 
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)

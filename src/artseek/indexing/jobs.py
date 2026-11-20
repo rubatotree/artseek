@@ -14,14 +14,29 @@ from typing import Any
 
 import numpy as np
 
+from ..compute import release_accelerator
 from ..config import AppConfig
 from ..db.connection import Database
 from ..db.repos.images import ImageRepo
 from ..db.repos.jobs import JobRepo
 from ..db.repos.provenance import ProvenanceRepo
 from ..db.repos.task_state import TaskStateRepo
+from ..image_io import composite_on_white, load_rgb
 from ..ml.captioner import Captioner
+from ..ml.ccip import CCIPExtractor
 from ..ml.llm import OllamaUnavailable
+from ..ml.tag_postprocess import (
+    CAT_ATTRIBUTE,
+    CAT_MEDIUM,
+    CAT_RATING,
+    build_high_density_descriptor,
+)
+from ..ml.tagger import (
+    build_tagger,
+    model_versions_for_backend,
+    normalize_tagger_backend,
+)
+from ..ml.vision_attributes import VISION_META_VERSION, VisionAttributeAnalyzer
 from ..services.model_lifecycle import ModelLifecycle
 from ..services.provenance import ProvenanceAppService
 from ..vectors.index import VectorIndex
@@ -32,7 +47,10 @@ JOB_PRIORITIES: dict[str, int] = {
     "compact": 20,
     "provenance_scan": 30,
     "provenance_enrich": 40,
+    "retag": 45,
     "auto_tag": 50,
+    "vision_enrich": 55,
+    "ccip": 60,
     "caption": 90,
 }
 
@@ -244,6 +262,122 @@ class JobManager:
             self._cond.notify_all()
             return job_id
 
+    def _enqueue_job(
+        self,
+        kind: str,
+        prefix: str,
+        params: dict[str, Any],
+        message: str,
+        runner: Callable[[str], None],
+    ) -> str:
+        with self._cond:
+            job_id = f"{prefix}-{uuid.uuid4().hex[:12]}"
+            self.jobs_repo.create(
+                job_id,
+                kind,
+                params,
+                status="queued",
+                message=message,
+            )
+
+            def _run() -> None:
+                runner(job_id)
+
+            heapq.heappush(
+                self._queue,
+                _QueuedTask(
+                    JOB_PRIORITIES.get(kind, 50),
+                    next(self._seq),
+                    job_id,
+                    kind,
+                    _run,
+                ),
+            )
+            self._cond.notify_all()
+            return job_id
+
+    def task_summary(self, scope_row_ids: Sequence[int] | None = None) -> dict[str, int]:
+        return self.task_state.summary_counts(scope_row_ids=scope_row_ids)
+
+    def submit_retag_job(
+        self,
+        *,
+        backend: str | None = None,
+        scope_row_ids: Sequence[int] | None = None,
+        skip_completed: bool = True,
+        limit: int | None = None,
+    ) -> str:
+        canon = normalize_tagger_backend(backend or self.config.tagger.backend)
+        row_list = [int(r) for r in scope_row_ids] if scope_row_ids is not None else None
+        return self._enqueue_job(
+            "retag",
+            "retag",
+            {
+                "backend": canon,
+                "scope_count": len(row_list) if row_list is not None else None,
+                "skip_completed": bool(skip_completed),
+                "limit": limit,
+            },
+            f"等待执行自动标签 ({canon})…",
+            lambda jid: self._execute_retag(
+                jid,
+                backend=canon,
+                scope_row_ids=row_list,
+                skip_completed=skip_completed,
+                limit=limit,
+            ),
+        )
+
+    def submit_vision_enrich_job(
+        self,
+        *,
+        scope_row_ids: Sequence[int] | None = None,
+        skip_completed: bool = True,
+        limit: int | None = None,
+    ) -> str:
+        row_list = [int(r) for r in scope_row_ids] if scope_row_ids is not None else None
+        return self._enqueue_job(
+            "vision_enrich",
+            "vision",
+            {
+                "scope_count": len(row_list) if row_list is not None else None,
+                "skip_completed": bool(skip_completed),
+                "limit": limit,
+            },
+            "等待提取视觉属性（媒介/分级/黑白/AI/人脸焦点）…",
+            lambda jid: self._execute_vision_enrich(
+                jid,
+                scope_row_ids=row_list,
+                skip_completed=skip_completed,
+                limit=limit,
+            ),
+        )
+
+    def submit_ccip_job(
+        self,
+        *,
+        scope_row_ids: Sequence[int] | None = None,
+        skip_completed: bool = True,
+        limit: int | None = None,
+    ) -> str:
+        row_list = [int(r) for r in scope_row_ids] if scope_row_ids is not None else None
+        return self._enqueue_job(
+            "ccip",
+            "ccip",
+            {
+                "scope_count": len(row_list) if row_list is not None else None,
+                "skip_completed": bool(skip_completed),
+                "limit": limit,
+            },
+            "等待提取 CCIP 角色特征向量…",
+            lambda jid: self._execute_ccip(
+                jid,
+                scope_row_ids=row_list,
+                skip_completed=skip_completed,
+                limit=limit,
+            ),
+        )
+
     # ---------------------------------------------------------------- worker loop
     def _worker_loop(self) -> None:
         while True:
@@ -454,3 +588,453 @@ class JobManager:
                 message="长描述任务失败",
                 error=str(exc),
             )
+
+    def _free_vram_for_worker(self) -> None:
+        if self.lifecycle.embedder is not None:
+            self.lifecycle.unload_model(force=False)
+        release_accelerator()
+
+    def _wait_if_paused(self) -> bool:
+        while self._pause_event.is_set() and not self._stop_event.is_set():
+            time.sleep(0.05)
+        return self._stop_event.is_set()
+
+    @staticmethod
+    def _load_image_preserve_info(path: Path) -> Any:
+        from PIL import Image, ImageOps
+
+        with Image.open(path) as img:
+            img.seek(0)
+            info = dict(getattr(img, "info", {}) or {})
+            rgb = composite_on_white(ImageOps.exif_transpose(img))
+            rgb.info = info
+            return rgb
+
+    @staticmethod
+    def _build_descriptor_for_payload(
+        pred: Any,
+        payload: dict[str, Any],
+        *,
+        drop_overlap: bool,
+    ) -> str:
+        tags = list(pred.tags)
+        cats = dict(pred.categories)
+        if payload.get("media_type"):
+            mtag = f"medium:{payload['media_type']}"
+            tags.append(mtag)
+            cats[mtag] = CAT_MEDIUM
+        if payload.get("rating"):
+            rtag = f"rating:{payload['rating']}"
+            tags.append(rtag)
+            cats[rtag] = CAT_RATING
+        if payload.get("is_monochrome"):
+            tags.append("monochrome")
+            cats["monochrome"] = CAT_ATTRIBUTE
+        if payload.get("is_ai") is not None:
+            atag = "ai_generated" if payload["is_ai"] else "hand_drawn"
+            tags.append(atag)
+            cats[atag] = CAT_ATTRIBUTE
+        return build_high_density_descriptor(
+            tags,
+            cats,
+            caption=payload.get("caption"),
+            drop_overlap=drop_overlap,
+        )
+
+    def _encode_and_flush_descriptors(
+        self,
+        updated_descriptors: list[tuple[int, str]],
+    ) -> None:
+        if not updated_descriptors:
+            return
+        with self.lifecycle.hold_model() as embedder:
+            batch_size = max(1, int(self.config.embedding.batch_size))
+            for start in range(0, len(updated_descriptors), batch_size):
+                chunk = updated_descriptors[start : start + batch_size]
+                row_ids = [rid for rid, _ in chunk]
+                texts = [txt for _, txt in chunk]
+                vecs = embedder.encode_texts(texts)
+                self.vectors.set_descriptor_rows(
+                    row_ids,
+                    np.asarray(vecs, dtype=np.float32),
+                )
+        self.vectors.flush()
+
+    def _execute_retag(
+        self,
+        job_id: str,
+        *,
+        backend: str,
+        scope_row_ids: Sequence[int] | None = None,
+        skip_completed: bool = True,
+        limit: int | None = None,
+    ) -> None:
+        req_versions = model_versions_for_backend(backend)
+        pending = self.task_state.pending_for_tagger(
+            req_versions,
+            scope_row_ids=scope_row_ids,
+            skip_completed=skip_completed,
+            limit=limit,
+        )
+        total = len(pending)
+        if total == 0:
+            self.jobs_repo.update(
+                job_id,
+                status="completed",
+                done=0,
+                total=0,
+                message=f"所有目标图片均已完成 {backend} 标签",
+                summary={"updated": 0, "failed": 0, "backend": backend},
+            )
+            return
+
+        self.jobs_repo.update(
+            job_id,
+            status="running",
+            done=0,
+            total=total,
+            message=f"正在加载标签器 {backend}（共 {total} 张待处理）…",
+        )
+        self._free_vram_for_worker()
+
+        tagger = None
+        updated = 0
+        failed = 0
+        updated_descriptors: list[tuple[int, str]] = []
+        chunk_size = max(4, min(16, int(self.config.tagger.batch_size)))
+        try:
+            tagger = build_tagger(self.config.tagger, self.config.embedding, backend=backend)
+            if tagger is None:
+                raise RuntimeError(f"无法初始化标签器 {backend}")
+            versions = dict(getattr(tagger, "model_versions", req_versions))
+
+            for start in range(0, total, chunk_size):
+                if self._wait_if_paused():
+                    break
+                chunk = pending[start : start + chunk_size]
+                loaded: list[tuple[int, str, str, Any]] = []
+                for img_id, pid, path_str, chash in chunk:
+                    p = Path(path_str)
+                    if not p.is_file():
+                        failed += 1
+                        continue
+                    try:
+                        loaded.append((img_id, pid, chash, load_rgb(p)))
+                    except Exception:
+                        failed += 1
+                if not loaded:
+                    continue
+
+                preds = tagger.predict([item[3] for item in loaded])
+                ids = [item[0] for item in loaded]
+                existing_payloads = self.images.get_payloads_by_ids(ids, include_tags=False)
+
+                db_updates: list[tuple[int, list[str], dict[str, float], dict[str, int], str]] = []
+                done_entries: list[tuple[str, int, str]] = []
+                for idx, (img_id, pid, chash, _) in enumerate(loaded):
+                    pred = preds[idx]
+                    payload = existing_payloads.get(img_id) or {}
+                    desc_text = self._build_descriptor_for_payload(
+                        pred, payload, drop_overlap=self.config.tagger.drop_overlap
+                    )
+                    db_updates.append((img_id, pred.tags, pred.scores, pred.categories, desc_text))
+                    done_entries.append((pid, img_id, chash))
+                    if desc_text.strip():
+                        updated_descriptors.append((img_id, desc_text))
+
+                self.images.update_tags_and_descriptor_batch(db_updates)
+                self.task_state.mark_tag_models_done(done_entries, versions, descriptor_done=True)
+                updated += len(loaded)
+                processed = min(total, start + len(chunk))
+                self.jobs_repo.update(
+                    job_id,
+                    done=processed,
+                    total=total,
+                    message=f"正在打标签 ({backend}) {processed}/{total}",
+                )
+        except Exception as exc:
+            if tagger is not None:
+                tagger.close()
+            release_accelerator()
+            self.jobs_repo.update(
+                job_id,
+                status="failed",
+                done=updated,
+                total=total,
+                message=f"自动标签失败 ({backend})",
+                error=str(exc),
+            )
+            return
+
+        if tagger is not None:
+            tagger.close()
+        release_accelerator()
+
+        try:
+            if updated_descriptors:
+                self.jobs_repo.update(
+                    job_id,
+                    done=updated,
+                    total=total,
+                    message=f"正在重建 {len(updated_descriptors)} 条文本语义向量…",
+                )
+                self._encode_and_flush_descriptors(updated_descriptors)
+            if callable(self._on_caches_invalidated):
+                self._on_caches_invalidated()
+            status = "stopped" if self._stop_event.is_set() else "completed"
+            self.jobs_repo.update(
+                job_id,
+                status=status,
+                done=updated,
+                total=total,
+                message=f"自动标签完成 ({backend})：更新 {updated} 张，失败 {failed} 张",
+                summary={"updated": updated, "failed": failed, "backend": backend},
+            )
+        except Exception as exc:
+            self.jobs_repo.update(
+                job_id,
+                status="failed",
+                done=updated,
+                total=total,
+                message="重建文本语义向量失败",
+                error=str(exc),
+            )
+
+    def _execute_vision_enrich(
+        self,
+        job_id: str,
+        *,
+        scope_row_ids: Sequence[int] | None = None,
+        skip_completed: bool = True,
+        limit: int | None = None,
+    ) -> None:
+        pending = self.task_state.pending_for_vision(
+            min_version=VISION_META_VERSION,
+            scope_row_ids=scope_row_ids,
+            skip_completed=skip_completed,
+            limit=limit,
+        )
+        total = len(pending)
+        if total == 0:
+            self.jobs_repo.update(
+                job_id,
+                status="completed",
+                done=0,
+                total=0,
+                message="所有目标图片均已提取视觉属性",
+                summary={"updated": 0, "failed": 0},
+            )
+            return
+
+        self.jobs_repo.update(
+            job_id,
+            status="running",
+            done=0,
+            total=total,
+            message=f"正在加载视觉属性模型（共 {total} 张待处理）…",
+        )
+        self._free_vram_for_worker()
+
+        analyzer: VisionAttributeAnalyzer | None = None
+        updated = 0
+        failed = 0
+        chunk_size = 16
+        try:
+            analyzer = VisionAttributeAnalyzer(self.config.embedding)
+            for start in range(0, total, chunk_size):
+                if self._wait_if_paused():
+                    break
+                chunk = pending[start : start + chunk_size]
+                loaded: list[tuple[int, str, str, Any]] = []
+                for img_id, pid, path_str, chash in chunk:
+                    p = Path(path_str)
+                    if not p.is_file():
+                        failed += 1
+                        continue
+                    try:
+                        loaded.append((img_id, pid, chash, self._load_image_preserve_info(p)))
+                    except Exception:
+                        failed += 1
+                if not loaded:
+                    continue
+
+                updates = analyzer.analyze_batch([(item[0], item[3]) for item in loaded])
+                self.images.update_vision_attributes_batch(updates)
+                self.task_state.mark_vision_done(
+                    [(item[1], item[0], item[2]) for item in loaded],
+                    version=VISION_META_VERSION,
+                )
+                updated += len(loaded)
+                processed = min(total, start + len(chunk))
+                self.jobs_repo.update(
+                    job_id,
+                    done=processed,
+                    total=total,
+                    message=f"正在提取视觉属性 {processed}/{total}",
+                )
+            if callable(self._on_caches_invalidated):
+                self._on_caches_invalidated()
+            status = "stopped" if self._stop_event.is_set() else "completed"
+            self.jobs_repo.update(
+                job_id,
+                status=status,
+                done=updated,
+                total=total,
+                message=f"视觉属性提取完成：更新 {updated} 张，失败 {failed} 张",
+                summary={"updated": updated, "failed": failed},
+            )
+        except Exception as exc:
+            self.jobs_repo.update(
+                job_id,
+                status="failed",
+                done=updated,
+                total=total,
+                message="视觉属性提取失败",
+                error=str(exc),
+            )
+        finally:
+            if analyzer is not None:
+                analyzer.close()
+            release_accelerator()
+
+    def _execute_ccip(
+        self,
+        job_id: str,
+        *,
+        scope_row_ids: Sequence[int] | None = None,
+        skip_completed: bool = True,
+        limit: int | None = None,
+    ) -> None:
+        pending = self.task_state.pending_for_ccip(
+            scope_row_ids=scope_row_ids,
+            skip_completed=skip_completed,
+            limit=limit,
+        )
+        total = len(pending)
+        if total == 0:
+            self.jobs_repo.update(
+                job_id,
+                status="completed",
+                done=0,
+                total=0,
+                message="所有目标图片均已提取 CCIP 角色向量",
+                summary={"updated": 0, "failed": 0},
+            )
+            return
+
+        self.jobs_repo.update(
+            job_id,
+            status="running",
+            done=0,
+            total=total,
+            message=f"正在加载 CCIP 角色编码器（共 {total} 张待处理）…",
+        )
+        self._free_vram_for_worker()
+
+        extractor: CCIPExtractor | None = None
+        updated = 0
+        failed = 0
+        chunk_size = 16
+        try:
+            extractor = CCIPExtractor(self.config.embedding)
+            for start in range(0, total, chunk_size):
+                if self._wait_if_paused():
+                    break
+                chunk = pending[start : start + chunk_size]
+                loaded: list[tuple[int, str, str, Any, str | None]] = []
+                for img_id, pid, path_str, chash, crop_json in chunk:
+                    p = Path(path_str)
+                    if not p.is_file():
+                        failed += 1
+                        continue
+                    try:
+                        loaded.append((img_id, pid, chash, load_rgb(p), crop_json))
+                    except Exception:
+                        failed += 1
+                if not loaded:
+                    continue
+
+                feats = extractor.extract_batch([(item[3], item[4]) for item in loaded])
+                self.vectors.set_ccip_rows([item[0] for item in loaded], feats)
+                self.task_state.mark_ccip_done([(item[1], item[0], item[2]) for item in loaded])
+                updated += len(loaded)
+                if updated % 128 == 0:
+                    self.vectors.flush()
+                processed = min(total, start + len(chunk))
+                self.jobs_repo.update(
+                    job_id,
+                    done=processed,
+                    total=total,
+                    message=f"正在提取 CCIP 角色特征 {processed}/{total}",
+                )
+            if updated > 0:
+                self.vectors.flush()
+            status = "stopped" if self._stop_event.is_set() else "completed"
+            self.jobs_repo.update(
+                job_id,
+                status=status,
+                done=updated,
+                total=total,
+                message=f"CCIP 角色特征提取完成：更新 {updated} 张，失败 {failed} 张",
+                summary={"updated": updated, "failed": failed},
+            )
+        except Exception as exc:
+            self.jobs_repo.update(
+                job_id,
+                status="failed",
+                done=updated,
+                total=total,
+                message="CCIP 角色特征提取失败",
+                error=str(exc),
+            )
+        finally:
+            if extractor is not None:
+                extractor.close()
+            release_accelerator()
+
+    def retag_single_image(
+        self,
+        point_id: str,
+        *,
+        backend: str | None = None,
+    ) -> dict[str, Any]:
+        """Synchronously re-tag a single indexed image and refresh its descriptor vector."""
+        canon = normalize_tagger_backend(backend or self.config.tagger.backend)
+        payloads = self.images.get_payloads_by_point_ids([point_id], include_tags=False)
+        payload = payloads.get(point_id)
+        if payload is None:
+            raise KeyError(f"未找到图片：{point_id}")
+        img_id = int(payload["row_id"])
+        img_path = Path(str(payload["path"]))
+        if not img_path.is_file():
+            raise FileNotFoundError(f"图片文件不存在：{img_path}")
+
+        self._free_vram_for_worker()
+        tagger = build_tagger(self.config.tagger, self.config.embedding, backend=canon)
+        if tagger is None:
+            raise RuntimeError(f"无法初始化标签器 {canon}")
+        try:
+            pil = load_rgb(img_path)
+            pred = tagger.predict([pil])[0]
+            versions = dict(getattr(tagger, "model_versions", model_versions_for_backend(canon)))
+        finally:
+            tagger.close()
+            release_accelerator()
+
+        desc_text = self._build_descriptor_for_payload(
+            pred, payload, drop_overlap=self.config.tagger.drop_overlap
+        )
+        self.images.update_tags_and_descriptor_batch(
+            [(img_id, pred.tags, pred.scores, pred.categories, desc_text)]
+        )
+        self.task_state.mark_tag_models_done(
+            [(point_id, img_id, str(payload.get("content_hash") or ""))],
+            versions,
+            descriptor_done=True,
+        )
+        if desc_text.strip():
+            self._encode_and_flush_descriptors([(img_id, desc_text)])
+        if callable(self._on_caches_invalidated):
+            self._on_caches_invalidated()
+        refreshed = self.images.get_payloads_by_point_ids([point_id]).get(point_id)
+        return refreshed or payload

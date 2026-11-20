@@ -820,6 +820,36 @@ class CompositeTagger:
                 closer()
 
 
+def normalize_tagger_backend(backend: str | None) -> str:
+    """Resolve user/config tagger backend aliases to a canonical identifier."""
+    choice = str(backend or "camie+pixai0.9").strip().casefold()
+    if choice in {"camie+pixai0.9", "default", "ensemble"}:
+        return "camie+pixai0.9"
+    if choice in {"camie", "camie_v2", "camiev2"}:
+        return "camie"
+    if choice in {"pixai0.9", "pixai_v09", "pixai09"}:
+        return "pixai0.9"
+    if choice in {"pixai1.0", "pixai_v10", "pixai10"}:
+        return "pixai1.0"
+    if choice in {"wd", "wd_v3", "wd3"}:
+        return "wd_v3"
+    raise ValueError(f"未知标签器后端：{choice}")
+
+
+def model_versions_for_backend(backend: str | None) -> dict[str, int]:
+    """Return expected `{model_key: version}` map without instantiating model weights."""
+    canon = normalize_tagger_backend(backend)
+    if canon == "camie+pixai0.9":
+        return {"camie_v2": 1, "pixai_v09": 1}
+    if canon == "camie":
+        return {"camie_v2": 1}
+    if canon == "pixai0.9":
+        return {"pixai_v09": 1}
+    if canon == "pixai1.0":
+        return {"pixai_v10": 1}
+    return {"wd_v3": 1}
+
+
 def build_tagger(
     config: TaggerConfig,
     runtime: EmbeddingConfig,
@@ -829,8 +859,8 @@ def build_tagger(
     """Instantiate the configured tagger backend (or ensemble)."""
     if not config.enabled and backend is None:
         return None
-    choice = str(backend or config.backend or "camie+pixai0.9").strip().casefold()
-    if choice in {"camie+pixai0.9", "default", "ensemble"}:
+    canon = normalize_tagger_backend(backend or config.backend)
+    if canon == "camie+pixai0.9":
         return CompositeTagger(
             [
                 CamieTaggerV2(config, runtime),
@@ -838,12 +868,10 @@ def build_tagger(
             ],
             max_tags=config.max_tags,
         )
-    if choice in {"camie", "camie_v2", "camiev2"}:
+    if canon == "camie":
         return CamieTaggerV2(config, runtime)
-    if choice in {"pixai0.9", "pixai_v09", "pixai09"}:
+    if canon == "pixai0.9":
         return PixAITaggerV09(config, runtime)
-    if choice in {"pixai1.0", "pixai_v10", "pixai10"}:
+    if canon == "pixai1.0":
         return PixAITaggerV10(config, runtime)
-    if choice in {"wd", "wd_v3", "wd3"}:
-        return WDTagger(config, runtime)
-    raise ValueError(f"未知标签器后端：{choice}")
+    return WDTagger(config, runtime)
