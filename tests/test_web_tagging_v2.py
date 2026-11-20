@@ -690,7 +690,9 @@ class TestStageDSearchAndWebAPI(unittest.TestCase):
                 ).fetchone()
                 self.assertEqual(prov_leg["manual_tags_json"], '["keep_manual"]')
                 self.assertEqual(prov_leg["auto_tags_json"], "[]")
-                self.assertIsNone(prov_leg["auto_tagged_at"])
+                # Purge keeps the timestamp so the provenance auto-tagger does not
+                # rebuild the tags it just dropped.
+                self.assertIsNotNone(prov_leg["auto_tagged_at"])
 
                 src_leg = {
                     (r["tag"], r["origin"])

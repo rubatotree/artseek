@@ -1445,16 +1445,20 @@ class ImageRepo:
                     """,
                     (now, pids_json),
                 )
+                # Keep `auto_tagged_at` set: clearing it would re-arm the provenance
+                # auto-tagger, which then rebuilds legacy images' tags from the few
+                # images that already carry new-model tags — the very tags we just
+                # removed. Retagging re-syncs them per image afterwards.
                 tx.execute(
                     """
                     UPDATE image_source
                     SET auto_tags_json = '[]', auto_tag_scores_json = '{}',
-                        auto_tagged_at = NULL, updated_at = ?
+                        auto_tagged_at = COALESCE(auto_tagged_at, ?), updated_at = ?
                     WHERE point_id IN (SELECT value FROM json_each(?))
                       AND (COALESCE(auto_tags_json, '[]') NOT IN ('', '[]')
-                           OR auto_tagged_at IS NOT NULL)
+                           OR auto_tagged_at IS NULL)
                     """,
-                    (now, pids_json),
+                    (now, now, pids_json),
                 )
                 cur_src_tags = tx.execute(
                     """
