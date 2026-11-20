@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from ..core.scope import ImageScope
@@ -118,6 +120,18 @@ def normalize_folder_sort(sort: str | None) -> str:
     return value if value in SORT_KEYS else DEFAULT_SORT
 
 
+def fast_folder_key(value: str | Path, known_keys: set[str] | None = None) -> str:
+    """Normalize a folder key in-memory without filesystem syscalls when possible."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if not text.startswith("~") and os.path.isabs(text):
+        norm = os.path.normcase(os.path.normpath(text))
+        if known_keys is None or norm in known_keys:
+            return norm
+    return canonical_path(text)
+
+
 @dataclass
 class FolderTreeIndex:
     """Lightweight SQL-backed folder hierarchy (~600 folders, never scans 45k images)."""
@@ -136,7 +150,7 @@ class FolderTreeIndex:
         return set(self.nodes_by_key)
 
     def subtree_keys(self, folder_key: str) -> list[str]:
-        start = canonical_path(folder_key)
+        start = fast_folder_key(folder_key, self.all_keys)
         if start not in self.nodes_by_key:
             return []
         found: list[str] = []
@@ -202,7 +216,8 @@ class FolderTreeIndex:
         after_ns: int | None = None,
         before_ns: int | None = None,
     ) -> int:
-        selected_set = {canonical_path(key) for key in selected if key}
+        all_keys = self.all_keys
+        selected_set = {fast_folder_key(key, all_keys) for key in selected if key}
         if not selected_set:
             return 0
         if after_ns is None and before_ns is None:
@@ -217,7 +232,11 @@ class FolderTreeIndex:
 
 
 def build_folder_tree_from_db(images: ImageRepo) -> FolderTreeIndex:
-    """Build folder hierarchy & bottom-up totals using only the aggregated folders query."""
+    """Build folder hierarchy & bottom-up totals, cached by DB write generation."""
+    gen = images.db.write_generation
+    cached = getattr(images, "_cached_folder_tree", None)
+    if cached is not None and cached[0] == gen:
+        return cached[1]
     rows = images.list_folder_rows()
     by_id: dict[int, str] = {int(r["id"]): str(r["folder_key"]) for r in rows}
 
@@ -276,7 +295,7 @@ def build_folder_tree_from_db(images: ImageRepo) -> FolderTreeIndex:
     for node in nodes.values():
         node.children.clear()
 
-    return FolderTreeIndex(
+    tree = FolderTreeIndex(
         nodes_by_key=nodes,
         parent_by_key=parent_by_key,
         child_keys_by_key=child_keys_by_key,
@@ -286,20 +305,27 @@ def build_folder_tree_from_db(images: ImageRepo) -> FolderTreeIndex:
         root_keys=sorted(root_keys),
         image_count=total_images,
     )
+    images._cached_folder_tree = (gen, tree)  # type: ignore[attr-defined]
+    return tree
 
 
 def reconcile_scope_with_tree(
     images: ImageRepo, tree: FolderTreeIndex
 ) -> tuple[dict[str, Any], list[str]]:
-    """Reconcile persisted scope state against current DB folders without loading all images."""
+    """Reconcile persisted scope state against current DB folders without disk Path.resolve."""
+    gen = images.db.write_generation
+    cached = getattr(images, "_cached_reconciled_scope", None)
+    if cached is not None and cached[0] == gen:
+        return dict(cached[1]), list(cached[2])
+
     raw = images.load_scope_state()
     current = tree.all_keys
-    known = {canonical_path(k) for k in raw.get("known", ()) if k}
+    known = {fast_folder_key(k, current) for k in raw.get("known", ()) if k}
     new_keys = sorted(current - known) if known else []
     selected = [
-        canonical_path(k)
+        fk
         for k in raw.get("selected", ())
-        if k and canonical_path(k) in current
+        if k and (fk := fast_folder_key(k, current)) in current
     ]
     merged_known = sorted(known | current)
     sort = normalize_folder_sort(raw.get("sort"))
@@ -317,7 +343,7 @@ def reconcile_scope_with_tree(
     }
     raw_cmp = {
         "sort": raw.get("sort"),
-        "selected": [canonical_path(k) for k in raw.get("selected", ()) if k],
+        "selected": [fast_folder_key(k, current) for k in raw.get("selected", ()) if k],
         "known": sorted(known),
         "mtime_after": raw.get("mtime_after"),
         "mtime_before": raw.get("mtime_before"),
@@ -330,6 +356,11 @@ def reconcile_scope_with_tree(
             mtime_after=after,
             mtime_before=before,
         )
+    images._cached_reconciled_scope = (  # type: ignore[attr-defined]
+        images.db.write_generation,
+        merged,
+        new_keys,
+    )
     return merged, new_keys
 
 
@@ -337,9 +368,12 @@ def resolve_folder_keys_from_db(
     images: ImageRepo, explicit: Sequence[str] | None
 ) -> list[str]:
     """Resolve explicit folder keys (preserving empty `[]`) or fall back to persisted scope."""
+    tree = build_folder_tree_from_db(images)
+    all_keys = tree.all_keys
     if explicit is not None:
-        return [canonical_path(str(k)) for k in explicit if str(k).strip()]
-    return [canonical_path(k) for k in images.load_scope_state().get("selected", ()) if k]
+        return [fast_folder_key(str(k), all_keys) for k in explicit if str(k).strip()]
+    merged, _ = reconcile_scope_with_tree(images, tree)
+    return list(merged["selected"])
 
 
 def resolve_author_token(prov: ProvenanceRepo, value: str) -> str:

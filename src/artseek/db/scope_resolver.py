@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import random
 import re
+import threading
+from collections import OrderedDict
 from typing import Any
 
 import numpy as np
@@ -66,6 +68,8 @@ class ScopeResolver:
     def __init__(self, db: Database) -> None:
         self.db = db
         self._prov = ProvenanceRepo(db)
+        self._cache_lock = threading.Lock()
+        self._rows_cache: OrderedDict[tuple[int, ImageScope], np.ndarray] = OrderedDict()
 
     def _build_query_parts(
         self, scope: ImageScope
@@ -244,15 +248,30 @@ class ScopeResolver:
         """Return matching live `images.id` array, or `None` when completely unfiltered."""
         if scope.is_unfiltered:
             return None
+        cache_key = (self.db.write_generation, scope)
+        with self._cache_lock:
+            cached = self._rows_cache.get(cache_key)
+            if cached is not None:
+                self._rows_cache.move_to_end(cache_key)
+                return cached
         empty, ctes, where, params = self._build_query_parts(scope)
         if empty:
-            return np.empty(0, dtype=np.int64)
-        with_prefix = f"WITH {', '.join(ctes)} " if ctes else ""
-        sql = f"{with_prefix}SELECT i.id FROM images AS i WHERE {' AND '.join(where)} ORDER BY i.id"
-        cur = self.db.read_conn().cursor()
-        cur.row_factory = None
-        cur.execute(sql, tuple(params))
-        return np.fromiter((r[0] for r in cur), dtype=np.int64)
+            arr = np.empty(0, dtype=np.int64)
+        else:
+            with_prefix = f"WITH {', '.join(ctes)} " if ctes else ""
+            sql = (
+                f"{with_prefix}SELECT i.id FROM images AS i "
+                f"WHERE {' AND '.join(where)} ORDER BY i.id"
+            )
+            cur = self.db.read_conn().cursor()
+            cur.row_factory = None
+            cur.execute(sql, tuple(params))
+            arr = np.fromiter((r[0] for r in cur), dtype=np.int64)
+        with self._cache_lock:
+            self._rows_cache[cache_key] = arr
+            while len(self._rows_cache) > 32:
+                self._rows_cache.popitem(last=False)
+        return arr
 
     def resolve_rows(self, scope: ImageScope) -> np.ndarray | None:
         """Alias of `rows(scope)`."""
@@ -315,6 +334,38 @@ class ScopeResolver:
         cur.row_factory = None
 
         if order in {"mtime_desc", "mtime_asc"}:
+            has_selective_filter = bool(
+                scope.tags_all
+                or scope.tags_none
+                or scope.source_tags_all
+                or scope.source_tags_any
+                or scope.source_tag_text
+                or scope.tag_expression
+                or scope.author_keys
+                or scope.title_terms
+                or scope.collection_id
+                or scope.snapshot_ids is not None
+                or scope.restrict_point_ids is not None
+            )
+            if has_selective_filter:
+                # Unary + prevents SQLite from scanning all 45k rows of idx_images_mtime
+                # when a selective tag/author/collection index can drive the query in <5ms.
+                order_clause = (
+                    "+i.mtime_ns DESC, +i.id ASC"
+                    if order == "mtime_desc"
+                    else "+i.mtime_ns ASC, +i.id DESC"
+                )
+                all_rows = cur.execute(
+                    f"{with_prefix}SELECT i.id FROM images AS i WHERE {where_sql} "
+                    f"ORDER BY {order_clause}",
+                    tuple(params),
+                ).fetchall()
+                total = len(all_rows)
+                if offset >= total:
+                    return [], total, False, order, None
+                page_ids = [int(r[0]) for r in all_rows[offset : offset + limit]]
+                return page_ids, total, offset + len(page_ids) < total, order, None
+
             order_clause = (
                 "i.mtime_ns DESC, i.id ASC"
                 if order == "mtime_desc"

@@ -248,6 +248,59 @@ class ImageRepo:
                 result[img_id] = self._row_to_payload(row, tags_map.get(img_id))
         return result
 
+    def get_ranking_candidates(
+        self,
+        row_ids: Sequence[int],
+        plan_tags: Sequence[str] = (),
+        *,
+        include_dedupe_meta: bool = False,
+    ) -> dict[int, dict[str, Any]]:
+        """Lightweight metadata fetch for RRF ranking before hydrating the top page."""
+        unique = [int(r) for r in dict.fromkeys(row_ids)]
+        if not unique:
+            return {}
+        conn = self.db.read_conn()
+        result: dict[int, dict[str, Any]] = {
+            rid: {"row_id": rid, "id": str(rid), "point_id": str(rid), "tags": []}
+            for rid in unique
+        }
+        clean_tags = sorted({normalize_tag(t) for t in plan_tags if normalize_tag(t)})
+        if clean_tags:
+            tag_marks = ",".join("?" for _ in clean_tags)
+            rows = conn.execute(
+                f"""
+                SELECT it.image_id, t.name
+                FROM image_tags AS it
+                JOIN tags AS t ON t.id = it.tag_id
+                WHERE t.name IN ({tag_marks})
+                  AND it.image_id IN (SELECT value FROM json_each(?))
+                """,
+                (*clean_tags, json.dumps(unique)),
+            ).fetchall()
+            for r in rows:
+                entry = result.get(int(r["image_id"]))
+                if entry is not None:
+                    entry["tags"].append(str(r["name"]))
+
+        if include_dedupe_meta:
+            rows = conn.execute(
+                """
+                SELECT id, content_hash, phash, size_bytes, width, height
+                FROM images
+                WHERE deleted = 0 AND id IN (SELECT value FROM json_each(?))
+                """,
+                (json.dumps(unique),),
+            ).fetchall()
+            for r in rows:
+                entry = result.get(int(r["id"]))
+                if entry is not None:
+                    entry["content_hash"] = str(r["content_hash"])
+                    entry["phash"] = str(r["phash"])
+                    entry["size_bytes"] = int(r["size_bytes"])
+                    entry["width"] = int(r["width"])
+                    entry["height"] = int(r["height"])
+        return result
+
     def get_payloads_by_point_ids(
         self, point_ids: Sequence[str], *, include_tags: bool = True
     ) -> dict[str, dict[str, Any]]:

@@ -1,0 +1,186 @@
+"""Artist directory, author gallery, author images, and identity management routes."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, Depends, Query
+
+from ..deps import AppContainer, get_container
+from ..schemas import (
+    ArtistCoverRequest,
+    ArtistGalleryRequest,
+    ArtistIdentityRemoveRequest,
+    ArtistIdentityRequest,
+    ArtistImagesRequest,
+    ArtistMergeRequest,
+    ArtistNameRequest,
+    SuggestionRequest,
+)
+
+router = APIRouter()
+
+
+@router.get("/api/authors")
+def list_authors(
+    q: str = "",
+    limit: int = 40,
+    offset: int = 0,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.artists.list_authors(q=q, limit=limit, offset=offset)
+
+
+@router.post("/api/authors")
+def list_authors_post(
+    request: SuggestionRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.artists.list_authors(
+        q=request.q,
+        limit=request.limit,
+        offset=request.offset,
+        folder_keys=request.folder_keys,
+        mtime_after=request.mtime_after,
+        mtime_before=request.mtime_before,
+    )
+
+
+@router.get("/api/authors/{author_key}")
+def get_author(
+    author_key: str,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.artists.get_author(author_key)
+
+
+@router.post("/api/authors/{author_key}")
+def get_scoped_author(
+    author_key: str,
+    request: SuggestionRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.artists.get_author(
+        author_key,
+        folder_keys=request.folder_keys,
+        mtime_after=request.mtime_after,
+        mtime_before=request.mtime_before,
+    )
+
+
+@router.get("/api/authors/{author_key}/images")
+def author_images(
+    author_key: str,
+    limit: int = 40,
+    offset: int = Query(default=0, ge=0, le=50_000),
+    sort: str = "mtime_desc",
+    seed: int | None = None,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.artists.author_images(
+        author_key,
+        limit=limit,
+        offset=offset,
+        sort=sort,
+        seed=seed,
+    )
+
+
+@router.post("/api/artists/gallery")
+def artist_gallery(
+    request: ArtistGalleryRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.artists.artists_gallery(
+        q=request.q,
+        sort=request.sort,
+        include_unassigned=request.include_unassigned,
+        offset=request.offset,
+        limit=request.limit,
+        image_limit=request.image_limit,
+        image_sort=request.image_sort,
+        image_seed=request.image_seed,
+        snapshot_id=request.snapshot_id,
+        folder_keys=request.folder_keys,
+        mtime_after=request.mtime_after,
+        mtime_before=request.mtime_before,
+        collection_id=request.collection_id,
+        author_keys=request.author_keys,
+        title_query=request.title_query,
+        text_tags=request.text_tags,
+        tag_expression=request.tag_expression,
+    )
+
+
+@router.post("/api/artists/{author_key}/images")
+def scoped_artist_images(
+    author_key: str,
+    request: ArtistImagesRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.artists.scoped_artist_images(
+        author_key,
+        sort=request.sort,
+        seed=request.seed,
+        offset=request.offset,
+        limit=request.limit,
+        snapshot_id=request.snapshot_id,
+        folder_keys=request.folder_keys,
+        mtime_after=request.mtime_after,
+        mtime_before=request.mtime_before,
+        collection_id=request.collection_id,
+        author_keys=request.author_keys,
+        title_query=request.title_query,
+        text_tags=request.text_tags,
+        tag_expression=request.tag_expression,
+    )
+
+
+@router.post("/api/authors/{author_key}/identities")
+def add_author_identity(
+    author_key: str,
+    request: ArtistIdentityRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.artists.add_identity(
+        author_key,
+        kind=request.kind,
+        value=request.value,
+        label=request.label,
+    )
+
+
+@router.post("/api/authors/{author_key}/name")
+def rename_author(
+    author_key: str,
+    request: ArtistNameRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.artists.rename_author(author_key, request.name)
+
+
+@router.post("/api/authors/{author_key}/identities/remove")
+def remove_author_identity(
+    author_key: str,
+    request: ArtistIdentityRemoveRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.artists.remove_identity(author_key, request.kind, request.value)
+
+
+@router.post("/api/authors/{author_key}/cover")
+def set_artist_cover(
+    author_key: str,
+    request: ArtistCoverRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.artists.set_cover(author_key, request.point_id)
+
+
+@router.post("/api/authors/{author_key}/merge")
+def merge_author(
+    author_key: str,
+    request: ArtistMergeRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.artists.merge_author(author_key, request.source)

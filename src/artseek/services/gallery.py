@@ -12,7 +12,6 @@ from ..core.tag_dictionary import search_tags, tag_info
 from ..db.repos.images import ImageRepo
 from ..db.repos.provenance import ProvenanceRepo
 from ..db.scope_resolver import ScopeResolver
-from ..image_io import canonical_path
 from ..library import (
     DEFAULT_SORT,
     SORT_KEYS,
@@ -27,6 +26,7 @@ from .common import (
     ServiceError,
     attach_provenance,
     build_folder_tree_from_db,
+    fast_folder_key,
     gallery_result,
     normalize_folder_sort,
     reconcile_scope_with_tree,
@@ -119,9 +119,9 @@ class GalleryService:
         current = tree.all_keys
         norm_sort = normalize_folder_sort(sort)
         cleaned_selected = [
-            canonical_path(k)
+            fk
             for k in selected
-            if k and canonical_path(k) in current
+            if k and (fk := fast_folder_key(k, current)) in current
         ]
         after = normalize_day(mtime_after)
         before = normalize_day(mtime_before)
@@ -210,8 +210,8 @@ class GalleryService:
         author_key: str | None = None,
         seed: int | None = None,
     ) -> dict[str, Any]:
-        key = canonical_path(folder_key)
         tree = build_folder_tree_from_db(self.images)
+        key = fast_folder_key(folder_key, tree.all_keys)
         node = tree.nodes_by_key.get(key)
         if node is None:
             raise ServiceError(404, "该目录不在索引中")
@@ -385,7 +385,7 @@ class GalleryService:
         )
         return self.resolver.point_ids(
             ImageScope(
-                folders=tuple(canonical_path(k) for k in folder_keys if k),
+                folders=tuple(fast_folder_key(k) for k in folder_keys if k),
                 folder_recursive=False,
                 time_range=time_range,
             )

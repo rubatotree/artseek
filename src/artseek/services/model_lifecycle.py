@@ -16,8 +16,13 @@ from ..config import (
     save_auto_unload_seconds,
 )
 from ..ml.llm import OllamaClient, OllamaUnavailable
-from ..models.embedder import SiglipEmbedder
 from ..vectors.index import VectorIndex
+
+
+def _default_embedder(config: AppConfig) -> Any:
+    from ..models.embedder import SiglipEmbedder
+
+    return SiglipEmbedder(config.embedding)
 
 
 class ModelLifecycle:
@@ -34,7 +39,7 @@ class ModelLifecycle:
         auto_unload_seconds: int | None = None,
     ) -> None:
         self.config = config
-        self._embedder_factory = embedder_factory or (lambda: SiglipEmbedder(config.embedding))
+        self._embedder_factory = embedder_factory or (lambda: _default_embedder(config))
         self.llm = llm if llm is not None else OllamaClient(config.llm)
         self.vectors = vectors
         self._on_dimension_known = on_dimension_known

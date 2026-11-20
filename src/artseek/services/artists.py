@@ -16,7 +16,6 @@ from ..db.repos.collections import CollectionRepo
 from ..db.repos.images import ImageRepo
 from ..db.repos.provenance import ProvenanceRepo
 from ..db.scope_resolver import ScopeResolver
-from ..image_io import canonical_path
 from ..library import day_end_ns, day_start_ns, natural_key
 from ..provenance.store import (
     UNASSIGNED_AUTHOR_KEY,
@@ -24,7 +23,13 @@ from ..provenance.store import (
     normalize_xiaohongshu_user_id,
 )
 from ..search_cache import SearchSnapshotStore, is_snapshot_id
-from .common import ServiceError, attach_provenance, gallery_result, resolve_author_token
+from .common import (
+    ServiceError,
+    attach_provenance,
+    fast_folder_key,
+    gallery_result,
+    resolve_author_token,
+)
 
 ARTIST_SORT_KEYS = (
     "name_asc",
@@ -108,7 +113,7 @@ class ArtistService:
         )
         return self.resolver.point_ids(
             ImageScope(
-                folders=tuple(canonical_path(k) for k in folder_keys if k),
+                folders=tuple(fast_folder_key(k) for k in folder_keys if k),
                 folder_recursive=False,
                 time_range=time_range,
             )
@@ -353,7 +358,7 @@ class ArtistService:
 
         img_scope = ImageScope(
             folders=(
-                tuple(canonical_path(k) for k in folder_keys if k)
+                tuple(fast_folder_key(k) for k in folder_keys if k)
                 if folder_keys is not None
                 else None
             ),

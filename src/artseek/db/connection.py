@@ -21,6 +21,7 @@ class Database:
         self._connections: set[sqlite3.Connection] = set()
         self._write_lock = threading.RLock()
         self._closed = False
+        self.write_generation: int = 0
         self._initialize_schema()
 
     def _initialize_schema(self) -> None:
@@ -76,6 +77,7 @@ class Database:
             else:
                 if conn.in_transaction:
                     conn.execute("COMMIT")
+                self.write_generation += 1
 
     def checkpoint(self) -> None:
         """Flush WAL pages back into the main database file."""
@@ -89,6 +91,7 @@ class Database:
             self.close()
             self.path = Path(new_path)
             self._closed = False
+            self.write_generation += 1
             self._initialize_schema()
 
     def close(self) -> None:

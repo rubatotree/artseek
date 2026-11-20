@@ -98,3 +98,4 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/artseek/web/app.py" = ["B008"]
+"src/artseek/api/routers/*.py" = ["B008"]

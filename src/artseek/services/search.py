@@ -22,7 +22,6 @@ from ..db.repos.images import ImageRepo
 from ..db.repos.provenance import ProvenanceRepo
 from ..db.repos.query_cache import QueryPlanCacheRepo
 from ..db.scope_resolver import ScopeResolver
-from ..image_io import canonical_path
 from ..library import day_end_ns, day_start_ns
 from ..ml.llm import OllamaUnavailable
 from ..search_cache import SearchSnapshotStore, is_snapshot_id
@@ -30,6 +29,7 @@ from ..vectors.index import VectorIndex
 from .common import (
     ServiceError,
     attach_provenance,
+    fast_folder_key,
     gallery_result,
     resolve_author_token,
     resolve_folder_keys_from_db,
@@ -441,7 +441,7 @@ class SearchService:
         )
 
         scope = ImageScope(
-            folders=tuple(canonical_path(k) for k in resolved_folders)
+            folders=tuple(fast_folder_key(k) for k in resolved_folders)
             if resolved_folders is not None
             else None,
             folder_recursive=False,
@@ -604,16 +604,20 @@ class SearchService:
         )
         excluded_row_ids = set(excluded_row_map.values())
         all_fetch_rows = list(dict.fromkeys([*cand_rows, *excluded_row_ids]))
-        row_payloads = self.images.get_payloads_by_ids(all_fetch_rows)
+        cand_payloads = self.images.get_ranking_candidates(
+            all_fetch_rows,
+            [*plan.positive_tags, *plan.negative_tags],
+            include_dedupe_meta=dedupe,
+        )
         excluded_payloads = [
-            row_payloads[rid] for rid in excluded_row_ids if rid in row_payloads
+            cand_payloads[rid] for rid in excluded_row_ids if rid in cand_payloads
         ]
 
         desc_weight = self.config.search.descriptor_weight if descriptor_hits else 0.0
-        items, has_more = fuse_and_rank(
+        raw_items, has_more = fuse_and_rank(
             visual_hits,
             descriptor_hits,
-            payloads=row_payloads,
+            payloads=cand_payloads,
             plan=plan,
             descriptor_weight=desc_weight,
             keyword_bonus=self.config.search.keyword_bonus,
@@ -624,6 +628,22 @@ class SearchService:
             limit=page_limit,
             offset=page_offset,
         )
+        win_rids = [int(item["id"]) for item in raw_items]
+        full_payloads = self.images.get_payloads_by_ids(win_rids)
+        items: list[dict[str, Any]] = []
+        for item in raw_items:
+            rid = int(item["id"])
+            payload = full_payloads.get(rid)
+            if payload is None:
+                continue
+            item["id"] = str(payload.get("point_id") or payload.get("id") or rid)
+            item["path"] = str(payload.get("path", ""))
+            item["name"] = str(payload.get("name", ""))
+            item["width"] = int(payload.get("width", 0))
+            item["height"] = int(payload.get("height", 0))
+            item["tags"] = list(payload.get("tags", []))
+            item["caption"] = payload.get("caption")
+            items.append(item)
         items = attach_provenance(self.prov, items)
         result_out: dict[str, Any] = {
             "query_plan": dataclasses.asdict(plan),

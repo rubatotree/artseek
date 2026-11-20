@@ -1,3 +1,5 @@
+"""CLI entrypoints for ArtSeek (v2 SQLite + VectorIndex + M1 migrate-v1 + compact)."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -5,20 +7,25 @@ import json
 import shutil
 from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
+import numpy as np
 import torch
 import typer
 from rich.console import Console
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
 from rich.table import Table
 
+from .api.deps import AppContainer
 from .compute import cuda_mismatch_hint, describe_runtime
 from .config import AppConfig, default_config_path, load_config, write_default_config
+from .db.connection import Database
+from .db.repos.images import ImageRepo
+from .db.repos.provenance import ProvenanceRepo
 from .image_io import canonical_path
 from .indexer import ImageIndexer
 from .library import index_roots_from_scope, load_catalog, load_scope, root_image_counts
-from .llm import OllamaClient
+from .ml.llm import OllamaClient
 from .model_manager import pull_models
 from .provenance import (
     PIXIV_DOMAIN,
@@ -30,7 +37,9 @@ from .provenance import (
 )
 from .search import SearchEngine
 from .server_output import server_output
+from .services.common import build_folder_tree_from_db
 from .store import VectorStore
+from .vectors.index import VectorIndex
 
 app = typer.Typer(
     name="artseek",
@@ -44,6 +53,25 @@ app.add_typer(provenance_app, name="provenance")
 
 def _config(path: Path | None) -> AppConfig:
     return load_config(path or default_config_path())
+
+
+def _has_v2_db(cfg: AppConfig) -> bool:
+    return cfg.db_path.is_file()
+
+
+def _has_legacy_qdrant(cfg: AppConfig) -> bool:
+    return (cfg.qdrant_path / "storage.sqlite").is_file()
+
+
+def _warn_if_only_v1(cfg: AppConfig) -> bool:
+    """Return True when only v1 Qdrant exists and v2 SQLite has not been migrated yet."""
+    if not _has_v2_db(cfg) and _has_legacy_qdrant(cfg):
+        console.print(
+            "[yellow]检测到 v1 Qdrant 索引但尚未迁移到 v2 SQLite，"
+            "请先运行 `artseek migrate-v1`（只读迁移，保留全部 v1 文件）。[/yellow]"
+        )
+        return True
+    return False
 
 
 @app.command("init")
@@ -100,6 +128,7 @@ def _run_index(
             TimeRemainingColumn(),
             console=console,
         ) as progress:
+
             def update(done: int, total: int, root: str) -> None:
                 if root not in progress_state:
                     progress_state[root] = progress.add_task(
@@ -184,12 +213,40 @@ def rebuild_command(
     _run_index(cfg, directories, force=True, captions=captions, recursive=True)
 
 
-def _print_results(response: object) -> None:
-    data = asdict(response)  # type: ignore[arg-type]
-    plan = data["query_plan"]
-    if plan["positive_tags"]:
+@app.command("compact")
+def compact_command(
+    config: Annotated[Path | None, typer.Option("--config", "-c")] = None,
+) -> None:
+    """压缩已删除的向量矩阵行并整理连续 0-based 行号。"""
+    cfg = _config(config)
+    if not _has_v2_db(cfg):
+        console.print("[red]未找到 v2 数据库 artseek.sqlite3，请先运行 migrate-v1 或 index。[/red]")
+        raise typer.Exit(code=1)
+    db = Database(cfg.db_path)
+    try:
+        images = ImageRepo(db)
+        old_ids = images.compact_ids()
+        vectors = VectorIndex(
+            cfg.visual_vectors_path,
+            cfg.descriptor_vectors_path,
+            active_rows=np.arange(len(old_ids), dtype=np.int64),
+        )
+        before = vectors.count
+        remaining = vectors.compact(old_ids)
+        vectors.release_cuda()
+        reclaimed = max(0, before - remaining)
+        console.print(
+            f"[green]压缩完成：[/green]保留 {remaining} 行有效向量，回收 {reclaimed} 个空槽。"
+        )
+    finally:
+        db.close()
+
+
+def _print_results(data: dict[str, Any]) -> None:
+    plan = data.get("query_plan") or {}
+    if plan.get("positive_tags"):
         console.print("细节标签：" + ", ".join(plan["positive_tags"]))
-    if plan["negative_tags"]:
+    if plan.get("negative_tags"):
         console.print("排除标签：" + ", ".join(plan["negative_tags"]))
     if data.get("llm_warning"):
         console.print(f"[yellow]已使用内置词典：{data['llm_warning']}[/yellow]")
@@ -198,12 +255,14 @@ def _print_results(response: object) -> None:
     table.add_column("尺寸")
     table.add_column("文件")
     table.add_column("命中细节")
-    for result in data["results"]:
+    for result in data.get("results") or []:
+        score = result.get("score")
+        score_str = f"{score:.1f}" if isinstance(score, (int, float)) else "-"
         table.add_row(
-            f"{result['score']:.1f}",
+            score_str,
             f"{result['width']}×{result['height']}",
             result["path"],
-            ", ".join(result["tag_hits"]),
+            ", ".join(result.get("tag_hits") or []),
         )
     console.print(table)
 
@@ -220,32 +279,64 @@ def provenance_scan_command(
 ) -> None:
     """只读扫描文件名和嵌入元信息，不访问网络。"""
     cfg = _config(config)
-    store = ProvenanceStore(cfg.provenance_path)
-    vectors = VectorStore(cfg)
-    try:
-        with Progress(
-            TextColumn("{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TimeRemainingColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("扫描来源", total=max(vectors.count(), 1))
-            summary = scan_payloads(
-                store,
-                vectors.iter_payloads(),
-                total=vectors.count(),
-                deep=deep,
-                only_new=only_new,
-                progress=lambda done, total, label: progress.update(
-                    task,
-                    completed=done,
-                    total=max(total, 1),
-                    description=f"扫描 {Path(label).name or ''}",
-                ),
-            )
-    finally:
-        vectors.close()
+    if _has_v2_db(cfg):
+        db = Database(cfg.db_path)
+        try:
+            images = ImageRepo(db)
+            prov = ProvenanceRepo(db)
+            total = images.count()
+            with Progress(
+                TextColumn("{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeRemainingColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("扫描来源", total=max(total, 1))
+                summary = scan_payloads(
+                    prov,
+                    images.iter_scan_payloads(),
+                    total=total,
+                    deep=deep,
+                    only_new=only_new,
+                    progress=lambda done, tot, label: progress.update(
+                        task,
+                        completed=done,
+                        total=max(tot, 1),
+                        description=f"扫描 {Path(label).name or ''}",
+                    ),
+                )
+        finally:
+            db.close()
+    else:
+        if _warn_if_only_v1(cfg):
+            raise typer.Exit(code=1)
+        store = ProvenanceStore(cfg.provenance_path)
+        vectors = VectorStore(cfg)
+        try:
+            with Progress(
+                TextColumn("{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeRemainingColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("扫描来源", total=max(vectors.count(), 1))
+                summary = scan_payloads(
+                    store,
+                    vectors.iter_payloads(),
+                    total=vectors.count(),
+                    deep=deep,
+                    only_new=only_new,
+                    progress=lambda done, total, label: progress.update(
+                        task,
+                        completed=done,
+                        total=max(total, 1),
+                        description=f"扫描 {Path(label).name or ''}",
+                    ),
+                )
+        finally:
+            vectors.close()
     table = Table(title="来源扫描完成")
     table.add_column("扫描")
     table.add_column("识别")
@@ -273,54 +364,66 @@ def provenance_enrich_command(
 ) -> None:
     """按域名限速补全已识别的 Pixiv/X 来源。"""
     cfg = _config(config)
-    store = ProvenanceStore(cfg.provenance_path)
-    platforms = tuple(platform or ("pixiv", "twitter"))
-    records = store.pending_records(platforms=platforms, limit=limit)
-    if dry_run:
-        console.print(f"待补全：{len(records)} 条")
-        return
-    if not records:
-        console.print("没有待补全的来源。先运行 `artseek provenance scan`。")
-        return
-    service = ProvenanceService(
-        store,
-        pixiv_limiter=RateLimiter(
-            store,
-            PIXIV_DOMAIN,
-            min_interval=max(0.0, cfg.provenance.pixiv_min_interval),
-            daily_limit=cfg.provenance.pixiv_daily_limit,
-            concurrency=max(1, cfg.provenance.pixiv_concurrency),
-        ),
-        twitter_limiter=RateLimiter(
-            store,
-            TWITTER_DOMAIN,
-            min_interval=max(0.0, cfg.provenance.twitter_min_interval),
-            daily_limit=cfg.provenance.twitter_daily_limit,
-            concurrency=max(1, cfg.provenance.twitter_concurrency),
-        ),
-    )
+    db: Database | None = None
+    store: Any
+    if _has_v2_db(cfg):
+        db = Database(cfg.db_path)
+        store = ProvenanceRepo(db)
+    else:
+        if _warn_if_only_v1(cfg):
+            raise typer.Exit(code=1)
+        store = ProvenanceStore(cfg.provenance_path)
     try:
-        with Progress(
-            TextColumn("{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TimeRemainingColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("补全来源", total=len(records))
-            summary = service.enrich_records(
-                records,
-                limit=limit,
-                progress=lambda done, total, label: progress.update(
-                    task, completed=done, total=max(total, 1), description=f"补全 {label or ''}"
-                ),
-            )
+        platforms = tuple(platform or ("pixiv", "twitter"))
+        records = store.pending_records(platforms=platforms, limit=limit)
+        if dry_run:
+            console.print(f"待补全：{len(records)} 条")
+            return
+        if not records:
+            console.print("没有待补全的来源。先运行 `artseek provenance scan`。")
+            return
+        service = ProvenanceService(
+            store,
+            pixiv_limiter=RateLimiter(
+                store,
+                PIXIV_DOMAIN,
+                min_interval=max(0.0, cfg.provenance.pixiv_min_interval),
+                daily_limit=cfg.provenance.pixiv_daily_limit,
+                concurrency=max(1, cfg.provenance.pixiv_concurrency),
+            ),
+            twitter_limiter=RateLimiter(
+                store,
+                TWITTER_DOMAIN,
+                min_interval=max(0.0, cfg.provenance.twitter_min_interval),
+                daily_limit=cfg.provenance.twitter_daily_limit,
+                concurrency=max(1, cfg.provenance.twitter_concurrency),
+            ),
+        )
+        try:
+            with Progress(
+                TextColumn("{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeRemainingColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("补全来源", total=len(records))
+                summary = service.enrich_records(
+                    records,
+                    limit=limit,
+                    progress=lambda done, total, label: progress.update(
+                        task, completed=done, total=max(total, 1), description=f"补全 {label or ''}"
+                    ),
+                )
+        finally:
+            service.close()
+        console.print(
+            f"完成：成功 {summary['ok']}，失败 {summary['failed']}"
+            + ("，已暂停" if summary.get("stopped") else "")
+        )
     finally:
-        service.close()
-    console.print(
-        f"完成：成功 {summary['ok']}，失败 {summary['failed']}"
-        + ("，已暂停" if summary.get("stopped") else "")
-    )
+        if db is not None:
+            db.close()
 
 
 @app.command("search")
@@ -334,7 +437,6 @@ def search_command(
     text_weight: Annotated[
         float,
         typer.Option("--text-weight", min=0.0, max=8.0, help="文字在混合查询中的权重，默认 1"),
-    
     ] = 1.0,
     no_llm: Annotated[
         bool, typer.Option("--no-llm", help="不调用 Ollama，仅用内置词典扩展")
@@ -348,7 +450,32 @@ def search_command(
     json_output: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     """用自然语言、关键词，或参考图加文字组合查询。"""
-    engine = SearchEngine(_config(config))
+    cfg = _config(config)
+    if _has_v2_db(cfg):
+        container = AppContainer(cfg)
+        try:
+            data = container.search.search(
+                query=query,
+                upload_paths=image or (),
+                text_weight=text_weight,
+                limit=min(limit, 200),
+                expand=not no_llm,
+                wait_for_llm=not no_llm,
+                use_persisted_scope=False,
+                strict_tags=strict_tags,
+                dedupe=dedupe,
+            )
+        finally:
+            container.close()
+        if json_output:
+            console.print_json(json.dumps(data, ensure_ascii=False))
+        else:
+            _print_results(data)
+        return
+
+    if _warn_if_only_v1(cfg):
+        raise typer.Exit(code=1)
+    engine = SearchEngine(cfg)
     try:
         response = engine.search(
             query,
@@ -359,12 +486,13 @@ def search_command(
             strict_tags=strict_tags,
             dedupe=dedupe,
         )
+        data = asdict(response)
     finally:
         engine.close()
     if json_output:
-        console.print_json(json.dumps(asdict(response), ensure_ascii=False))
+        console.print_json(json.dumps(data, ensure_ascii=False))
     else:
-        _print_results(response)
+        _print_results(data)
 
 
 @app.command("similar")
@@ -374,12 +502,30 @@ def similar_command(
     limit: Annotated[int, typer.Option("--limit", "-n", min=1, max=500)] = 40,
 ) -> None:
     """以图搜图。"""
-    engine = SearchEngine(_config(config))
+    cfg = _config(config)
+    if _has_v2_db(cfg):
+        container = AppContainer(cfg)
+        try:
+            data = container.search.search(
+                upload_paths=[image],
+                limit=min(limit, 200),
+                expand=False,
+                use_persisted_scope=False,
+            )
+        finally:
+            container.close()
+        _print_results(data)
+        return
+
+    if _warn_if_only_v1(cfg):
+        raise typer.Exit(code=1)
+    engine = SearchEngine(cfg)
     try:
         response = engine.similar(image, limit=limit)
+        data = asdict(response)
     finally:
         engine.close()
-    _print_results(response)
+    _print_results(data)
 
 
 @app.command("serve")
@@ -393,12 +539,14 @@ def serve_command(
 ) -> None:
     """启动只监听本机的可视化图库界面。模型在首次检索时载入。"""
     cfg = _config(config)
+    if _warn_if_only_v1(cfg):
+        raise typer.Exit(code=1)
     with server_output(cfg.data_dir):
         try:
             import uvicorn
         except ImportError as exc:
             raise typer.BadParameter('缺少网页依赖，请执行：pip install -e ".[web]"') from exc
-        from .web.app import create_app
+        from .api.app import create_app
 
         mismatch = cuda_mismatch_hint()
         if mismatch:
@@ -429,8 +577,22 @@ def _print_root_counts(rows: list[tuple[str, int]]) -> None:
 def stats_command(
     config: Annotated[Path | None, typer.Option("--config", "-c")] = None,
 ) -> None:
-    """显示本地索引概况。优先读目录缓存，不打开向量库。"""
+    """显示本地索引概况（优先使用 v2 SQLite 快速统计）。"""
     cfg = _config(config)
+    if _has_v2_db(cfg):
+        db = Database(cfg.db_path)
+        try:
+            images = ImageRepo(db)
+            rows = images.root_image_counts()
+            _print_root_counts(rows)
+            tree = build_folder_tree_from_db(images)
+            console.print(f"目录数：{len(tree.nodes_by_key)}")
+        finally:
+            db.close()
+        return
+
+    if _warn_if_only_v1(cfg):
+        return
     catalog = load_catalog(cfg.folder_catalog_path)
     if catalog is not None:
         _print_root_counts(root_image_counts(catalog))
@@ -445,17 +607,13 @@ def stats_command(
             console.print("根据界面选择缓存，索引根目录可能是：")
             for root in roots:
                 console.print(f"         {root}")
-        console.print(
-            "若网页服务正在运行，等目录树加载完成后会生成 folder_catalog.json，"
-            "之后 stats 可立即返回。"
-        )
         return
     try:
-        roots: dict[str, int] = {}
+        roots_count: dict[str, int] = {}
         for _, payload in store.iter_folder_payloads():
             root = str(payload.get("root") or payload.get("root_key") or "未知目录")
-            roots[root] = roots.get(root, 0) + 1
-        _print_root_counts(sorted(roots.items()))
+            roots_count[root] = roots_count.get(root, 0) + 1
+        _print_root_counts(sorted(roots_count.items()))
     finally:
         store.close()
 
@@ -478,11 +636,9 @@ def doctor_command(
     checks = [
         ("配置文件", str(config_path), config_path.exists()),
         ("数据目录", str(cfg.data_dir), cfg.data_dir.exists()),
-        (
-            "CUDA",
-            cuda_detail,
-            cuda_available,
-        ),
+        ("v2 SQLite", str(cfg.db_path), _has_v2_db(cfg)),
+        ("v2 向量矩阵", str(cfg.visual_vectors_path), cfg.visual_vectors_path.is_file()),
+        ("CUDA", cuda_detail, cuda_available),
         ("插画标签器", "timm", importlib.util.find_spec("timm") is not None),
         (
             "网页界面",

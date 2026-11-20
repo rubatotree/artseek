@@ -10,8 +10,6 @@ from typing import Any, Literal
 
 import numpy as np
 
-from ..compute import release_accelerator
-
 Channel = Literal["visual", "descriptor"]
 
 
@@ -306,6 +304,8 @@ class VectorIndex:
             self._cuda_descriptor = None
             self._cuda_device = None
         if had_cuda:
+            from ..compute import release_accelerator
+
             release_accelerator()
 
     def visual_vectors(self, row_ids: Sequence[int] | np.ndarray) -> dict[int, np.ndarray]:
