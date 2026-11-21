@@ -607,7 +607,11 @@ class ArtistService:
                     True,
                     False,
                 )
-            elif explicit and explicit.get("source") != "upload" and explicit.get("identity") in live_meta:
+            elif (
+                explicit
+                and explicit.get("source") != "upload"
+                and explicit.get("identity") in live_meta
+            ):
                 cid = explicit["identity"]
                 blurred = scope is not None and cid not in scope
                 fetch_ids.append(cid)
@@ -840,7 +844,10 @@ class ArtistService:
             raise ServiceError(400, "图片文件过大（上限 20 MB）")
         summary = self.prov.author_summary(author_key)
         if summary is None or str(author_key).casefold() == UNASSIGNED_AUTHOR_KEY:
-            raise ServiceError(404 if summary is None else 400, "作者不存在" if summary is None else "无画师不能上传图片")
+            raise ServiceError(
+                404 if summary is None else 400,
+                "作者不存在" if summary is None else "无画师不能上传图片",
+            )
         canonical = str(summary["key"])
         try:
             with Image.open(io.BytesIO(raw_bytes)) as img:

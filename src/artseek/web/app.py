@@ -16,14 +16,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from PIL import Image, ImageOps, UnidentifiedImageError
-
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from ..api.app import create_app as create_v2_app
-from ..services.common import normalize_ratings, rating_matches
 from ..api.schemas import (
     ArtistCoverRequest,
     ArtistGalleryRequest,
@@ -127,6 +125,7 @@ from ..provenance import (
 from ..query import QueryPlan
 from ..search import SearchEngine
 from ..search_cache import SearchSnapshotStore, is_snapshot_id
+from ..services.common import normalize_ratings, rating_matches
 from ..store import VectorStore
 from ..tag_dictionary import expand_tag_aliases, search_tags, tag_info
 from ..tag_query import (
@@ -3197,7 +3196,10 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                         pool,
                         key=lambda pid: (
                             _cover_rating_rank(payloads[pid].get("rating")),
-                            -(int(payloads[pid].get("width") or 0) * int(payloads[pid].get("height") or 0)),
+                            -(
+                                int(payloads[pid].get("width") or 0)
+                                * int(payloads[pid].get("height") or 0)
+                            ),
                             pid,
                         ),
                     )

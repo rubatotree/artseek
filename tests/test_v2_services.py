@@ -563,7 +563,9 @@ class V2ServicesTests(unittest.TestCase):
             name="しらたま",
             avatar_url="https://i.pximg.net/user-profile/img/old.jpg",
         )
-        tw_member = self.prov_repo.ensure_author("twitter", "shiratamacaron", handle="shiratamacaron")
+        tw_member = self.prov_repo.ensure_author(
+            "twitter", "shiratamacaron", handle="shiratamacaron"
+        )
         self.prov_repo.link_authors(tw_member, px_artist, evidence="pixiv_social")
 
         # Artist with custom uploaded avatar must NOT be overwritten.
