@@ -877,14 +877,101 @@
     .chip.negative { background: #eeeef2; color: #706d77; text-decoration: line-through; }
     .provenance-pane { --notes-width: 400px; }
     .provenance-body {
-      flex: 1; min-height: 0; overflow: auto; padding: 12px 14px 20px;
+      flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 24px;
       background: #fff; font-size: 13px; line-height: 1.55;
+      display: flex; flex-direction: column; gap: 18px;
     }
-    .provenance-section { display: grid; gap: 8px; margin-bottom: 16px; }
-    .provenance-section > strong { color: #665866; font-size: 12px; letter-spacing: .04em; }
-    .provenance-title { color: var(--ink); font-size: 15px; font-weight: 700; line-height: 1.4; }
+    .provenance-body::-webkit-scrollbar { width: 6px; }
+    .provenance-body::-webkit-scrollbar-thumb { background: #e2d2db; border-radius: 999px; }
+    .provenance-body > .provenance-hint { margin: 0; padding: 7px 10px; border-radius: 9px; background: #fbf3f6; color: #8a5268; }
+    .provenance-section { display: grid; gap: 8px; min-width: 0; }
+    .provenance-section-title {
+      display: flex; align-items: center; gap: 8px; margin: 0;
+      color: #9a8b98; font-size: 11px; font-weight: 700; letter-spacing: .08em;
+    }
+    .provenance-section-title::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+    .provenance-hero { display: grid; gap: 8px; padding-bottom: 2px; }
+    .provenance-title {
+      color: var(--ink); font-size: 16px; font-weight: 700; line-height: 1.4;
+      word-break: break-word;
+    }
     .provenance-title a { color: inherit; text-decoration: none; }
-    .provenance-title a:hover { text-decoration: underline; }
+    .provenance-title a:hover { color: #8a5268; text-decoration: underline; text-underline-offset: 3px; }
+    .provenance-title.is-placeholder { color: var(--muted); font-weight: 600; }
+    .provenance-meta-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+    .provenance-pill {
+      display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;
+      border-radius: 999px; background: #f4f0f3; color: #665866;
+      font-size: 11px; font-weight: 600; line-height: 1.5; white-space: nowrap;
+    }
+    .provenance-pill.mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-weight: 500; }
+    .provenance-pill.status-ok { background: #eaf5ea; color: #4b7a4a; }
+    .provenance-pill.status-warn { background: #fbf1e3; color: #9a6a2c; }
+    .provenance-pill.status-bad { background: #fbeaea; color: #9a4a4a; }
+    .provenance-pill.status-ok::before, .provenance-pill.status-warn::before, .provenance-pill.status-bad::before {
+      content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+    }
+    .provenance-info {
+      display: grid; grid-template-columns: 3.4em minmax(0, 1fr);
+      column-gap: 10px; row-gap: 7px; margin: 0; align-items: center;
+    }
+    .provenance-info dt { color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .provenance-info dd {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+      min-width: 0; margin: 0; color: var(--ink); font-size: 12.5px;
+    }
+    .provenance-info dd.is-empty { color: #b4a9b2; }
+    .provenance-ellipsis { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .provenance-file-row { display: flex; align-items: center; gap: 6px; min-width: 0; width: 100%; }
+    .provenance-file-row .provenance-file { flex: 1; }
+    .provenance-icon-btn {
+      flex: 0 0 auto; display: inline-grid; place-items: center;
+      width: 24px; height: 24px; min-height: 0; padding: 0 !important; border-radius: 7px !important;
+      background: transparent !important; color: var(--muted) !important;
+    }
+    .provenance-icon-btn:hover { background: var(--rose-soft) !important; color: #8a5268 !important; }
+    .provenance-icon-btn svg {
+      width: 14px; height: 14px; fill: none; stroke: currentColor;
+      stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+    }
+    .provenance-tag-group { display: grid; gap: 5px; min-width: 0; }
+    .provenance-tag-group + .provenance-tag-group { margin-top: 4px; }
+    .provenance-tag-group > span {
+      display: flex; align-items: center; gap: 6px;
+      color: var(--muted); font-size: 11px; font-weight: 600;
+    }
+    .provenance-tag-group > span small { color: #b4a9b2; font-weight: 500; }
+    .provenance-action-group { display: grid; grid-template-columns: 3.4em minmax(0, 1fr); column-gap: 10px; align-items: start; }
+    .provenance-action-group > span { padding-top: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .provenance-edit {
+      border: 1px solid var(--line); border-radius: 12px; background: #fcfafb;
+    }
+    .provenance-edit > summary {
+      display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+      color: #665866; font-size: 12.5px; font-weight: 650; cursor: pointer;
+      list-style: none; user-select: none; border-radius: 12px;
+    }
+    .provenance-edit > summary::-webkit-details-marker { display: none; }
+    .provenance-edit > summary::before {
+      content: ''; width: 6px; height: 6px; margin: 0 2px;
+      border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor;
+      transform: rotate(-45deg); transition: transform .18s ease;
+    }
+    .provenance-edit[open] > summary::before { transform: rotate(45deg); }
+    .provenance-edit > summary:hover { color: #8a5268; }
+    .provenance-edit > summary small { margin-left: auto; color: var(--muted); font-size: 11px; font-weight: 500; }
+    .provenance-edit .provenance-form { padding: 2px 12px 12px; }
+    .provenance-field { display: grid; gap: 4px; min-width: 0; }
+    .provenance-field > label, .provenance-field > span {
+      color: var(--muted); font-size: 11px; font-weight: 650;
+    }
+    .provenance-field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+    .provenance-form-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 4px; }
+    .provenance-form-actions .spacer { flex: 1; }
+    .provenance-form button.primary {
+      background: #c97a98; color: #fff;
+    }
+    .provenance-form button.primary:hover { background: #b8688a; color: #fff; }
     .platform-icons { display: inline-flex; align-items: center; gap: 4px; margin-left: 2px; }
     .platform-icon {
       display: inline-grid; place-items: center; width: 20px; height: 20px;
@@ -902,7 +989,8 @@
     }
     .provenance-description {
       max-height: 9em; overflow: auto; white-space: pre-wrap; word-break: break-word;
-      color: #665866; font-size: 12px; line-height: 1.55;
+      padding: 8px 10px; border-radius: 10px; background: #faf7f9;
+      color: #665866; font-size: 12px; line-height: 1.6;
     }
     .provenance-row {
       display: flex; align-items: center; gap: 8px; min-width: 0;
@@ -926,13 +1014,14 @@
     .provenance-tag.auto { background: #eef3fa; color: #557089; }
     .provenance-actions { display: flex; flex-wrap: wrap; gap: 6px; }
     .provenance-actions button, .provenance-form button {
-      min-height: 0; padding: 7px 10px; border-radius: 10px;
+      min-height: 0; padding: 6px 10px; border-radius: 9px;
       background: #f6f1f5; color: #665866; font-size: 12px;
     }
+    .provenance-actions button:disabled { opacity: .55; cursor: default; }
     .provenance-actions button:hover, .provenance-form button:hover {
       transform: none; background: var(--rose-soft); color: #8a5268;
     }
-    .provenance-form { display: grid; gap: 7px; }
+    .provenance-form { display: grid; gap: 9px; }
     .provenance-form input {
       width: 100%; padding: 8px 10px; border: 1px solid var(--line);
       border-radius: 10px; background: #fff; color: var(--ink);
@@ -1125,15 +1214,21 @@
       .card:hover .card-list-actions { opacity: 1; pointer-events: auto; }
     }
     .gallery.view-list .card-favorite {
-      position: static; width: 34px; height: 34px; opacity: 1;
-      color: #8a5268;
+      position: static; width: 32px; height: 32px; min-height: 0; padding: 0; opacity: 1;
+      border: 1px solid #eadfe6; border-radius: 50%;
+      background: rgba(255, 255, 255, .92); color: #8a5268;
+      box-shadow: 0 3px 10px rgba(43, 33, 50, .12); filter: none;
     }
+    .gallery.view-list .card-favorite svg { width: 16px; height: 16px; }
+    .gallery.view-list .card:hover .card-favorite { color: #8a5268; filter: none; }
     .gallery.view-list .card-remove {
       position: static; width: 32px; height: 32px; min-height: 0; padding: 0; opacity: 1;
-      color: #496a8a;
+      color: #496a8a; filter: none;
     }
     .gallery.view-list .card-favorite:hover,
-    .gallery.view-list .card-remove:hover { transform: none; color: #8a5268; }
+    .gallery.view-list .card-remove:hover {
+      transform: none; background: #fff; color: #b8456f; filter: none;
+    }
     .gallery.view-artists { display: block; padding-bottom: 48px; }
     .artist-list { display: grid; gap: 22px; }
     .artist-row {
@@ -1336,6 +1431,21 @@
     }
     .gallery.view-list .card.artist-collection-namecard .artist-namecard-actions {
       align-items: center; z-index: 4;
+      opacity: 0; pointer-events: none; transition: opacity .15s ease;
+    }
+    .gallery.view-list .card.artist-collection-namecard:focus-within .artist-namecard-actions,
+    .gallery.view-list .card.artist-collection-namecard.is-action-active .artist-namecard-actions {
+      opacity: 1; pointer-events: auto;
+    }
+    @media (hover: hover) and (pointer: fine) {
+      .gallery.view-list .card.artist-collection-namecard:hover .artist-namecard-actions {
+        opacity: 1; pointer-events: auto;
+      }
+    }
+    @media (hover: none), (pointer: coarse) {
+      .gallery.view-list .card.artist-collection-namecard .artist-namecard-actions {
+        opacity: 1; pointer-events: auto;
+      }
     }
     .gallery.view-list .card.artist-collection-namecard .card-favorite,
     .gallery.view-list .card.artist-collection-namecard .card-remove,
@@ -1343,17 +1453,19 @@
       position: static; width: 32px; height: 32px; min-height: 0; padding: 0; opacity: 1;
       border: 1px solid rgba(255, 255, 255, .6); border-radius: 50%;
       background: rgba(255, 255, 255, .78); backdrop-filter: blur(8px);
-      box-shadow: 0 3px 10px rgba(43, 33, 50, .16);
+      box-shadow: 0 3px 10px rgba(43, 33, 50, .16); filter: none;
     }
-    .gallery.view-list .card.artist-collection-namecard .card-favorite { color: #8a5268; }
+    .gallery.view-list .card.artist-collection-namecard .card-favorite,
+    .gallery.view-list .card.artist-collection-namecard:hover .card-favorite { color: #8a5268; filter: none; }
     .gallery.view-list .card.artist-collection-namecard .card-favorite svg {
       width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2;
     }
     .gallery.view-list .card.artist-collection-namecard .card-favorite.is-favorited svg { fill: currentColor; }
-    .gallery.view-list .card.artist-collection-namecard .card-remove { color: #496a8a; }
+    .gallery.view-list .card.artist-collection-namecard .card-remove,
+    .gallery.view-list .card.artist-collection-namecard:hover .card-remove { color: #496a8a; filter: none; }
     .gallery.view-list .card.artist-collection-namecard .card-favorite:hover,
     .gallery.view-list .card.artist-collection-namecard .card-remove:hover {
-      background: #fff; color: #b8456f; transform: none;
+      background: #fff; color: #b8456f; transform: none; filter: none;
     }
     .card.artist-collection-card.card-list .artist-card-kind { margin-right: 6px; vertical-align: 1px; }
     .artist-collection-card.is-square {
@@ -2689,7 +2801,7 @@
     </aside>
     <aside class="notes-pane provenance-pane" id="provenance-pane" hidden>
       <div class="notes-head">
-        <strong style="flex:1">来源</strong>
+        <strong style="flex:1">详细信息</strong>
         <button id="provenance-close" type="button">返回图片</button>
       </div>
       <div class="provenance-body" id="provenance-body"></div>
@@ -2708,7 +2820,7 @@
       <button id="viewer-remove-ref" type="button" hidden>从参考中移除</button>
       <button id="viewer-reference" type="button">添加为参考</button>
       <span class="modal-bar-break" aria-hidden="true"></span>
-      <button id="viewer-provenance" type="button" aria-pressed="false" aria-controls="provenance-pane" hidden>来源</button>
+      <button id="viewer-provenance" type="button" aria-pressed="false" aria-controls="provenance-pane" title="详细信息：来源、作者、标签与操作" hidden>详情</button>
       <button id="viewer-notes" type="button" aria-pressed="false" aria-controls="notes-pane" hidden>笔记</button>
       <button id="viewer-collection-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="viewer-collection-menu">收藏到…</button>
       <button id="viewer-remove-collection" type="button" hidden>移出收藏夹</button>
@@ -2726,7 +2838,7 @@
       </button>
     </div>
     <div id="viewer-mobile-details-menu" class="viewer-mobile-details-menu" role="dialog" aria-label="详细信息" hidden>
-      <button type="button" data-viewer-mobile-detail="provenance">来源</button>
+      <button type="button" data-viewer-mobile-detail="provenance">详细信息</button>
       <button type="button" data-viewer-mobile-detail="notes">笔记<span id="viewer-mobile-notes-count" class="notes-count"></span></button>
     </div>
     <div id="viewer-collection-menu" class="viewer-collection-menu" role="dialog" aria-labelledby="viewer-collection-menu-title" hidden></div>
@@ -3152,7 +3264,7 @@
       galleryDragItem: null,
       authorKey: '', authorName: '', authorTotal: 0,
       tagName: '', tagTotal: 0,
-      provenance: { open: false, imageId: '', data: null, seq: 0, loading: false },
+      provenance: { open: false, imageId: '', data: null, seq: 0, loading: false, editOpen: false },
       provenancePoll: 0, provenanceIdlePolls: 0,
       purgeJobId: '', purgeNotice: '', purgeWatchSeq: 0,
       viewerTitleCache: new Map(), viewerTitlePending: new Set(), viewerTitleTimer: 0,
@@ -3826,63 +3938,140 @@
         ? '<button type="button" data-prov-action="open-post">打开原帖</button>'
         : '';
       const titleMarkup = url
-        ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>`
+        ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" title="打开原帖">${escapeHtml(title)}</a>`
         : escapeHtml(title);
+      const titleIsPlaceholder = !record.title && !description;
+      // Only show the description when it adds something beyond the title.
+      const showDescription = description && description.trim() !== String(title).trim();
+      const statusTone = record.status === 'ok'
+        ? 'status-ok'
+        : (['not_found', 'error', 'protected'].includes(record.status) ? 'status-bad' : 'status-warn');
+      const postedRaw = String(record.posted_at || '');
+      const postedDate = postedRaw ? new Date(postedRaw) : null;
+      const pad2 = (n) => String(n).padStart(2, '0');
+      const posted = postedDate && !Number.isNaN(postedDate.getTime())
+        ? `${postedDate.getFullYear()}-${pad2(postedDate.getMonth() + 1)}-${pad2(postedDate.getDate())} ${pad2(postedDate.getHours())}:${pad2(postedDate.getMinutes())}`
+        : postedRaw;
+      const infoRow = (label, value, { empty = '—' } = {}) => `
+        <dt>${label}</dt>
+        <dd class="${value ? '' : 'is-empty'}">${value || empty}</dd>`;
+      const tagGroup = (label, markup, count) => markup
+        ? `<div class="provenance-tag-group"><span>${label}${count ? `<small>${count}</small>` : ''}</span><div class="provenance-tags">${markup}</div></div>`
+        : '';
+      const isCover = Boolean(author && author.cover_point_id === currentImageId());
+      const editOpen = state.provenance.editOpen || !data.record;
+      const copyIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>';
       body.innerHTML = `
-        <div class="provenance-section">
-          <div class="provenance-title">${titleMarkup}</div>
-          ${description ? `<div class="provenance-description">${escapeHtml(description)}</div>` : ''}
-          <div class="provenance-row"><b>${platform}</b><span>${escapeHtml(record.source_id || '')}</span><span>${escapeHtml(data.page_label || '')}</span></div>
-          <div class="provenance-row"><span>作者</span>${authorButton}${platformIcons ? `<span class="platform-icons">${platformIcons}</span>` : ''}</div>
-          ${associations ? `<div class="provenance-row"><span>关联</span><span title="${escapeHtml(associations)}">${escapeHtml(associations)}</span></div>` : ''}
-          <div class="provenance-row"><span>发布</span><span>${escapeHtml(record.posted_at || '')}</span></div>
-          <div class="provenance-row"><span>状态</span><b>${escapeHtml(status)}</b></div>
-          <div class="provenance-row"><span>文件</span><span class="provenance-file" title="${escapeHtml(data.path || '')}">${escapeHtml(data.path || '')}</span></div>
+        <section class="provenance-hero">
+          <div class="provenance-title${titleIsPlaceholder ? ' is-placeholder' : ''}">${titleMarkup}</div>
+          <div class="provenance-meta-line">
+            <span class="provenance-pill">${escapeHtml(platform)}</span>
+            ${record.source_id ? `<span class="provenance-pill mono" title="作品 ID">${escapeHtml(record.source_id)}</span>` : ''}
+            ${data.page_label ? `<span class="provenance-pill" title="分页">${escapeHtml(data.page_label)}</span>` : ''}
+            <span class="provenance-pill ${statusTone}" title="来源状态">${escapeHtml(status)}</span>
+          </div>
+          ${showDescription ? `<div class="provenance-description">${escapeHtml(description)}</div>` : ''}
           ${conflict}
-          ${sourceTags ? `<div class="provenance-row"><span>来源标签</span><div class="provenance-tags">${sourceTags}</div></div>` : ''}
-          ${manualTags ? `<div class="provenance-row"><span>手动标签</span><div class="provenance-tags">${manualTags}</div></div>` : ''}
-          ${autoTags ? `<div class="provenance-row"><span>自动标签</span><div class="provenance-tags">${autoTags}</div></div>` : ''}
-          ${renderVisionBadgesHTML(state.current)}
-          <div class="provenance-actions">
-            <button type="button" data-prov-action="refresh">重新抓取</button>
-            <button type="button" data-prov-action="retag">重标标签</button>
-            <button type="button" data-prov-action="same-character">搜同角色</button>
-            <button type="button" data-prov-action="ignore-url">无需来源</button>
-            ${author && author.key ? `<button type="button" data-prov-action="set-cover" ${author.cover_point_id === currentImageId() ? 'disabled' : ''}>${author.cover_point_id === currentImageId() ? '当前画师代表图' : '设为画师代表图'}</button>` : ''}
-            ${postButton}
-            <button type="button" data-prov-action="saucenao">SauceNAO</button>
-            <button type="button" data-prov-action="ascii2d">ascii2d</button>
-            <button type="button" data-prov-action="local-similar">本地查找</button>
-            <button type="button" data-prov-action="time-nearby" title="在新标签页按时间范围浏览这张画前后一天的图片">前后一天</button>
-            <button type="button" data-prov-action="copy-path">复制原图路径</button>
-          </div>
-        </div>
-        <form class="provenance-form" id="provenance-form">
-          <strong>编辑来源</strong>
-          <input id="prov-url" placeholder="Pixiv/X/小红书作品 URL，或任意来源 URL" value="${escapeHtml(url)}">
-          <input id="prov-title" placeholder="标题" value="${escapeHtml(record.title || '')}">
-          <div class="provenance-row">
-            <input id="prov-author-name" placeholder="作者名" value="${escapeHtml(author ? (author.name || '') : '')}" style="flex:1">
-          </div>
-          <div class="provenance-row">
-            <input id="prov-pixiv-id" placeholder="Pixiv ID（可留空）" value="${escapeHtml(pixivIds[0] || '')}" style="flex:1">
-            <input id="prov-x-handle" placeholder="X handle（可留空）" value="${escapeHtml(xHandles[0] || '')}" style="flex:1">
-          </div>
-          <div class="provenance-author-picker">
-            <label for="prov-author-query">标注作者</label>
-            <div class="provenance-author-search">
-              <input id="prov-author-query" placeholder="UID / Pixiv ID / X handle" value="${escapeHtml(author ? (author.name || author.handle || author.key || '') : '')}" autocomplete="off">
-              <div id="prov-author-results" class="provenance-author-results" hidden></div>
+        </section>
+        <section class="provenance-section">
+          <h4 class="provenance-section-title">作品信息</h4>
+          <dl class="provenance-info">
+            <dt>作者</dt>
+            <dd>${authorButton}${platformIcons ? `<span class="platform-icons">${platformIcons}</span>` : ''}</dd>
+            ${associations ? infoRow('关联', `<span class="provenance-ellipsis" title="${escapeHtml(associations)}">${escapeHtml(associations)}</span>`) : ''}
+            ${infoRow('发布', posted ? `<span title="${escapeHtml(postedRaw)}">${escapeHtml(posted)}</span>` : '')}
+            <dt>文件</dt>
+            <dd>
+              <span class="provenance-file-row">
+                <span class="provenance-file" title="${escapeHtml(data.path || '')}">${escapeHtml(data.path || '')}</span>
+                <button type="button" class="provenance-icon-btn" data-prov-action="copy-path" title="复制原图路径" aria-label="复制原图路径">${copyIcon}</button>
+              </span>
+            </dd>
+          </dl>
+        </section>
+        <section class="provenance-section">
+          <h4 class="provenance-section-title">标签</h4>
+          ${tagGroup('来源标签', sourceTags, (record.tags || []).length)}
+          ${tagGroup('手动标签', manualTags, (record.manual_tags || []).length)}
+          ${tagGroup('自动标签', autoTags, (record.auto_tags || []).length)}
+          ${tagGroup('视觉属性', renderVisionBadgesHTML(state.current))}
+        </section>
+        <section class="provenance-section">
+          <h4 class="provenance-section-title">操作</h4>
+          <div class="provenance-action-group">
+            <span>查找</span>
+            <div class="provenance-actions">
+              <button type="button" data-prov-action="local-similar" title="在新标签页以此图为参考搜索">本地相似</button>
+              <button type="button" data-prov-action="same-character">搜同角色</button>
+              <button type="button" data-prov-action="time-nearby" title="在新标签页按时间范围浏览这张画前后一天的图片">前后一天</button>
+              <button type="button" data-prov-action="saucenao">SauceNAO</button>
+              <button type="button" data-prov-action="ascii2d">ascii2d</button>
             </div>
-            <input id="prov-author-key" type="hidden" value="${escapeHtml(author && author.key ? author.key : '')}">
           </div>
-          <input id="prov-tags" placeholder="手动标签，用逗号分隔" value="${escapeHtml((record.manual_tags || []).join(', '))}">
-          <div class="provenance-actions">
-            <button type="submit" id="prov-save">保存来源</button>
-            <button type="button" id="prov-resolve">解析 URL 并补全</button>
-            <button type="button" id="prov-clear">恢复自动</button>
+          <div class="provenance-action-group">
+            <span>来源</span>
+            <div class="provenance-actions">
+              ${postButton}
+              <button type="button" data-prov-action="refresh" title="根据当前 URL 重新抓取作品信息">重新抓取</button>
+              <button type="button" data-prov-action="ignore-url" title="标记此图不需要来源，不再参与搜图">无需来源</button>
+            </div>
           </div>
-        </form>`;
+          <div class="provenance-action-group">
+            <span>整理</span>
+            <div class="provenance-actions">
+              <button type="button" data-prov-action="retag" title="重新运行自动标签">重标标签</button>
+              ${author && author.key ? `<button type="button" data-prov-action="set-cover" ${isCover ? 'disabled' : ''}>${isCover ? '已是画师代表图' : '设为画师代表图'}</button>` : ''}
+            </div>
+          </div>
+        </section>
+        <details class="provenance-edit" id="provenance-edit" ${editOpen ? 'open' : ''}>
+          <summary>编辑来源<small>手动修正 URL / 作者 / 标签</small></summary>
+          <form class="provenance-form" id="provenance-form">
+            <div class="provenance-field">
+              <label for="prov-url">作品 URL</label>
+              <input id="prov-url" placeholder="Pixiv / X / 小红书作品 URL，或任意来源 URL" value="${escapeHtml(url)}">
+            </div>
+            <div class="provenance-field">
+              <label for="prov-title">标题</label>
+              <input id="prov-title" placeholder="留空则使用抓取结果" value="${escapeHtml(record.title || '')}">
+            </div>
+            <div class="provenance-field provenance-author-picker">
+              <label for="prov-author-query">关联到已有作者</label>
+              <div class="provenance-author-search">
+                <input id="prov-author-query" placeholder="搜索 作者名 / UID / Pixiv ID / X handle" value="${escapeHtml(author ? (author.name || author.handle || author.key || '') : '')}" autocomplete="off">
+                <div id="prov-author-results" class="provenance-author-results" hidden></div>
+              </div>
+              <input id="prov-author-key" type="hidden" value="${escapeHtml(author && author.key ? author.key : '')}">
+            </div>
+            <div class="provenance-field">
+              <label for="prov-author-name">作者显示名</label>
+              <input id="prov-author-name" placeholder="作者名" value="${escapeHtml(author ? (author.name || '') : '')}">
+            </div>
+            <div class="provenance-field-row">
+              <div class="provenance-field">
+                <label for="prov-pixiv-id">Pixiv ID</label>
+                <input id="prov-pixiv-id" placeholder="可留空" value="${escapeHtml(pixivIds[0] || '')}">
+              </div>
+              <div class="provenance-field">
+                <label for="prov-x-handle">X handle</label>
+                <input id="prov-x-handle" placeholder="可留空" value="${escapeHtml(xHandles[0] || '')}">
+              </div>
+            </div>
+            <div class="provenance-field">
+              <label for="prov-tags">手动标签</label>
+              <input id="prov-tags" placeholder="用逗号分隔" value="${escapeHtml((record.manual_tags || []).join(', '))}">
+            </div>
+            <div class="provenance-form-actions">
+              <button type="submit" id="prov-save" class="primary">保存来源</button>
+              <button type="button" id="prov-resolve" title="解析上方 URL 并自动补全作品信息">解析 URL 并补全</button>
+              <span class="spacer"></span>
+              <button type="button" id="prov-clear" title="清除手动修改，恢复自动识别结果">恢复自动</button>
+            </div>
+          </form>
+        </details>`;
+      body.querySelector('#provenance-edit')?.addEventListener('toggle', (event) => {
+        state.provenance.editOpen = event.currentTarget.open;
+      });
       body.querySelectorAll('.provenance-tag').forEach((link) => {
         const tag = link.dataset.tag || '';
         if (!tag) return;
@@ -3964,9 +4153,18 @@
         if (!pointId) return;
         window.open(appRouteHref({ kind: 'scope', of: pointId }), '_blank', 'noopener');
       });
-      body.querySelector('[data-prov-action="copy-path"]')?.addEventListener('click', async () => {
-        try { await navigator.clipboard.writeText(data.path || ''); }
-        catch (_) { /* clipboard may be unavailable */ }
+      body.querySelector('[data-prov-action="copy-path"]')?.addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        try {
+          await navigator.clipboard.writeText(data.path || '');
+          button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+          button.title = '已复制';
+          setTimeout(() => {
+            if (!button.isConnected) return;
+            button.innerHTML = copyIcon;
+            button.title = '复制原图路径';
+          }, 1200);
+        } catch (_) { /* clipboard may be unavailable */ }
       });
       body.querySelector('#provenance-form')?.addEventListener('submit', (event) => {
         event.preventDefault();
@@ -4204,12 +4402,11 @@
       catch (_) { return ''; }
     }
     function renderVisionBadgesHTML(item) {
-      if (!item) return '';
+      const empty = '<span class="provenance-tag">无标注</span>';
+      if (!item) return empty;
       const hasVisionMeta = Number(item.vision_meta_version || 0) > 0
         || Boolean(item.media_type || item.rating);
-      if (!hasVisionMeta) {
-        return '<div class="provenance-row"><span>视觉属性</span><div class="provenance-tags"><span class="provenance-tag">无标注</span></div></div>';
-      }
+      if (!hasVisionMeta) return empty;
       const badges = [];
       const mediaNames = {
         illustration: '插画',
@@ -4226,11 +4423,8 @@
       if (typeof item.aesthetic_score === 'number' && Number.isFinite(item.aesthetic_score)) {
         badges.push(`美学 ${Math.round(Number(item.aesthetic_score) * 100)}%`);
       }
-      if (!badges.length) {
-        return '<div class="provenance-row"><span>视觉属性</span><div class="provenance-tags"><span class="provenance-tag">无标注</span></div></div>';
-      }
-      const markup = badges.map((b) => `<span class="provenance-tag">${escapeHtml(b)}</span>`).join('');
-      return `<div class="provenance-row"><span>视觉属性</span><div class="provenance-tags">${markup}</div></div>`;
+      if (!badges.length) return empty;
+      return badges.map((b) => `<span class="provenance-tag">${escapeHtml(b)}</span>`).join('');
     }
     async function runCharacterSearch(pointId) {
       if (!pointId) return;
