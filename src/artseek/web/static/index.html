@@ -1023,7 +1023,11 @@
     .provenance-tag:hover { background: #efd6e0; color: #8a5268; }
     .provenance-tag.manual { background: #eef6ec; color: #557a52; }
     .provenance-tag.auto { background: #eef3fa; color: #557089; }
-    .provenance-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .provenance-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .provenance-actions .artseek-select {
+      min-height: 0; height: auto; padding: 5px 28px 5px 10px;
+      border-radius: 9px; font-size: 12px;
+    }
     .provenance-actions button, .provenance-form button {
       min-height: 0; padding: 6px 10px; border-radius: 9px;
       background: #f6f1f5; color: #665866; font-size: 12px;
@@ -4790,7 +4794,7 @@
               <input id="task-skip-completed" type="checkbox"${prevSkip ? ' checked' : ''}> 跳过已完成图片
             </label>
           </div>
-          <div class="provenance-row" style="gap:8px;flex-wrap:wrap;align-items:center;">
+          <div class="provenance-actions">
             <select id="task-tag-backend" class="artseek-select" aria-label="标签模型后端">
               <option value="camie+pixai0.9">Camie v2 + PixAI v0.9（默认融合）</option>
               <option value="pixai1.0">PixAI v1.0（1008px 精度补标）</option>
@@ -4798,8 +4802,6 @@
               <option value="pixai0.9">仅 PixAI v0.9</option>
             </select>
             <button type="button" class="task-btn-primary" data-bg-job="auto-fill">一键填充未完成任务</button>
-          </div>
-          <div class="provenance-actions">
             <button type="button" data-bg-job="retag">+ 自动打标</button>
             <button type="button" data-bg-job="vision">+ 视觉属性 &amp; 人脸</button>
             <button type="button" data-bg-job="ccip">+ CCIP 角色向量</button>
@@ -5039,7 +5041,29 @@
           body: JSON.stringify(spec.body),
         }));
       } catch (error) {
-        $('provenance-dialog-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">调度失败：${escapeHtml(error.message)}</p>`);
+        if (action === 'ccip' && String(error?.message || '').includes('视觉属性尚未完成')) {
+          if (window.confirm(`${error.message}\n\n是否先将「视觉属性 & 人脸」加入队列，并把「CCIP 角色向量」排在其后？`)) {
+            try {
+              await parseResponse(await fetch('/api/jobs/vision-enrich', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ folder_keys: folderKeys, skip_completed: true }),
+              }));
+              await parseResponse(await fetch(spec.url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(spec.body),
+              }));
+              state.purgeNotice = '已将「视觉属性 & 人脸」与「CCIP 角色向量」顺序加入队列。';
+            } catch (visionErr) {
+              state.purgeNotice = `调度失败：${visionErr.message}`;
+            }
+          } else {
+            state.purgeNotice = `调度失败：${error.message}`;
+          }
+        } else {
+          state.purgeNotice = `调度失败：${error.message}`;
+        }
       }
       state.provenanceIdlePolls = 3;
       await refreshProvenanceDialog();

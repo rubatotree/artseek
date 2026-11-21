@@ -430,6 +430,7 @@ class CamieTaggerV2:
 
         total_tags = int(dataset_info.get("total_tags") or len(idx_to_tag))
         self.names = [str(idx_to_tag.get(str(i), f"tag_{i}")) for i in range(total_tags)]
+        self._norm_names = [normalize_tag(n) for n in self.names]
         self.raw_categories = [
             str(tag_to_cat.get(name, "general")).casefold() for name in self.names
         ]
@@ -569,7 +570,7 @@ class CamieTaggerV2:
                 )
                 if prob < th:
                     continue
-                norm = normalize_tag(name)
+                norm = self._norm_names[idx]
                 if not norm or norm in selected_scores:
                     continue
                 selected_tags.append(norm)
@@ -594,8 +595,8 @@ class PixAITaggerV09:
 
     model_versions: dict[str, int] = {"pixai_v09": 1}
     # FP32 1.2GB ONNX model hits WDDM shared-memory paging at batch >= 16 on 8GB GPUs;
-    # micro-batching at 4 keeps VRAM bounded while maximizing throughput.
-    _MAX_MICRO_BATCH = 4
+    # micro-batching at 8 keeps VRAM bounded when running solo while halving sync overhead.
+    _MAX_MICRO_BATCH = 8
 
     def __init__(self, config: TaggerConfig, runtime: EmbeddingConfig):
         self.config = config
@@ -613,6 +614,8 @@ class PixAITaggerV09:
             outputs[-1].name,
         )
         self.names, self.categories, self.char_ips = self._load_tags(tags_path)
+        self._norm_names = [normalize_tag(n) for n in self.names]
+        self._outputs_are_logits: bool | None = None
         self._use_cuda_iobinding = (
             self.device.type == "cuda"
             and hasattr(self.session, "io_binding")
@@ -642,7 +645,10 @@ class PixAITaggerV09:
         return names, categories, char_ips
 
     def close(self) -> None:
+        if getattr(self, "session", None) is None:
+            return
         self.session = None
+        release_accelerator()
 
     @staticmethod
     def _preprocess_batch(images: Sequence[Image.Image | np.ndarray]) -> np.ndarray:
@@ -696,8 +702,10 @@ class PixAITaggerV09:
             batch = self._preprocess_batch(chunk)
             outputs = self.session.run([self._output_name], {self._input_name: batch})[0]
         arr = np.asarray(outputs, dtype=np.float32)
-        if float(arr.min()) < 0.0 or float(arr.max()) > 1.0:
-            arr = 1.0 / (1.0 + np.exp(-np.clip(arr, -30.0, 30.0)))
+        if self._outputs_are_logits is None and arr.size > 0:
+            self._outputs_are_logits = bool(
+                float(arr.min()) < 0.0 or float(arr.max()) > 1.0
+            )
         return arr
 
     def predict(
@@ -715,6 +723,7 @@ class PixAITaggerV09:
         for start in range(0, len(images), self._MAX_MICRO_BATCH):
             chunk = images[start : start + self._MAX_MICRO_BATCH]
             arr = self._run_chunk(chunk)
+            is_logits = bool(self._outputs_are_logits)
             for row in arr:
                 n_cols = row.shape[0]
                 if n_cols > top_k:
@@ -722,20 +731,22 @@ class PixAITaggerV09:
                     order = part[np.argsort(-row[part])]
                 else:
                     order = np.argsort(-row)
+                top_vals = row[order]
+                if is_logits:
+                    top_vals = 1.0 / (1.0 + np.exp(-np.clip(top_vals, -30.0, 30.0)))
                 selected_tags: list[str] = []
                 selected_scores: dict[str, float] = {}
                 selected_cats: dict[str, int] = {}
                 inferred_ips: dict[str, float] = {}
 
-                for idx in order.tolist():
-                    prob = float(row[idx])
+                for idx, prob in zip(order.tolist(), top_vals.tolist(), strict=True):
                     cat = self.categories[idx]
                     if cat == CAT_CHARACTER and not self.config.include_character_tags:
                         continue
                     th = char_th if cat == CAT_CHARACTER else gen_th
                     if prob < th:
                         continue
-                    name = normalize_tag(self.names[idx])
+                    name = self._norm_names[idx]
                     if not name:
                         continue
                     selected_tags.append(name)
@@ -787,6 +798,7 @@ class PixAITaggerV10:
         ).eval().to(self.device)
         cfg = self.model.config
         self.tags: list[str] = list(getattr(cfg, "tags", []))
+        self._norm_tags: list[str] = [normalize_tag(t) for t in self.tags]
         self.tags_split: list[tuple[str, int]] = [
             (str(c), int(n)) for c, n in getattr(cfg, "tags_split", [])
         ]
@@ -852,7 +864,7 @@ class PixAITaggerV10:
                 th = self._thresholds[idx] if idx < len(self._thresholds) else 0.3
                 if prob_val < th:
                     continue
-                tag = normalize_tag(self.tags[idx])
+                tag = self._norm_tags[idx]
                 if not tag:
                     continue
                 if mapped_cat == CAT_RATING:
@@ -933,6 +945,14 @@ def model_versions_for_backend(backend: str | None) -> dict[str, int]:
     if canon == "pixai1.0":
         return {"pixai_v10": 1}
     return {"wd_v3": 1}
+
+
+def resolve_tagger_stages(backend: str | None) -> list[str]:
+    """Expand a tagger backend into sequential single-model stages."""
+    canon = normalize_tagger_backend(backend)
+    if canon == "camie+pixai0.9":
+        return ["camie", "pixai0.9"]
+    return [canon]
 
 
 def build_tagger(

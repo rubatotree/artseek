@@ -34,12 +34,15 @@ from ..ml.tag_postprocess import (
     CAT_ATTRIBUTE,
     CAT_MEDIUM,
     CAT_RATING,
+    PredictedTags,
     build_high_density_descriptor,
+    merge_predicted_tags,
 )
 from ..ml.tagger import (
     build_tagger,
     model_versions_for_backend,
     normalize_tagger_backend,
+    resolve_tagger_stages,
 )
 from ..ml.vision_attributes import VISION_META_VERSION, VisionAttributeAnalyzer
 from ..services.model_lifecycle import ModelLifecycle
@@ -568,6 +571,10 @@ class JobManager:
 
     def _assert_vision_ready(self, scope_row_ids: Sequence[int] | None) -> None:
         """CCIP crops characters from `character_crop_json`; refuse to run without it."""
+        # If a vision enrichment job is already running or queued, it runs at priority 55
+        # (ahead of CCIP at priority 60) and will produce the crops before CCIP starts.
+        if self.is_busy("vision_enrich"):
+            return
         blocking = self.task_state.pending_for_vision(
             min_version=VISION_META_VERSION,
             scope_row_ids=scope_row_ids,
@@ -1139,21 +1146,23 @@ class JobManager:
         )
         self._free_vram_for_worker()
 
+        stages = resolve_tagger_stages(backend)
+        multi_stage = len(stages) > 1
         tagger = None
         updated = 0
         failed = 0
         updated_descriptors: list[tuple[int, str]] = []
         chunk_size = max(4, min(32, int(self.config.tagger.batch_size)))
-        producer_stop = threading.Event()
-        work_q: queue.Queue[tuple[int, str, str, np.ndarray | None] | None] = queue.Queue(
-            maxsize=max(chunk_size * 2, 32)
-        )
+        stage_preds: dict[int, list[PredictedTags]] = {}
+        completed_versions: dict[str, int] = {}
+        active_entries: list[tuple[int, str, str, str]] = list(pending)
 
         def _decode_entry(
             entry: tuple[int, str, str, str],
+            stop_flag: threading.Event,
         ) -> tuple[int, str, str, np.ndarray | None]:
             img_id, pid, path_str, chash = entry
-            if producer_stop.is_set() or self._stop_event.is_set():
+            if stop_flag.is_set() or self._stop_event.is_set():
                 return (img_id, pid, chash, None)
             p = Path(path_str)
             if not p.is_file():
@@ -1175,110 +1184,258 @@ class JobManager:
             except Exception:
                 return (img_id, pid, chash, None)
 
-        def _producer() -> None:
-            try:
-                with ThreadPoolExecutor(
-                    max_workers=6, thread_name_prefix="artseek-retag-decode"
-                ) as pool:
-                    for res in pool.map(_decode_entry, pending):
-                        if producer_stop.is_set() or self._stop_event.is_set():
-                            break
-                        while True:
-                            try:
-                                work_q.put(res, timeout=0.2)
-                                break
-                            except queue.Full:
-                                if producer_stop.is_set() or self._stop_event.is_set():
-                                    return
-            finally:
-                while True:
-                    try:
-                        work_q.put(None, timeout=0.2)
-                        break
-                    except queue.Full:
-                        if producer_stop.is_set():
-                            break
+        def _flush_db_batch(
+            batch_rows: list[tuple[int, str, str, PredictedTags]],
+            versions_to_mark: dict[str, int],
+        ) -> None:
+            nonlocal updated
+            ids = [item[0] for item in batch_rows]
+            existing_payloads = self.images.get_payloads_by_ids(ids, include_tags=False)
+            db_updates: list[
+                tuple[int, list[str], dict[str, float], dict[str, int], str]
+            ] = []
+            done_entries: list[tuple[str, int, str]] = []
+            for img_id, pid, chash, pred in batch_rows:
+                payload = existing_payloads.get(img_id) or {}
+                desc_text = self._build_descriptor_for_payload(
+                    pred, payload, drop_overlap=self.config.tagger.drop_overlap
+                )
+                db_updates.append(
+                    (img_id, pred.tags, pred.scores, pred.categories, desc_text)
+                )
+                done_entries.append((pid, img_id, chash))
+                if desc_text.strip():
+                    updated_descriptors.append((img_id, desc_text))
+
+            self.images.update_tags_and_descriptor_batch(db_updates)
+            self.task_state.mark_tag_models_done(
+                done_entries, versions_to_mark, descriptor_done=True
+            )
+            self._sync_provenance_auto_tags(
+                [
+                    (done_entries[i][0], batch_rows[i][3].tags, batch_rows[i][3].scores)
+                    for i in range(len(batch_rows))
+                ]
+            )
+            updated += len(batch_rows)
 
         try:
-            tagger = build_tagger(self.config.tagger, self.config.embedding, backend=backend)
-            if tagger is None:
-                raise RuntimeError(f"无法初始化标签器 {backend}")
-            versions = dict(getattr(tagger, "model_versions", req_versions))
+            for stage_idx, stage_backend in enumerate(stages):
+                if self._stop_event.is_set() or not active_entries:
+                    break
+                is_final_stage = stage_idx == len(stages) - 1
+                stage_label = (
+                    f"[{stage_idx + 1}/{len(stages)} {stage_backend}]"
+                    if multi_stage
+                    else f"({stage_backend})"
+                )
+                self.jobs_repo.update(
+                    job_id,
+                    status="running",
+                    done=0,
+                    total=len(active_entries),
+                    message=f"正在加载标签器 {stage_label}（共 {len(active_entries)} 张待处理）…",
+                )
+                tagger = build_tagger(
+                    self.config.tagger, self.config.embedding, backend=stage_backend
+                )
+                if tagger is None:
+                    raise RuntimeError(f"无法初始化标签器 {stage_backend}")
+                stage_versions = dict(
+                    getattr(tagger, "model_versions", model_versions_for_backend(stage_backend))
+                )
+                completed_versions.update(stage_versions)
+                versions_for_final = (
+                    dict(req_versions)
+                    if is_final_stage
+                    else dict(completed_versions)
+                )
+                if is_final_stage:
+                    versions_for_final.update(completed_versions)
 
-            prod_thread = threading.Thread(
-                target=_producer, daemon=True, name="artseek-retag-producer"
-            )
-            prod_thread.start()
+                producer_stop = threading.Event()
+                work_q: queue.Queue[tuple[int, str, str, np.ndarray | None] | None] = (
+                    queue.Queue(maxsize=max(chunk_size * 2, 32))
+                )
+                write_q: queue.Queue[
+                    tuple[list[tuple[int, str, str, PredictedTags]], int] | None
+                ] = queue.Queue(maxsize=4)
+                writer_errors: list[BaseException] = []
 
-            processed = 0
-            while True:
-                if self._wait_if_paused():
+                def _producer(
+                    entries: list[tuple[int, str, str, str]] = active_entries,
+                    stop_flag: threading.Event = producer_stop,
+                    q_out: queue.Queue[tuple[int, str, str, np.ndarray | None] | None] = work_q,
+                ) -> None:
+                    try:
+                        with ThreadPoolExecutor(
+                            max_workers=6, thread_name_prefix="artseek-retag-decode"
+                        ) as pool:
+                            for res in pool.map(
+                                lambda e: _decode_entry(e, stop_flag), entries
+                            ):
+                                if stop_flag.is_set() or self._stop_event.is_set():
+                                    break
+                                while True:
+                                    try:
+                                        q_out.put(res, timeout=0.2)
+                                        break
+                                    except queue.Full:
+                                        if stop_flag.is_set() or self._stop_event.is_set():
+                                            return
+                    finally:
+                        while True:
+                            try:
+                                q_out.put(None, timeout=0.2)
+                                break
+                            except queue.Full:
+                                if stop_flag.is_set():
+                                    break
+
+                def _writer(
+                    q_in: queue.Queue[
+                        tuple[list[tuple[int, str, str, PredictedTags]], int] | None
+                    ] = write_q,
+                    mark_versions: dict[str, int] = versions_for_final,
+                    stage_total: int = len(active_entries),
+                    label: str = stage_label,
+                ) -> None:
+                    try:
+                        while True:
+                            item = q_in.get()
+                            if item is None:
+                                break
+                            batch_rows, processed_now = item
+                            _flush_db_batch(batch_rows, mark_versions)
+                            self.jobs_repo.update(
+                                job_id,
+                                done=processed_now,
+                                total=stage_total,
+                                message=f"正在打标签 {label} {processed_now}/{stage_total}",
+                            )
+                    except BaseException as exc:
+                        writer_errors.append(exc)
+
+                prod_thread = threading.Thread(
+                    target=_producer, daemon=True, name="artseek-retag-producer"
+                )
+                prod_thread.start()
+                writer_thread: threading.Thread | None = None
+                if is_final_stage:
+                    writer_thread = threading.Thread(
+                        target=_writer, daemon=True, name="artseek-retag-writer"
+                    )
+                    writer_thread.start()
+
+                stage_total = len(active_entries)
+                processed = 0
+                next_entries: list[tuple[int, str, str, str]] = []
+                entry_by_id = {e[0]: e for e in active_entries}
+
+                try:
+                    while True:
+                        if writer_errors:
+                            raise writer_errors[0]
+                        if self._wait_if_paused():
+                            producer_stop.set()
+                            break
+
+                        loaded: list[tuple[int, str, str, np.ndarray]] = []
+                        batch_seen = 0
+                        eof = False
+                        while len(loaded) < chunk_size:
+                            item = work_q.get()
+                            if item is None:
+                                eof = True
+                                break
+                            batch_seen += 1
+                            img_id, pid, chash, arr = item
+                            if arr is None:
+                                failed += 1
+                            else:
+                                loaded.append((img_id, pid, chash, arr))
+
+                        if loaded:
+                            preds = tagger.predict([item[3] for item in loaded])
+                            if is_final_stage:
+                                batch_rows: list[tuple[int, str, str, PredictedTags]] = []
+                                for idx, (img_id, pid, chash, _) in enumerate(loaded):
+                                    prev = stage_preds.pop(img_id, None)
+                                    merged_pred = (
+                                        merge_predicted_tags(
+                                            [*prev, preds[idx]],
+                                            max_tags=self.config.tagger.max_tags,
+                                        )
+                                        if prev
+                                        else preds[idx]
+                                    )
+                                    batch_rows.append((img_id, pid, chash, merged_pred))
+                                processed = min(stage_total, processed + batch_seen)
+                                write_q.put((batch_rows, processed))
+                            else:
+                                for idx, (img_id, _, _, _) in enumerate(loaded):
+                                    stage_preds.setdefault(img_id, []).append(preds[idx])
+                                    next_entries.append(entry_by_id[img_id])
+                                processed = min(stage_total, processed + batch_seen)
+                                self.jobs_repo.update(
+                                    job_id,
+                                    done=processed,
+                                    total=stage_total,
+                                    message=f"正在打标签 {stage_label} {processed}/{stage_total}",
+                                )
+                        elif batch_seen > 0:
+                            processed = min(stage_total, processed + batch_seen)
+                            self.jobs_repo.update(
+                                job_id,
+                                done=processed,
+                                total=stage_total,
+                                message=f"正在打标签 {stage_label} {processed}/{stage_total}",
+                            )
+
+                        if eof:
+                            break
+                finally:
                     producer_stop.set()
-                    break
+                    if writer_thread is not None:
+                        write_q.put(None)
+                        writer_thread.join()
+                    if writer_errors:
+                        raise writer_errors[0]
+                    if tagger is not None:
+                        tagger.close()
+                        tagger = None
+                    release_accelerator()
 
-                loaded: list[tuple[int, str, str, np.ndarray]] = []
-                batch_seen = 0
-                eof = False
-                while len(loaded) < chunk_size:
-                    item = work_q.get()
-                    if item is None:
-                        eof = True
-                        break
-                    batch_seen += 1
-                    img_id, pid, chash, arr = item
-                    if arr is None:
-                        failed += 1
-                    else:
-                        loaded.append((img_id, pid, chash, arr))
-
-                if loaded:
-                    preds = tagger.predict([item[3] for item in loaded])
-                    ids = [item[0] for item in loaded]
-                    existing_payloads = self.images.get_payloads_by_ids(ids, include_tags=False)
-
-                    db_updates: list[
-                        tuple[int, list[str], dict[str, float], dict[str, int], str]
-                    ] = []
-                    done_entries: list[tuple[str, int, str]] = []
-                    for idx, (img_id, pid, chash, _) in enumerate(loaded):
-                        pred = preds[idx]
-                        payload = existing_payloads.get(img_id) or {}
-                        desc_text = self._build_descriptor_for_payload(
-                            pred, payload, drop_overlap=self.config.tagger.drop_overlap
-                        )
-                        db_updates.append(
-                            (img_id, pred.tags, pred.scores, pred.categories, desc_text)
-                        )
-                        done_entries.append((pid, img_id, chash))
-                        if desc_text.strip():
-                            updated_descriptors.append((img_id, desc_text))
-
-                    self.images.update_tags_and_descriptor_batch(db_updates)
-                    self.task_state.mark_tag_models_done(
-                        done_entries, versions, descriptor_done=True
-                    )
-                    self._sync_provenance_auto_tags(
-                        [
-                            (done_entries[i][0], preds[i].tags, preds[i].scores)
-                            for i in range(len(loaded))
+                if not is_final_stage:
+                    if self._stop_event.is_set() and stage_preds:
+                        # Persist partial stage results so progress is not lost on stop.
+                        partial_rows = [
+                            (
+                                e[0],
+                                e[1],
+                                e[3],
+                                merge_predicted_tags(
+                                    stage_preds[e[0]],
+                                    max_tags=self.config.tagger.max_tags,
+                                )
+                                if len(stage_preds[e[0]]) > 1
+                                else stage_preds[e[0]][0],
+                            )
+                            for e in next_entries
+                            if e[0] in stage_preds
                         ]
-                    )
-                    updated += len(loaded)
-
-                processed = min(total, processed + batch_seen)
-                if batch_seen > 0:
-                    self.jobs_repo.update(
-                        job_id,
-                        done=processed,
-                        total=total,
-                        message=f"正在打标签 ({backend}) {processed}/{total}",
-                    )
-                if eof:
-                    break
+                        for start_i in range(0, len(partial_rows), 64):
+                            _flush_db_batch(
+                                partial_rows[start_i : start_i + 64],
+                                dict(completed_versions),
+                            )
+                        stage_preds.clear()
+                        break
+                    active_entries = next_entries
         except Exception as exc:
-            producer_stop.set()
             if tagger is not None:
                 tagger.close()
+                tagger = None
             release_accelerator()
             self.jobs_repo.update(
                 job_id,
@@ -1289,11 +1446,6 @@ class JobManager:
                 error=str(exc),
             )
             return
-
-        producer_stop.set()
-        if tagger is not None:
-            tagger.close()
-        release_accelerator()
 
         try:
             if updated_descriptors:

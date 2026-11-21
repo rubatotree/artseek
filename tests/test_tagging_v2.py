@@ -31,7 +31,7 @@ from artseek.ml.tag_postprocess import (
     merge_predicted_tags,
     prune_overlapping_for_summary,
 )
-from artseek.ml.tagger import CompositeTagger, PixAITaggerV09
+from artseek.ml.tagger import CompositeTagger, PixAITaggerV09, resolve_tagger_stages
 
 
 class _FakeORTTensor:
@@ -421,6 +421,178 @@ class TestTagPostprocessingAndFusion(unittest.TestCase):
             comp_preds = comp.predict([img])
             self.assertIn("genshin_impact", comp_preds[0].tags)
             self.assertEqual(comp_preds[0].rating, "safe")
+
+    def test_retag_dual_backend_runs_sequentially_per_model(self) -> None:
+        from artseek.config import AppConfig
+        from artseek.db.repos.jobs import JobRepo
+        from artseek.db.repos.provenance import ProvenanceRepo
+        from artseek.indexing.jobs import JobManager
+        from artseek.services.model_lifecycle import ModelLifecycle
+        from artseek.services.provenance import ProvenanceAppService
+        from artseek.vectors.index import VectorIndex
+
+        self.assertEqual(resolve_tagger_stages("camie+pixai0.9"), ["camie", "pixai0.9"])
+        self.assertEqual(resolve_tagger_stages("camie"), ["camie"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            img1 = tmp_path / "a.png"
+            img2 = tmp_path / "b.png"
+            Image.new("RGB", (64, 64), (10, 20, 30)).save(img1)
+            Image.new("RGB", (64, 64), (40, 50, 60)).save(img2)
+
+            db = Database(tmp_path / "test.sqlite3")
+            try:
+                vectors = VectorIndex(tmp_path / "vis.npy", tmp_path / "desc.npy")
+                images = ImageRepo(db)
+                prov = ProvenanceRepo(db)
+                images.upsert_images_batch(
+                    [
+                        ImageUpsertRecord(
+                            point_id="p1",
+                            root_key="r1",
+                            root_path=str(tmp_path),
+                            folder_key="r1",
+                            folder_path=str(tmp_path),
+                            folder_mtime_ns=1,
+                            path=str(img1),
+                            path_key=str(img1).casefold(),
+                            name="a.png",
+                            ext=".png",
+                            mtime_ns=10,
+                            size_bytes=100,
+                            width=64,
+                            height=64,
+                            content_hash="h1",
+                            phash="0" * 16,
+                            descriptor_text="",
+                            tags=[],
+                            tag_scores={},
+                            tag_categories={},
+                        ),
+                        ImageUpsertRecord(
+                            point_id="p2",
+                            root_key="r1",
+                            root_path=str(tmp_path),
+                            folder_key="r1",
+                            folder_path=str(tmp_path),
+                            folder_mtime_ns=1,
+                            path=str(img2),
+                            path_key=str(img2).casefold(),
+                            name="b.png",
+                            ext=".png",
+                            mtime_ns=11,
+                            size_bytes=100,
+                            width=64,
+                            height=64,
+                            content_hash="h2",
+                            phash="0" * 16,
+                            descriptor_text="",
+                            tags=[],
+                            tag_scores={},
+                            tag_categories={},
+                        ),
+                    ]
+                )
+                cfg = AppConfig()
+                cfg.tagger.backend = "camie+pixai0.9"
+                cfg.tagger.batch_size = 16
+                jobs_repo = JobRepo(db)
+                class _FakeEmbedder:
+                    dimension = 8
+
+                    def __init__(self, _cfg=None) -> None:
+                        pass
+
+                    def encode_texts(self, texts):
+                        return np.zeros((len(texts), 8), dtype=np.float32)
+
+                    def close(self) -> None:
+                        pass
+
+                lifecycle = ModelLifecycle(cfg, embedder_factory=_FakeEmbedder)
+                prov_svc = ProvenanceAppService(cfg, images, prov, vectors)
+                mgr = JobManager(cfg, db, images, prov, jobs_repo, vectors, lifecycle, prov_svc)
+
+                events: list[str] = []
+
+                class _StageTagger:
+                    def __init__(self, stage: str) -> None:
+                        self.stage = stage
+                        self.model_versions = (
+                            {"camie_v2": 1} if stage == "camie" else {"pixai_v09": 1}
+                        )
+                        events.append(f"load:{stage}")
+
+                    def predict(self, imgs):
+                        events.append(f"predict:{self.stage}:{len(imgs)}")
+                        if self.stage == "camie":
+                            return [
+                                PredictedTags(
+                                    tags=["1girl", "blue_hair"],
+                                    scores={"1girl": 0.95, "blue_hair": 0.88},
+                                    categories={"1girl": CAT_GENERAL, "blue_hair": CAT_GENERAL},
+                                    rating="safe",
+                                )
+                                for _ in imgs
+                            ]
+                        return [
+                            PredictedTags(
+                                tags=["furina_(genshin_impact)", "genshin_impact"],
+                                scores={
+                                    "furina_(genshin_impact)": 0.92,
+                                    "genshin_impact": 0.85,
+                                },
+                                categories={
+                                    "furina_(genshin_impact)": CAT_CHARACTER,
+                                    "genshin_impact": CAT_COPYRIGHT,
+                                },
+                            )
+                            for _ in imgs
+                        ]
+
+                    def close(self) -> None:
+                        events.append(f"close:{self.stage}")
+
+                def fake_build_tagger(_tcfg, _ecfg, *, backend=None):
+                    return _StageTagger(str(backend))
+
+                with (
+                    patch("artseek.indexing.jobs.build_tagger", side_effect=fake_build_tagger),
+                    patch("artseek.indexing.jobs.release_accelerator", return_value=None),
+                ):
+                    import time as _time
+
+                    jid = mgr.submit_retag_job(backend="camie+pixai0.9", skip_completed=False)
+                    deadline = _time.monotonic() + 10.0
+                    while _time.monotonic() < deadline:
+                        job = jobs_repo.get(jid)
+                        if job and job["status"] in {"completed", "failed", "stopped"}:
+                            break
+                        _time.sleep(0.05)
+                    mgr.close()
+                    self.assertEqual(jobs_repo.get(jid)["status"], "completed", jobs_repo.get(jid))
+
+                self.assertEqual(
+                    events,
+                    [
+                        "load:camie",
+                        "predict:camie:2",
+                        "close:camie",
+                        "load:pixai0.9",
+                        "predict:pixai0.9:2",
+                        "close:pixai0.9",
+                    ],
+                )
+                payloads = images.get_payloads_by_point_ids(["p1", "p2"])
+                for pid in ("p1", "p2"):
+                    self.assertIn("blue_hair", payloads[pid]["tags"])
+                    self.assertIn("furina_(genshin_impact)", payloads[pid]["tags"])
+                counts = TaskStateRepo(db).summary_counts()
+                self.assertEqual(counts["camie_v2_done"], 2)
+                self.assertEqual(counts["pixai_v09_done"], 2)
+            finally:
+                db.close()
 
 
 if __name__ == "__main__":
