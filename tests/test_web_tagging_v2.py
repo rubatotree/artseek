@@ -564,10 +564,25 @@ class TestStageDSearchAndWebAPI(unittest.TestCase):
                         "aesthetic_score": 0.8,
                         "focal_x": 0.5,
                         "focal_y": 0.5,
+                        "vision_meta_version": 2,
                         "attr_tags": {"medium:illustration": CAT_MEDIUM},
-                    }
+                    },
+                    {
+                        "image_id": rec_ids[1],
+                        "media_type": "illustration",
+                        "rating": "r18",
+                        "is_monochrome": 0,
+                        "is_ai": 1,
+                        "aesthetic_score": 0.2,
+                        "focal_x": 0.5,
+                        "focal_y": 0.5,
+                        "vision_meta_version": 1,
+                        "attr_tags": {"rating:r18": CAT_RATING},
+                    },
                 ]
             )
+            task_state.mark_vision_done([("legacy_pid", rec_ids[0], "ch_leg")], version=2)
+            task_state.mark_vision_done([("new_pid", rec_ids[1], "ch_new")], version=1)
             task_state.mark_tag_models_done(
                 [("new_pid", rec_ids[1], "ch_new")],
                 {"camie_v2": 1, "pixai_v09": 1},
@@ -658,10 +673,11 @@ class TestStageDSearchAndWebAPI(unittest.TestCase):
                 self.assertEqual(summary["purged_images"], 1)
                 self.assertGreaterEqual(summary["deleted_tag_links"], 1)
                 self.assertEqual(summary["purged_source_auto_tags"], 1)
+                self.assertEqual(summary["purged_stale_vision"], 1)
 
-                # Legacy image: old_wrong_tag removed, medium:illustration preserved;
+                # Legacy image: old_wrong_tag removed, v2 medium:illustration preserved;
                 # manual_tags and pixiv source tag preserved; old_24nn auto tag removed;
-                # new_pid keep_new_tag preserved untouched.
+                # new_pid keep_new_tag preserved while stale v1 vision attrs are reset.
                 conn = app.state.container.db.read_conn()
                 leg_tags = {
                     r["tag"]
@@ -683,6 +699,42 @@ class TestStageDSearchAndWebAPI(unittest.TestCase):
                     ).fetchall()
                 }
                 self.assertIn("keep_new_tag", new_tags)
+                self.assertNotIn("rating:r18", new_tags)
+                row_new = conn.execute(
+                    "SELECT rating, is_ai, vision_meta_version FROM images WHERE id = ?",
+                    (rec_ids[1],),
+                ).fetchone()
+                self.assertIsNone(row_new["rating"])
+                self.assertEqual(row_new["is_ai"], 0)
+                self.assertEqual(row_new["vision_meta_version"], 0)
+                ts_new = conn.execute(
+                    "SELECT vision_done FROM image_task_state WHERE point_id = 'new_pid'"
+                ).fetchone()
+                self.assertEqual(ts_new["vision_done"], 0)
+
+                # Verify tag cross-calibration promotes safe -> r18 for verified explicit tags
+                app.state.container.images.update_tags_and_descriptor_batch(
+                    [
+                        (
+                            rec_ids[1],
+                            ["nipples", "keep_new_tag"],
+                            {"nipples": 0.92, "keep_new_tag": 0.95},
+                            {"nipples": 0, "keep_new_tag": 0},
+                            "nipples, keep_new_tag",
+                        )
+                    ]
+                )
+                cal_updates = [
+                    {
+                        "image_id": rec_ids[1],
+                        "rating": "safe",
+                        "attr_tags": {"medium:illustration": CAT_MEDIUM, "rating:safe": CAT_RATING},
+                    }
+                ]
+                app.state.container.job_manager._calibrate_vision_rating_with_tags(cal_updates)
+                self.assertEqual(cal_updates[0]["rating"], "r18")
+                self.assertIn("rating:r18", cal_updates[0]["attr_tags"])
+                self.assertNotIn("rating:safe", cal_updates[0]["attr_tags"])
 
                 prov_leg = conn.execute(
                     "SELECT manual_tags_json, auto_tags_json, auto_tagged_at "

@@ -18,13 +18,23 @@ from .embedder import resolve_device
 from .tag_postprocess import CAT_ATTRIBUTE, CAT_MEDIUM, CAT_RATING
 from .tagger import _cached_or_download, create_ort_session
 
-VISION_META_VERSION = 1
+VISION_META_VERSION = 2
 
 _MEDIUM_LABELS = ("3d", "bangumi", "comic", "illustration", "not_painting")
 _RATING_LABELS = ("safe", "r15", "r18")
 _MONO_LABELS = ("monochrome", "normal")
 _AI_LABELS = ("ai", "human")
 _COMPLETENESS_LABELS = ("polished", "rough", "monochrome")
+_AESTHETIC_LABELS = ("masterpiece", "best", "great", "good", "normal", "low", "worst")
+_AESTHETIC_WEIGHTS: dict[str, float] = {
+    "masterpiece": 1.0,
+    "best": 0.84,
+    "great": 0.68,
+    "good": 0.52,
+    "normal": 0.34,
+    "low": 0.16,
+    "worst": 0.02,
+}
 
 
 def _softmax(logits: np.ndarray) -> np.ndarray:
@@ -283,7 +293,7 @@ class HeadFocalDetector:
 
 
 class _OnnxImageClassifier:
-    """Shared wrapper for DeepGHS `[0, 1]` RGB ONNX image classifiers."""
+    """Shared wrapper for DeepGHS normalized `[-1, 1]` RGB ONNX image classifiers."""
 
     def __init__(
         self,
@@ -292,9 +302,14 @@ class _OnnxImageClassifier:
         model_file: str,
         meta_file: str,
         default_labels: tuple[str, ...],
-        input_size: int,
+        input_size: int = 384,
+        *,
+        mean: tuple[float, float, float] = (0.5, 0.5, 0.5),
+        std: tuple[float, float, float] = (0.5, 0.5, 0.5),
     ) -> None:
         self.input_size = int(input_size)
+        self._mean = np.asarray(mean, dtype=np.float32).reshape(1, 1, 3)
+        self._std = np.asarray(std, dtype=np.float32).reshape(1, 1, 3)
         model_path = _cached_or_download(repo_id, model_file)
         meta_path = _cached_or_download(repo_id, meta_file)
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -313,8 +328,9 @@ class _OnnxImageClassifier:
             rgb = composite_on_white(img)
             if rgb.size != (size, size):
                 rgb = rgb.resize((size, size), Image.Resampling.BILINEAR)
-            arr = (np.asarray(rgb, dtype=np.float32) / 255.0).transpose(2, 0, 1)
-            tensors.append(arr)
+            arr = np.asarray(rgb, dtype=np.float32) / 255.0
+            arr = (arr - self._mean) / self._std
+            tensors.append(arr.transpose(2, 0, 1))
         return np.ascontiguousarray(np.stack(tensors, axis=0), dtype=np.float32)
 
     def predict_probs(self, images: Sequence[Image.Image]) -> list[dict[str, float]]:
@@ -344,7 +360,7 @@ class _OnnxImageClassifier:
 
 
 class VisionAttributeAnalyzer:
-    """Runs head focal detection + medium, rating, monochrome, AI, and completeness models."""
+    """Runs head focal detection + medium, rating, monochrome, AI, completeness & aesthetic."""
 
     def __init__(self, runtime: EmbeddingConfig) -> None:
         self.device = resolve_device(runtime.device)
@@ -352,18 +368,18 @@ class VisionAttributeAnalyzer:
         self.medium_clf = _OnnxImageClassifier(
             self.device,
             "deepghs/anime_classification",
-            "caformer_s36_v1.2_focal/model.onnx",
-            "caformer_s36_v1.2_focal/meta.json",
+            "caformer_s36_v1.5_focal/model.onnx",
+            "caformer_s36_v1.5_focal/meta.json",
             _MEDIUM_LABELS,
             384,
         )
         self.rating_clf = _OnnxImageClassifier(
             self.device,
             "deepghs/anime_rating",
-            "mobilenetv3/model.onnx",
-            "mobilenetv3/meta.json",
+            "caformer_s36_v1_pruned_ls0.1/model.onnx",
+            "caformer_s36_v1_pruned_ls0.1/meta.json",
             _RATING_LABELS,
-            224,
+            384,
         )
         self.mono_clf = _OnnxImageClassifier(
             self.device,
@@ -376,18 +392,26 @@ class VisionAttributeAnalyzer:
         self.ai_clf = _OnnxImageClassifier(
             self.device,
             "deepghs/anime_ai_check",
-            "mobilenetv3_sce_dist/model.onnx",
-            "mobilenetv3_sce_dist/meta.json",
+            "caformer_s36_plus_sce/model.onnx",
+            "caformer_s36_plus_sce/meta.json",
             _AI_LABELS,
-            224,
+            384,
         )
         self.completeness_clf = _OnnxImageClassifier(
             self.device,
             "deepghs/anime_completeness",
-            "mobilenetv3_v2.2_dist/model.onnx",
-            "mobilenetv3_v2.2_dist/meta.json",
+            "caformer_s36_v2.2/model.onnx",
+            "caformer_s36_v2.2/meta.json",
             _COMPLETENESS_LABELS,
-            224,
+            384,
+        )
+        self.aesthetic_clf = _OnnxImageClassifier(
+            self.device,
+            "deepghs/anime_aesthetic",
+            "swinv2pv3_v0_448_ls0.2_x/model.onnx",
+            "swinv2pv3_v0_448_ls0.2_x/meta.json",
+            _AESTHETIC_LABELS,
+            448,
         )
 
     def close(self) -> None:
@@ -398,6 +422,7 @@ class VisionAttributeAnalyzer:
             self.mono_clf,
             self.ai_clf,
             self.completeness_clf,
+            self.aesthetic_clf,
         ):
             component.close()
 
@@ -415,6 +440,7 @@ class VisionAttributeAnalyzer:
         monos = self.mono_clf.predict_probs(images)
         ai_probs = self.ai_clf.predict_probs(images)
         comps = self.completeness_clf.predict_probs(images)
+        aesthetics = self.aesthetic_clf.predict_probs(images)
 
         updates: list[dict[str, Any]] = []
         for idx, (img_id, pil_img) in enumerate(items):
@@ -424,6 +450,7 @@ class VisionAttributeAnalyzer:
             mono_dist = monos[idx]
             ai_dist = ai_probs[idx]
             comp_dist = comps[idx]
+            aes_dist = aesthetics[idx]
 
             media_type = max(med_dist.items(), key=lambda kv: kv[1])[0]
             rating = max(rat_dist.items(), key=lambda kv: kv[1])[0]
@@ -435,19 +462,34 @@ class VisionAttributeAnalyzer:
                 is_ai = 1
                 ai_source = embedded_source or "metadata"
                 ai_score = 0.99
+            elif media_type in ("not_painting", "3d"):
+                # `deepghs/anime_ai_check` is trained strictly on 2D anime illustrations
+                # and emits false positives on real photos, BJD dolls, and 3D renders.
+                is_ai = 0
+                ai_source = "human"
+                ai_score = 0.0
             else:
                 ai_score = float(ai_dist.get("ai", 0.0))
-                is_ai = 1 if ai_score >= 0.65 else 0
+                is_ai = 1 if ai_score >= 0.70 else 0
                 ai_source = "model" if is_ai else "human"
 
-            polished_p = float(comp_dist.get("polished", 0.0))
-            rough_p = float(comp_dist.get("rough", 0.0))
-            illus_p = float(med_dist.get("illustration", 0.0))
-            not_paint_p = float(med_dist.get("not_painting", 0.0))
-            # Composite visual polish & illustration quality estimate in [0, 1].
-            aesthetic = _clamp01(
-                0.55 * polished_p + 0.30 * illus_p + 0.15 * (1.0 - rough_p) - 0.25 * not_paint_p
+            aes_num = sum(
+                float(prob) * _AESTHETIC_WEIGHTS[label]
+                for label, prob in aes_dist.items()
+                if label in _AESTHETIC_WEIGHTS
             )
+            aes_den = sum(
+                float(prob)
+                for label, prob in aes_dist.items()
+                if label in _AESTHETIC_WEIGHTS
+            )
+            if aes_den > 1e-6:
+                aesthetic = _clamp01(aes_num / aes_den)
+            else:
+                polished_p = float(comp_dist.get("polished", 0.0))
+                rough_p = float(comp_dist.get("rough", 0.0))
+                illus_p = float(med_dist.get("illustration", 0.0))
+                aesthetic = _clamp01(0.55 * polished_p + 0.30 * illus_p + 0.15 * (1.0 - rough_p))
 
             attr_tags: dict[str, int] = {
                 f"medium:{media_type}": CAT_MEDIUM,

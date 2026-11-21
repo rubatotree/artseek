@@ -106,6 +106,15 @@ class TestVisionAttributesAndCCIP(unittest.TestCase):
                 "deepghs/monochrome_detect": ["monochrome", "normal"],
                 "deepghs/anime_ai_check": ["ai", "human"],
                 "deepghs/anime_completeness": ["polished", "rough", "monochrome"],
+                "deepghs/anime_aesthetic": [
+                    "masterpiece",
+                    "best",
+                    "great",
+                    "good",
+                    "normal",
+                    "low",
+                    "worst",
+                ],
             }
             paths: dict[tuple[str, str], Path] = {}
             for repo_id, labels in meta_files.items():
@@ -134,15 +143,27 @@ class TestVisionAttributesAndCCIP(unittest.TestCase):
                 5: np.array([[0.0, 0.0, 0.0, 5.0, 0.0]], dtype=np.float32),
                 3: np.array([[5.0, 0.0, 0.0]], dtype=np.float32),
                 2: np.array([[0.0, 5.0]], dtype=np.float32),
+                7: np.array([[5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], dtype=np.float32),
             }
+            captured_inputs: list[tuple[int, float, float]] = []
+
+            def _capture_and_return(key: int):
+                def _fn(arr: np.ndarray) -> np.ndarray:
+                    captured_inputs.append(
+                        (int(arr.shape[-1]), float(np.min(arr)), float(np.max(arr)))
+                    )
+                    return np.repeat(logits_by_size[key], arr.shape[0], axis=0)
+
+                return _fn
 
             sessions = [
                 _FakeORTSession(head_out, input_name="images", output_name="output0"),
-                _FakeORTSession(lambda arr: np.repeat(logits_by_size[5], arr.shape[0], axis=0)),
-                _FakeORTSession(lambda arr: np.repeat(logits_by_size[3], arr.shape[0], axis=0)),
-                _FakeORTSession(lambda arr: np.repeat(logits_by_size[2], arr.shape[0], axis=0)),
-                _FakeORTSession(lambda arr: np.repeat(logits_by_size[2], arr.shape[0], axis=0)),
-                _FakeORTSession(lambda arr: np.repeat(logits_by_size[3], arr.shape[0], axis=0)),
+                _FakeORTSession(_capture_and_return(5)),
+                _FakeORTSession(_capture_and_return(3)),
+                _FakeORTSession(_capture_and_return(2)),
+                _FakeORTSession(_capture_and_return(2)),
+                _FakeORTSession(_capture_and_return(3)),
+                _FakeORTSession(_capture_and_return(7)),
             ]
             sess_iter = iter(sessions)
 
@@ -173,6 +194,43 @@ class TestVisionAttributesAndCCIP(unittest.TestCase):
             self.assertIn("hand_drawn", u["attr_tags"])
             self.assertIn("polished", u["attr_tags"])
             self.assertGreater(u["aesthetic_score"], 0.80)
+            # Verify official [-1, 1] normalization & 384/448 resolutions
+            self.assertEqual([c[0] for c in captured_inputs], [384, 384, 384, 384, 384, 448])
+            for _, arr_min, arr_max in captured_inputs:
+                self.assertGreaterEqual(arr_min, -1.01)
+                self.assertLessEqual(arr_max, 1.01)
+                self.assertGreater(arr_max, 0.5)
+
+            # Domain guard: 3D/photo medium must not be flagged AI without embedded metadata
+            guard_logits = {
+                5: np.array([[5.0, 0.0, 0.0, 0.0, 0.0]], dtype=np.float32),  # 3d
+                3: np.array([[5.0, 0.0, 0.0]], dtype=np.float32),
+                2: np.array([[5.0, 0.0]], dtype=np.float32),  # ai=1.0 & mono=1.0
+                7: np.array([[0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+            }
+            guard_sessions = [
+                _FakeORTSession(head_out, input_name="images", output_name="output0"),
+                _FakeORTSession(lambda arr: np.repeat(guard_logits[5], arr.shape[0], axis=0)),
+                _FakeORTSession(lambda arr: np.repeat(guard_logits[3], arr.shape[0], axis=0)),
+                _FakeORTSession(lambda arr: np.repeat(guard_logits[2], arr.shape[0], axis=0)),
+                _FakeORTSession(lambda arr: np.repeat(guard_logits[2], arr.shape[0], axis=0)),
+                _FakeORTSession(lambda arr: np.repeat(guard_logits[3], arr.shape[0], axis=0)),
+                _FakeORTSession(lambda arr: np.repeat(guard_logits[7], arr.shape[0], axis=0)),
+            ]
+            g_iter = iter(guard_sessions)
+            with (
+                patch("artseek.ml.vision_attributes._cached_or_download", side_effect=fake_dl),
+                patch(
+                    "artseek.ml.vision_attributes.create_ort_session",
+                    side_effect=lambda *args, **kwargs: next(g_iter),
+                ),
+            ):
+                g_analyzer = VisionAttributeAnalyzer(EmbeddingConfig(device="cpu"))
+                g_updates = g_analyzer.analyze_batch([(8, img)])
+                g_analyzer.close()
+            self.assertEqual(g_updates[0]["media_type"], "3d")
+            self.assertEqual(g_updates[0]["is_ai"], 0)
+            self.assertEqual(g_updates[0]["ai_score"], 0.0)
 
     def test_vision_classifiers_skip_double_softmax_when_already_normalized(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -386,7 +444,7 @@ class TestVisionAttributesAndCCIP(unittest.TestCase):
                                 "focal_x": 0.5,
                                 "focal_y": 0.3,
                                 "character_crop_json": '{"body":[0.1,0.1,0.9,0.9]}',
-                                "vision_meta_version": 1,
+                                "vision_meta_version": 2,
                                 "attr_tags": {"medium:illustration": 7, "rating:safe": 6},
                             }
                             for img_id, _ in items

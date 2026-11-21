@@ -3994,7 +3994,7 @@
             <strong>图库状态概览</strong>
             <div style="display:flex;align-items:center;gap:8px;">
               <span class="task-section-sub">${escapeHtml(scopeHint)}</span>
-              <button type="button" class="task-mini-btn" data-bg-job="purge-legacy" title="加入队列：清理尚未用 Camie/PixAI 重标图片的旧版错误自动标签（保留手动与 Pixiv/X 来源标签）">清理旧版错误标签</button>
+              <button type="button" class="task-mini-btn" data-bg-job="purge-legacy" title="加入队列：清理旧版错误自动标签及旧版视觉属性（保留手动与 Pixiv/X 来源标签）">清理旧版错误标签</button>
             </div>
           </div>
           <div class="provenance-stat-grid">
@@ -4154,8 +4154,9 @@
       const imgs = Number(sum.purged_images || 0).toLocaleString();
       const links = Number(sum.deleted_tag_links || 0).toLocaleString();
       const src = Number(sum.purged_source_auto_tags || 0).toLocaleString();
+      const vis = Number(sum.purged_stale_vision || 0).toLocaleString();
       if (job.status === 'completed') {
-        return `清理旧版标签完成：处理 ${imgs} 张，删除 ${links} 条旧自动标签、${src} 条旧来源自动标签。`;
+        return `清理旧版完成：清理 ${imgs} 张旧标签（${links} 条自动标签、${src} 条来源标签），重置 ${vis} 张旧视觉属性。`;
       }
       if (job.status === 'stopped') {
         return `清理旧版标签已停止：已处理 ${imgs} 张，删除 ${links} 条旧自动标签。`;

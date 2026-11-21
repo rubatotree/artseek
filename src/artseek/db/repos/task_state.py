@@ -428,7 +428,12 @@ class TaskStateRepo:
             for r in rows
         ]
 
-    def summary_counts(self, scope_row_ids: Sequence[int] | None = None) -> dict[str, int]:
+    def summary_counts(
+        self,
+        scope_row_ids: Sequence[int] | None = None,
+        *,
+        min_vision_version: int = 1,
+    ) -> dict[str, int]:
         conn = self.db.read_conn()
         sql = """
             SELECT i.id,
@@ -438,6 +443,7 @@ class TaskStateRepo:
                    COALESCE(ts.tag_models_json, '{}') AS tag_models_json,
                    COALESCE(ts.descriptor_done, 0) AS descriptor_done,
                    COALESCE(ts.vision_done, 0) AS vision_done,
+                   COALESCE(i.vision_meta_version, 0) AS vision_meta_version,
                    COALESCE(ts.ccip_done, 0) AS ccip_done,
                    COALESCE(ts.caption_done, 0) AS caption_done
             FROM images AS i
@@ -478,11 +484,15 @@ class TaskStateRepo:
             "ccip_done": 0,
             "caption_done": 0,
         }
+        req_vision = max(1, int(min_vision_version))
         for r in rows:
             counts["index_done"] += int(bool(r["index_done"]))
             counts["url_done"] += int(bool(r["url_done"]))
             counts["author_done"] += int(bool(r["author_done"]))
-            counts["vision_done"] += int(bool(r["vision_done"]))
+            counts["vision_done"] += int(
+                int(r["vision_done"] or 0) >= req_vision
+                and int(r["vision_meta_version"] or 0) >= req_vision
+            )
             counts["ccip_done"] += int(bool(r["ccip_done"]))
             counts["caption_done"] += int(bool(r["caption_done"]))
             models = _parse_tag_models(r["tag_models_json"])

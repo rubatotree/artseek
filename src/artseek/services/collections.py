@@ -19,7 +19,13 @@ from ..collections import (
 from ..db.repos.collections import CollectionRepo
 from ..db.repos.images import ImageRepo
 from ..db.repos.provenance import ProvenanceRepo
-from .common import ServiceError, attach_provenance, gallery_result, normalize_ratings, rating_matches
+from .common import (
+    ServiceError,
+    attach_provenance,
+    gallery_result,
+    normalize_ratings,
+    rating_matches,
+)
 
 _MAX_ORDERED_COLLECTION_IDS = 10_240
 

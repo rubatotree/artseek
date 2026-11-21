@@ -393,12 +393,18 @@ class JobManager:
             )
 
         try:
+            purged_stale_vision = 0
+            if not self._stop_event.is_set():
+                purged_stale_vision = self.images.purge_stale_vision_attributes(
+                    min_version=VISION_META_VERSION
+                )
             summary = self.images.purge_legacy_auto_tags(
                 keep_new_models=keep_new_models,
                 progress=_progress,
                 stop_event=self._stop_event,
                 pause_event=self._pause_event,
             )
+            summary["purged_stale_vision"] = purged_stale_vision
         except Exception as exc:
             self.jobs_repo.update(
                 job_id,
@@ -415,9 +421,10 @@ class JobManager:
             f"旧版标签清理已停止：已处理 {summary.get('purged_images', 0)} 张"
             if stopped
             else (
-                f"旧版标签清理完成：处理 {summary.get('purged_images', 0)} 张，"
-                f"删除 {summary.get('deleted_tag_links', 0)} 条旧自动标签、"
-                f"{summary.get('purged_source_auto_tags', 0)} 条旧来源自动标签"
+                f"旧版标签与属性清理完成：清理 {summary.get('purged_images', 0)} 张旧标签"
+                f"（{summary.get('deleted_tag_links', 0)} 条标签、"
+                f"{summary.get('purged_source_auto_tags', 0)} 条来源标签），"
+                f"重置 {purged_stale_vision} 张旧视觉属性"
             )
         )
         self.jobs_repo.update(
@@ -457,7 +464,10 @@ class JobManager:
             self.prov_repo.set_auto_tags_many(updates)
 
     def task_summary(self, scope_row_ids: Sequence[int] | None = None) -> dict[str, int]:
-        return self.task_state.summary_counts(scope_row_ids=scope_row_ids)
+        return self.task_state.summary_counts(
+            scope_row_ids=scope_row_ids,
+            min_vision_version=VISION_META_VERSION,
+        )
 
     def submit_retag_job(
         self,
@@ -1078,6 +1088,101 @@ class JobManager:
                 error=str(exc),
             )
 
+    _EXPLICIT_R18_TAGS = frozenset(
+        {
+            "sex",
+            "penis",
+            "pussy",
+            "vaginal",
+            "anal",
+            "fellatio",
+            "cunnilingus",
+            "paizuri",
+            "cum",
+            "ejaculation",
+            "uncensored",
+            "nipples",
+            "nude",
+            "completely_nude",
+            "topless",
+            "bottomless",
+            "breasts_out",
+        }
+    )
+    _SUGGESTIVE_R15_TAGS = frozenset(
+        {
+            "lingerie",
+            "micro_bikini",
+            "panties",
+            "underwear",
+            "bikini",
+            "cameltoe",
+            "areolae",
+        }
+    )
+
+    def _calibrate_vision_rating_with_tags(self, updates: list[dict[str, Any]]) -> None:
+        """Promote `safe`/`r15` ratings when verified Camie/PixAI tags show explicit content."""
+        if not updates:
+            return
+        ids = [int(u["image_id"]) for u in updates]
+        marks = ",".join("?" for _ in ids)
+        conn = self.db.read_conn()
+        verified_rows = conn.execute(
+            f"""
+            SELECT i.id, ts.tag_models_json
+            FROM images AS i
+            JOIN image_task_state AS ts ON ts.point_id = i.point_id
+            WHERE i.id IN ({marks})
+              AND (
+                ts.tag_models_json LIKE '%camie_v2%'
+                OR ts.tag_models_json LIKE '%pixai_v09%'
+                OR ts.tag_models_json LIKE '%pixai_v10%'
+              )
+            """,
+            tuple(ids),
+        ).fetchall()
+        verified_ids = {int(r["id"]) for r in verified_rows}
+        if not verified_ids:
+            return
+        v_list = sorted(verified_ids)
+        v_marks = ",".join("?" for _ in v_list)
+        tag_rows = conn.execute(
+            f"""
+            SELECT it.image_id, t.name, it.score
+            FROM image_tags AS it
+            JOIN tags AS t ON t.id = it.tag_id
+            WHERE it.image_id IN ({v_marks})
+              AND it.score >= 0.60
+            """,
+            tuple(v_list),
+        ).fetchall()
+        by_img: dict[int, dict[str, float]] = {}
+        for r in tag_rows:
+            by_img.setdefault(int(r["image_id"]), {})[str(r["name"])] = float(r["score"])
+
+        for u in updates:
+            img_id = int(u["image_id"])
+            tags_map = by_img.get(img_id)
+            if not tags_map:
+                continue
+            cur_rating = str(u.get("rating") or "safe")
+            new_rating = cur_rating
+            if any(tags_map.get(t, 0.0) >= 0.60 for t in self._EXPLICIT_R18_TAGS):
+                new_rating = "r18"
+            elif cur_rating == "safe" and any(
+                tags_map.get(t, 0.0) >= 0.65 for t in self._SUGGESTIVE_R15_TAGS
+            ):
+                new_rating = "r15"
+            if new_rating != cur_rating:
+                u["rating"] = new_rating
+                attr_tags = dict(u.get("attr_tags") or {})
+                for k in list(attr_tags):
+                    if k.startswith("rating:"):
+                        attr_tags.pop(k, None)
+                attr_tags[f"rating:{new_rating}"] = CAT_RATING
+                u["attr_tags"] = attr_tags
+
     def _execute_vision_enrich(
         self,
         job_id: str,
@@ -1137,6 +1242,7 @@ class JobManager:
                     continue
 
                 updates = analyzer.analyze_batch([(item[0], item[3]) for item in loaded])
+                self._calibrate_vision_rating_with_tags(updates)
                 self.images.update_vision_attributes_batch(updates)
                 self.task_state.mark_vision_done(
                     [(item[1], item[0], item[2]) for item in loaded],

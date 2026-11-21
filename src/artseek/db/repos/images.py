@@ -1496,3 +1496,86 @@ class ImageRepo:
             "cleared_descriptors": cleared_descriptors,
             "stopped": 1 if (stop_event is not None and stop_event.is_set()) else 0,
         }
+
+    def purge_stale_vision_attributes(self, *, min_version: int = 2) -> int:
+        """Reset pre-`min_version` vision attributes and their projected attribute tags."""
+        req = max(1, int(min_version))
+        now = int(time.time())
+        with self.db.write_tx() as tx:
+            rows = tx.execute(
+                """
+                SELECT i.id, i.point_id
+                FROM images AS i
+                LEFT JOIN image_task_state AS ts ON ts.point_id = i.point_id
+                WHERE i.deleted = 0
+                  AND (
+                    (i.vision_meta_version > 0 AND i.vision_meta_version < ?)
+                    OR (COALESCE(ts.vision_done, 0) > 0 AND COALESCE(ts.vision_done, 0) < ?)
+                    OR (
+                      COALESCE(i.vision_meta_version, 0) < ?
+                      AND (i.media_type IS NOT NULL OR i.rating IS NOT NULL)
+                    )
+                  )
+                """,
+                (req, req, req),
+            ).fetchall()
+            if not rows:
+                return 0
+            ids = [int(r["id"]) for r in rows]
+            pids = [str(r["point_id"]) for r in rows]
+            touched: set[int] = set()
+            for chunk in _chunks(ids):
+                marks = ",".join("?" for _ in chunk)
+                touched.update(
+                    int(r[0])
+                    for r in tx.execute(
+                        f"""
+                        SELECT DISTINCT it.tag_id
+                        FROM image_tags AS it
+                        JOIN tags AS t ON t.id = it.tag_id
+                        WHERE it.image_id IN ({marks}) AND t.category IN (6, 7, 8)
+                        """,
+                        tuple(chunk),
+                    ).fetchall()
+                )
+                tx.execute(
+                    f"""
+                    DELETE FROM image_tags
+                    WHERE image_id IN ({marks})
+                      AND tag_id IN (SELECT id FROM tags WHERE category IN (6, 7, 8))
+                    """,
+                    tuple(chunk),
+                )
+                tx.execute(
+                    f"""
+                    UPDATE images
+                    SET media_type = NULL,
+                        rating = NULL,
+                        is_monochrome = 0,
+                        monochrome_score = 0.0,
+                        is_ai = 0,
+                        ai_source = '',
+                        ai_score = 0.0,
+                        aesthetic_score = 0.0,
+                        shot_type = '',
+                        focal_x = 0.5,
+                        focal_y = 0.35,
+                        character_crop_json = NULL,
+                        vision_meta_version = 0,
+                        vision_meta_at = NULL
+                    WHERE id IN ({marks})
+                    """,
+                    tuple(chunk),
+                )
+            for p_chunk in _chunks(pids):
+                p_marks = ",".join("?" for _ in p_chunk)
+                tx.execute(
+                    f"""
+                    UPDATE image_task_state
+                    SET vision_done = 0, updated_at = ?
+                    WHERE point_id IN ({p_marks})
+                    """,
+                    (now, *p_chunk),
+                )
+            self._refresh_tag_doc_counts_locked(tx, touched)
+            return len(ids)
