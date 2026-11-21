@@ -171,6 +171,7 @@ class ProvenanceAppService:
             "author": author,
             "page_label": page_label,
             "path": str(path),
+            "mtime_ns": int(payload.get("mtime_ns") or 0),
             "reverse_search": {
                 "saucenao": "https://saucenao.com/",
                 "ascii2d": "https://ascii2d.net/",

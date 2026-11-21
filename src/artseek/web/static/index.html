@@ -930,9 +930,20 @@
       background: transparent !important; color: var(--muted) !important;
     }
     .provenance-icon-btn:hover { background: var(--rose-soft) !important; color: #8a5268 !important; }
+    .provenance-icon-btn.danger:hover { background: #fbeaea !important; color: #b54545 !important; }
     .provenance-icon-btn svg {
       width: 14px; height: 14px; fill: none; stroke: currentColor;
       stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+    }
+    .provenance-quick-author { position: relative; flex: 1; min-width: 0; }
+    .provenance-quick-author input {
+      width: 100%; padding: 5px 9px; border: 1px solid var(--line);
+      border-radius: 8px; background: #fff; color: var(--ink);
+      font: inherit; font-size: 12px;
+    }
+    .provenance-quick-author input:focus { outline: 2px solid #ddb2c2; outline-offset: 1px; }
+    .provenance-author-create {
+      border-top: 1px solid var(--line); color: #8a5268 !important; font-weight: 650 !important;
     }
     .provenance-tag-group { display: grid; gap: 5px; min-width: 0; }
     .provenance-tag-group + .provenance-tag-group { margin-top: 4px; }
@@ -2491,6 +2502,32 @@
       dialog, dialog::backdrop, .modal-bar { backdrop-filter: none; -webkit-backdrop-filter: none; }
       .notes-pane, .notes-editor .vditor-toolbar { transition: none; transform: none; }
     }
+    .artist-card-avatar.has-hq-avatar { position: relative; }
+    .has-hq-avatar > img {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .hq-avatar-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border-radius: inherit;
+      pointer-events: none;
+    }
+    .artist-namecard-avatar.has-hq-avatar.is-blurred > .hq-avatar-canvas {
+      filter: blur(10px);
+      transform: scale(1.12);
+    }
+    .artist-dialog-avatar-btn.has-hq-avatar.is-blurred > .hq-avatar-canvas {
+      filter: blur(8px);
+      transform: scale(1.12);
+    }
+    .artist-card-avatar.has-hq-avatar.is-blurred > .hq-avatar-canvas {
+      filter: blur(6px);
+      transform: scale(1.12);
+    }
   </style>
 </head>
 <body>
@@ -3884,6 +3921,120 @@
         applyProvenanceTagAliases(link, [tag]);
       }
     }
+    function formatProvenanceTime(input) {
+      if (input == null || input === '') return { short: '', full: '' };
+      const raw = typeof input === 'number' ? '' : String(input);
+      const date = new Date(input);
+      if (Number.isNaN(date.getTime())) return { short: raw, full: raw };
+      const pad2 = (n) => String(n).padStart(2, '0');
+      const short = `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+      return { short, full: raw || `${short}:${pad2(date.getSeconds())}` };
+    }
+    async function copyTextToClipboard(text) {
+      const value = String(text ?? '');
+      if (!value) return false;
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        try {
+          await navigator.clipboard.writeText(value);
+          return true;
+        } catch (_) { /* fall back to execCommand below */ }
+      }
+      const host = ($('viewer') && $('viewer').open) ? $('viewer') : document.body;
+      const textarea = document.createElement('textarea');
+      textarea.value = value;
+      textarea.setAttribute('readonly', '');
+      textarea.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+      host.appendChild(textarea);
+      textarea.focus({ preventScroll: true });
+      textarea.select();
+      textarea.setSelectionRange(0, value.length);
+      let ok = false;
+      try {
+        ok = document.execCommand('copy');
+      } catch (_) {
+        ok = false;
+      } finally {
+        textarea.remove();
+      }
+      return ok;
+    }
+    function bindAuthorSearch({ input, results, limit = 6, onSelect, onSubmitQuery, submitLabel }) {
+      if (!input || !results) return;
+      let seq = 0;
+      let timer = 0;
+      const hide = () => { results.hidden = true; };
+      const runSearch = async (query) => {
+        const currentSeq = ++seq;
+        try {
+          const data = await parseResponse(await fetch('/api/authors', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ q: query, limit }),
+          }));
+          if (currentSeq !== seq || !results.isConnected) return;
+          const items = data.authors || [];
+          results.replaceChildren();
+          for (const item of items) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'provenance-author-result';
+            const label = item.name || item.handle || item.key;
+            button.innerHTML = `<span>${escapeHtml(label)}</span><small>${escapeHtml(item.handle ? `@${item.handle}` : `UID ${item.key}`)} · ${Number(item.image_count || 0)} 张</small>`;
+            button.addEventListener('click', () => {
+              hide();
+              onSelect(item, label);
+            });
+            results.append(button);
+          }
+          if (!items.length && !onSubmitQuery) {
+            results.innerHTML = '<div class="provenance-hint">没有匹配作者</div>';
+          }
+          if (onSubmitQuery && query) {
+            const createBtn = document.createElement('button');
+            createBtn.type = 'button';
+            createBtn.className = 'provenance-author-result provenance-author-create';
+            createBtn.textContent = submitLabel ? submitLabel(query) : `以「${query}」保存为作者`;
+            createBtn.addEventListener('click', () => {
+              hide();
+              onSubmitQuery(query);
+            });
+            results.append(createBtn);
+          } else if (!items.length && onSubmitQuery) {
+            results.innerHTML = '<div class="provenance-hint">输入作者名、Pixiv ID 或 X handle 搜索</div>';
+          }
+          results.hidden = false;
+        } catch (error) {
+          if (currentSeq !== seq || !results.isConnected) return;
+          results.innerHTML = `<div class="provenance-hint">作者列表读取失败：${escapeHtml(error.message)}</div>`;
+          results.hidden = false;
+        }
+      };
+      results.addEventListener('pointerdown', (event) => event.preventDefault());
+      input.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => runSearch(input.value.trim()), 180);
+      });
+      input.addEventListener('focus', () => {
+        if (!results.hidden) return;
+        runSearch(input.value.trim());
+      });
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          hide();
+        } else if (event.key === 'Enter' && onSubmitQuery) {
+          const query = input.value.trim();
+          if (!query) return;
+          event.preventDefault();
+          hide();
+          onSubmitQuery(query);
+        }
+      });
+      input.addEventListener('blur', () => {
+        setTimeout(() => {
+          if (!results.contains(document.activeElement)) hide();
+        }, 140);
+      });
+    }
     function renderProvenance(data) {
       const body = $('provenance-body');
       const record = (data && data.record) || {};
@@ -3914,9 +4065,12 @@
       const manualTags = tagLinks(record.manual_tags || [], 'manual');
       const autoTags = tagLinks(record.auto_tags || [], 'auto');
       const authorName = author ? (author.name || author.handle || author.key) : '';
-      const authorButton = author
+      const authorMarkup = author
         ? `<a class="provenance-author" href="/author/${encodeURIComponent(author.key)}" data-author-key="${escapeHtml(author.key)}" data-author-name="${escapeHtml(authorName)}" target="_blank" rel="noopener" title="在新标签页打开作者">${escapeHtml(authorName)}</a>`
-        : '<span>未知作者</span>';
+        : `<div class="provenance-quick-author">
+            <input id="prov-quick-author" placeholder="未确定作者，输入查找或回车填入..." autocomplete="off">
+            <div id="prov-quick-author-results" class="provenance-author-results" hidden></div>
+          </div>`;
       const url = record.url || '';
       const status = provenanceStatusLabel(record.status);
       const description = provenancePlainText(record.description);
@@ -3946,12 +4100,9 @@
       const statusTone = record.status === 'ok'
         ? 'status-ok'
         : (['not_found', 'error', 'protected'].includes(record.status) ? 'status-bad' : 'status-warn');
-      const postedRaw = String(record.posted_at || '');
-      const postedDate = postedRaw ? new Date(postedRaw) : null;
-      const pad2 = (n) => String(n).padStart(2, '0');
-      const posted = postedDate && !Number.isNaN(postedDate.getTime())
-        ? `${postedDate.getFullYear()}-${pad2(postedDate.getMonth() + 1)}-${pad2(postedDate.getDate())} ${pad2(postedDate.getHours())}:${pad2(postedDate.getMinutes())}`
-        : postedRaw;
+      const postedTime = formatProvenanceTime(record.posted_at);
+      const mtimeNs = Number(data.mtime_ns || (state.current && state.current.mtime_ns) || 0);
+      const savedTime = mtimeNs > 0 ? formatProvenanceTime(mtimeNs / 1e6) : { short: '', full: '' };
       const infoRow = (label, value, { empty = '—' } = {}) => `
         <dt>${label}</dt>
         <dd class="${value ? '' : 'is-empty'}">${value || empty}</dd>`;
@@ -3961,6 +4112,7 @@
       const isCover = Boolean(author && author.cover_point_id === currentImageId());
       const editOpen = state.provenance.editOpen || !data.record;
       const copyIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>';
+      const trashIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
       body.innerHTML = `
         <section class="provenance-hero">
           <div class="provenance-title${titleIsPlaceholder ? ' is-placeholder' : ''}">${titleMarkup}</div>
@@ -3977,14 +4129,16 @@
           <h4 class="provenance-section-title">作品信息</h4>
           <dl class="provenance-info">
             <dt>作者</dt>
-            <dd>${authorButton}${platformIcons ? `<span class="platform-icons">${platformIcons}</span>` : ''}</dd>
+            <dd>${authorMarkup}${platformIcons ? `<span class="platform-icons">${platformIcons}</span>` : ''}</dd>
             ${associations ? infoRow('关联', `<span class="provenance-ellipsis" title="${escapeHtml(associations)}">${escapeHtml(associations)}</span>`) : ''}
-            ${infoRow('发布', posted ? `<span title="${escapeHtml(postedRaw)}">${escapeHtml(posted)}</span>` : '')}
+            ${infoRow('发布', postedTime.short ? `<span title="${escapeHtml(postedTime.full)}">${escapeHtml(postedTime.short)}</span>` : '')}
+            ${infoRow('保存', savedTime.short ? `<span title="${escapeHtml(savedTime.full)}">${escapeHtml(savedTime.short)}</span>` : '')}
             <dt>文件</dt>
             <dd>
               <span class="provenance-file-row">
                 <span class="provenance-file" title="${escapeHtml(data.path || '')}">${escapeHtml(data.path || '')}</span>
                 <button type="button" class="provenance-icon-btn" data-prov-action="copy-path" title="复制原图路径" aria-label="复制原图路径">${copyIcon}</button>
+                <button type="button" class="provenance-icon-btn danger" data-prov-action="delete-image" title="删除图片" aria-label="删除图片">${trashIcon}</button>
               </span>
             </dd>
           </dl>
@@ -4155,8 +4309,8 @@
       });
       body.querySelector('[data-prov-action="copy-path"]')?.addEventListener('click', async (event) => {
         const button = event.currentTarget;
-        try {
-          await navigator.clipboard.writeText(data.path || '');
+        const ok = await copyTextToClipboard(data.path || '');
+        if (ok) {
           button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
           button.title = '已复制';
           setTimeout(() => {
@@ -4164,8 +4318,62 @@
             button.innerHTML = copyIcon;
             button.title = '复制原图路径';
           }, 1200);
-        } catch (_) { /* clipboard may be unavailable */ }
+        } else {
+          $('provenance-body').insertAdjacentHTML('afterbegin', '<p class="provenance-hint">复制失败：当前环境不允许访问剪贴板。</p>');
+        }
       });
+      body.querySelector('[data-prov-action="delete-image"]')?.addEventListener('click', async (event) => {
+        const pointId = currentImageId();
+        if (!pointId) return;
+        const filePath = data.path || pointId;
+        if (!window.confirm(`确定要删除这张图片吗？\n\n${filePath}\n\n此操作将从磁盘和索引中永久移除该文件，无法撤销。`)) return;
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+          await parseResponse(await fetch(`/api/images/${encodeURIComponent(pointId)}`, {
+            method: 'DELETE',
+          }));
+          if (currentImageId() === pointId) dismissViewer();
+          void reloadCurrentGallery();
+        } catch (error) {
+          if (button.isConnected) button.disabled = false;
+          if (currentImageId() === pointId) {
+            $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">删除图片失败：${escapeHtml(error.message)}</p>`);
+          }
+        }
+      });
+      const quickAuthorInput = body.querySelector('#prov-quick-author');
+      const quickAuthorResults = body.querySelector('#prov-quick-author-results');
+      if (quickAuthorInput && quickAuthorResults) {
+        const assignQuickAuthor = async (payload) => {
+          const pointId = currentImageId();
+          if (!pointId) return;
+          quickAuthorInput.disabled = true;
+          const seq = ++state.provenance.seq;
+          try {
+            const updated = await parseResponse(await fetch(`/api/images/${encodeURIComponent(pointId)}/provenance`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            }));
+            if (seq !== state.provenance.seq) return;
+            applyProvenanceData(pointId, updated);
+          } catch (error) {
+            if (quickAuthorInput.isConnected) quickAuthorInput.disabled = false;
+            if (seq === state.provenance.seq && currentImageId() === pointId) {
+              $('provenance-body').insertAdjacentHTML('afterbegin', `<p class="provenance-hint">关联作者失败：${escapeHtml(error.message)}</p>`);
+            }
+          }
+        };
+        bindAuthorSearch({
+          input: quickAuthorInput,
+          results: quickAuthorResults,
+          limit: 8,
+          onSelect: (item) => assignQuickAuthor({ author_key: String(item.key || '') }),
+          onSubmitQuery: (query) => assignQuickAuthor({ author_name: query }),
+          submitLabel: (query) => `以「${query}」新建并关联作者`,
+        });
+      }
       body.querySelector('#provenance-form')?.addEventListener('submit', (event) => {
         event.preventDefault();
         saveProvenanceForm(false);
@@ -4173,72 +4381,24 @@
       const authorQueryInput = body.querySelector('#prov-author-query');
       const authorKeyInput = body.querySelector('#prov-author-key');
       const authorResults = body.querySelector('#prov-author-results');
-      let authorSearchSeq = 0;
-      let authorSearchTimer = 0;
-      const hideAuthorResults = () => {
-        if (authorResults) authorResults.hidden = true;
-      };
-      const searchAuthors = async (query) => {
-        if (!authorResults) return;
-        const seq = ++authorSearchSeq;
-        try {
-          const data = await parseResponse(await fetch('/api/authors', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ q: query, limit: 6 }),
-          }));
-          if (seq !== authorSearchSeq || !authorResults.isConnected) return;
-          const items = data.authors || [];
-          authorResults.replaceChildren();
-          if (!items.length) {
-            authorResults.innerHTML = '<div class="provenance-hint">没有匹配作者</div>';
-            authorResults.hidden = false;
-            return;
-          }
-          for (const item of items) {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'provenance-author-result';
-            const label = item.name || item.handle || item.key;
-            button.innerHTML = `<span>${escapeHtml(label)}</span><small>${escapeHtml(item.handle ? `@${item.handle}` : `UID ${item.key}`)} · ${Number(item.image_count || 0)} 张</small>`;
-            button.addEventListener('click', () => {
-              if (authorKeyInput) authorKeyInput.value = String(item.key || '');
-              if (authorQueryInput) authorQueryInput.value = label;
-              const nameInput = body.querySelector('#prov-author-name');
-              if (nameInput) nameInput.value = item.name || '';
-              const pixivInput = body.querySelector('#prov-pixiv-id');
-              if (pixivInput) pixivInput.value = (item.pixiv_ids || [])[0] || '';
-              const xInput = body.querySelector('#prov-x-handle');
-              if (xInput) xInput.value = (item.x_handles || [])[0] || '';
-              hideAuthorResults();
-            });
-            authorResults.append(button);
-          }
-          authorResults.hidden = false;
-        } catch (error) {
-          if (seq !== authorSearchSeq || !authorResults.isConnected) return;
-          authorResults.innerHTML = `<div class="provenance-hint">作者列表读取失败：${escapeHtml(error.message)}</div>`;
-          authorResults.hidden = false;
-        }
-      };
       if (authorQueryInput && authorKeyInput && authorResults) {
-        authorResults.addEventListener('pointerdown', (event) => event.preventDefault());
         authorQueryInput.addEventListener('input', () => {
           authorKeyInput.value = '';
-          clearTimeout(authorSearchTimer);
-          authorSearchTimer = setTimeout(() => searchAuthors(authorQueryInput.value.trim()), 180);
         });
-        authorQueryInput.addEventListener('focus', () => {
-          if (!authorResults.hidden) return;
-          searchAuthors(authorQueryInput.value.trim());
-        });
-        authorQueryInput.addEventListener('keydown', (event) => {
-          if (event.key === 'Escape') hideAuthorResults();
-        });
-        authorQueryInput.addEventListener('blur', () => {
-          setTimeout(() => {
-            if (!authorResults.contains(document.activeElement)) hideAuthorResults();
-          }, 140);
+        bindAuthorSearch({
+          input: authorQueryInput,
+          results: authorResults,
+          limit: 6,
+          onSelect: (item, label) => {
+            authorKeyInput.value = String(item.key || '');
+            authorQueryInput.value = label;
+            const nameInput = body.querySelector('#prov-author-name');
+            if (nameInput) nameInput.value = item.name || '';
+            const pixivInput = body.querySelector('#prov-pixiv-id');
+            if (pixivInput) pixivInput.value = (item.pixiv_ids || [])[0] || '';
+            const xInput = body.querySelector('#prov-x-handle');
+            if (xInput) xInput.value = (item.x_handles || [])[0] || '';
+          },
         });
       }
       ['prov-author-name', 'prov-pixiv-id', 'prov-x-handle'].forEach((id) => {
@@ -14050,7 +14210,7 @@
           renderLibraryViewSwitch();
           renderGalleryView();
           setAdvancedFilters({ authors: [route.key] });
-          setFilterPanelOpen(true);
+          setFilterPanelOpen(false);
           updateFilterBadge();
           await fetchAuthorImages({ reset: true });
         } else if (route.kind === 'tag' && route.tag) {
@@ -14168,21 +14328,177 @@
       applyAppRoute(route);
     });
     document.addEventListener('click', handleAppLink, true);
-    document.addEventListener('click', (event) => {
-      if (!['browse', 'collection'].includes(state.mode) || event.defaultPrevented) return;
-      const target = event.target instanceof Element ? event.target : null;
-      if (!target) return;
-      const interactiveSelector = 'a, button, input, label, select, textarea, [role="button"], [contenteditable="true"], #gallery, #tree-panel, #viewer, dialog, .modal-bar';
-      const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
-      const interactive = path.some((node) => node instanceof Element && node.matches(interactiveSelector));
-      if (interactive || target.closest(interactiveSelector)) return;
-      exitTemporaryBrowse();
-    });
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape' || $('viewer').open) return;
       if (!['browse', 'collection'].includes(state.mode)) return;
       exitTemporaryBrowse();
     });
+    (function initSmoothAvatars() {
+      const AVATAR_SELECTOR = '.artist-namecard-avatar, .artist-dialog-avatar-btn, .artist-card-avatar';
+
+      function clearAvatarCanvas(container) {
+        delete container.dataset.hqAvatarKey;
+        if (container.classList.contains('has-hq-avatar')) {
+          container.classList.remove('has-hq-avatar');
+        }
+        const old = container.querySelector(':scope > canvas.hq-avatar-canvas');
+        if (old) old.remove();
+      }
+
+      function renderSmoothAvatar(container, img) {
+        if (!container.isConnected || !img.isConnected) return;
+        const natW = img.naturalWidth;
+        const natH = img.naturalHeight;
+        if (!natW || !natH) {
+          clearAvatarCanvas(container);
+          return;
+        }
+        const computed = getComputedStyle(container);
+        const cssW = container.clientWidth || parseFloat(computed.width) || 54;
+        const cssH = container.clientHeight || parseFloat(computed.height) || cssW;
+        const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 1), 3);
+        const dstW = Math.max(1, Math.round(cssW * dpr));
+        const dstH = Math.max(1, Math.round(cssH * dpr));
+        const isCover = container.classList.contains('is-cover');
+        const renderKey = `${img.currentSrc || img.src}|${natW}x${natH}|${dstW}x${dstH}|${isCover ? 1 : 0}`;
+        const existingCanvas = container.querySelector(':scope > canvas.hq-avatar-canvas');
+        if (container.dataset.hqAvatarKey === renderKey && existingCanvas) {
+          return;
+        }
+
+        const srcAspect = natW / natH;
+        const dstAspect = dstW / dstH;
+        let sx = 0;
+        let sy = 0;
+        let sw = natW;
+        let sh = natH;
+        if (srcAspect > dstAspect) {
+          sh = natH;
+          sw = natH * dstAspect;
+          sx = (natW - sw) * 0.5;
+        } else {
+          sw = natW;
+          sh = natW / dstAspect;
+          sy = (natH - sh) * 0.22;
+        }
+
+        if (isCover) {
+          const zoom = 1.35;
+          const zoomedW = sw / zoom;
+          const zoomedH = sh / zoom;
+          sx += (sw - zoomedW) * 0.5;
+          sy += (sh - zoomedH) * 0.22;
+          sw = zoomedW;
+          sh = zoomedH;
+        }
+
+        if (sw <= dstW * 1.5 && sh <= dstH * 1.5 && !isCover) {
+          clearAvatarCanvas(container);
+          return;
+        }
+
+        let curSource = img;
+        let curSx = sx;
+        let curSy = sy;
+        let curSw = sw;
+        let curSh = sh;
+        let curW = Math.max(dstW, Math.round(sw));
+        let curH = Math.max(dstH, Math.round(sh));
+
+        try {
+          while (curW > dstW * 2 || curH > dstH * 2) {
+            const nextW = curW > dstW * 2 ? Math.max(dstW, Math.round(curW * 0.5)) : curW;
+            const nextH = curH > dstH * 2 ? Math.max(dstH, Math.round(curH * 0.5)) : curH;
+            if (nextW === curW && nextH === curH) break;
+            const step = document.createElement('canvas');
+            step.width = nextW;
+            step.height = nextH;
+            const sctx = step.getContext('2d');
+            if (!sctx) break;
+            sctx.imageSmoothingEnabled = true;
+            sctx.imageSmoothingQuality = 'high';
+            sctx.drawImage(curSource, curSx, curSy, curSw, curSh, 0, 0, nextW, nextH);
+            curSource = step;
+            curSx = 0;
+            curSy = 0;
+            curSw = nextW;
+            curSh = nextH;
+            curW = nextW;
+            curH = nextH;
+          }
+
+          let canvas = existingCanvas;
+          if (!canvas) {
+            canvas = document.createElement('canvas');
+            canvas.className = 'hq-avatar-canvas';
+            canvas.setAttribute('aria-hidden', 'true');
+            img.after(canvas);
+          }
+          if (canvas.width !== dstW) canvas.width = dstW;
+          if (canvas.height !== dstH) canvas.height = dstH;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
+          ctx.clearRect(0, 0, dstW, dstH);
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(curSource, curSx, curSy, curSw, curSh, 0, 0, dstW, dstH);
+          container.dataset.hqAvatarKey = renderKey;
+          container.classList.add('has-hq-avatar');
+        } catch (_) {
+          clearAvatarCanvas(container);
+        }
+      }
+
+      function bindAvatarContainer(container) {
+        if (!(container instanceof Element)) return;
+        const img = container.querySelector(':scope > img');
+        if (!img) {
+          clearAvatarCanvas(container);
+          return;
+        }
+        if (img.dataset.hqAvatarBound !== '1') {
+          img.dataset.hqAvatarBound = '1';
+          img.addEventListener('load', () => renderSmoothAvatar(container, img));
+          img.addEventListener('error', () => clearAvatarCanvas(container));
+        }
+        if (img.complete && img.naturalWidth > 0) {
+          renderSmoothAvatar(container, img);
+        }
+      }
+
+      function scanSmoothAvatars(root) {
+        if (!(root instanceof Element)) return;
+        if (root.matches(AVATAR_SELECTOR)) {
+          bindAvatarContainer(root);
+        }
+        const nodes = root.querySelectorAll(AVATAR_SELECTOR);
+        for (const node of nodes) {
+          bindAvatarContainer(node);
+        }
+      }
+
+      const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          for (const added of mutation.addedNodes) {
+            if (added instanceof Element) {
+              if (added.tagName === 'CANVAS' && added.classList.contains('hq-avatar-canvas')) continue;
+              if (added.tagName === 'IMG') {
+                const container = added.closest(AVATAR_SELECTOR);
+                if (container) bindAvatarContainer(container);
+              } else {
+                scanSmoothAvatars(added);
+              }
+            }
+          }
+        }
+      });
+
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+      });
+      scanSmoothAvatars(document.body);
+    })();
     applySidebarCollapsed(state.sidebarCollapsed, { persist: false, rerender: false });
     bootApp().catch((error) => {
       $('query-info').textContent = `页面未能还原：${error.message}`;

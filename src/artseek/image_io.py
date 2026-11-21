@@ -156,10 +156,115 @@ def image_metadata(path: Path, image: Image.Image) -> dict[str, int | str]:
     }
 
 
+def _build_srgb_to_linear_lut() -> np.ndarray:
+    u = np.arange(256, dtype=np.float32) / 255.0
+    return np.where(u <= 0.04045, u / 12.92, ((u + 0.055) / 1.055) ** 2.4).astype(np.float32)
+
+
+_SRGB_TO_LINEAR_LUT = _build_srgb_to_linear_lut()
+
+
+def _linear_to_srgb_u8(linear: np.ndarray) -> np.ndarray:
+    clipped = np.clip(linear, 0.0, 1.0)
+    srgb = np.where(
+        clipped <= 0.0031308,
+        clipped * 12.92,
+        1.055 * np.power(np.maximum(clipped, 0.0031308), 1.0 / 2.4) - 0.055,
+    )
+    return np.clip(np.rint(srgb * 255.0), 0.0, 255.0).astype(np.uint8)
+
+
+def _resize_float_channel(
+    channel: np.ndarray,
+    size: tuple[int, int],
+    *,
+    pre_size: tuple[int, int] | None,
+) -> np.ndarray:
+    plane = Image.fromarray(channel, mode="F")
+    if pre_size is not None:
+        plane = plane.resize(pre_size, Image.Resampling.BOX)
+    if plane.size != size:
+        plane = plane.resize(size, Image.Resampling.LANCZOS)
+    return np.asarray(plane, dtype=np.float32)
+
+
+def downscale_image(
+    image: Image.Image,
+    max_size: int | tuple[int, int],
+    *,
+    linear_light: bool = True,
+) -> Image.Image:
+    """Downscale an image with anti-aliased progressive linear-light resampling.
+
+    Uses box pre-filtering for large downscale ratios (> 2.5x) to prevent
+    Lanczos ringing on sharp line art, linear-light sRGB conversion for energy
+    conservation, and premultiplied alpha for clean transparent edges.
+    """
+    max_w, max_h = (max_size, max_size) if isinstance(max_size, int) else max_size
+    if max_w <= 0 or max_h <= 0:
+        raise ValueError("max_size must be positive")
+
+    src_w, src_h = image.size
+    if src_w <= 0 or src_h <= 0 or (src_w <= max_w and src_h <= max_h):
+        return image
+
+    scale = min(max_w / src_w, max_h / src_h)
+    target_w = min(max_w, max(1, round(src_w * scale)))
+    target_h = min(max_h, max(1, round(src_h * scale)))
+    target_size = (target_w, target_h)
+
+    has_alpha = image.mode in {"RGBA", "LA", "PA"} or (
+        image.mode == "P" and "transparency" in image.info
+    )
+    if image.mode not in ("RGB", "RGBA"):
+        working = image.convert("RGBA" if has_alpha else "RGB")
+    else:
+        working = image
+
+    ratio = max(src_w / target_w, src_h / target_h)
+    pre_size: tuple[int, int] | None = None
+    if ratio > 2.5:
+        pre_w = min(src_w, target_w * 2)
+        pre_h = min(src_h, target_h * 2)
+        if (pre_w, pre_h) != (src_w, src_h) and (pre_w, pre_h) != target_size:
+            pre_size = (pre_w, pre_h)
+
+    if not linear_light:
+        out = working.resize(pre_size, Image.Resampling.BOX) if pre_size else working
+        return out.resize(target_size, Image.Resampling.LANCZOS) if out.size != target_size else out
+
+    arr = np.asarray(working, dtype=np.uint8)
+    if working.mode == "RGBA":
+        alpha_f = (arr[:, :, 3].astype(np.float32)) / 255.0
+        rgb_lin = _SRGB_TO_LINEAR_LUT[arr[:, :, :3]] * alpha_f[:, :, None]
+        out_channels = [
+            _resize_float_channel(rgb_lin[:, :, idx], target_size, pre_size=pre_size)
+            for idx in range(3)
+        ]
+        out_alpha = np.clip(
+            _resize_float_channel(alpha_f, target_size, pre_size=pre_size),
+            0.0,
+            1.0,
+        )
+        rgb_stack = np.stack(out_channels, axis=-1)
+        safe_alpha = np.where(out_alpha > 1e-6, out_alpha, 1.0)[:, :, None]
+        unpremul = np.where(out_alpha[:, :, None] > 1e-6, rgb_stack / safe_alpha, 0.0)
+        rgb_u8 = _linear_to_srgb_u8(unpremul)
+        alpha_u8 = np.clip(np.rint(out_alpha * 255.0), 0.0, 255.0).astype(np.uint8)
+        return Image.fromarray(np.dstack((rgb_u8, alpha_u8)), mode="RGBA")
+
+    rgb_lin = _SRGB_TO_LINEAR_LUT[arr[:, :, :3]]
+    out_channels = [
+        _resize_float_channel(rgb_lin[:, :, idx], target_size, pre_size=pre_size)
+        for idx in range(3)
+    ]
+    rgb_u8 = _linear_to_srgb_u8(np.stack(out_channels, axis=-1))
+    return Image.fromarray(rgb_u8, mode="RGB")
+
+
 def make_thumbnail(source: Path, destination: Path, size: int = 512) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    image = load_rgb(source)
-    image.thumbnail((size, size), Image.Resampling.LANCZOS)
+    image = downscale_image(load_rgb(source), size)
     image.save(destination, "WEBP", quality=88, method=6)
     return destination
 
@@ -167,7 +272,6 @@ def make_thumbnail(source: Path, destination: Path, size: int = 512) -> Path:
 def make_search_image(source: Path, destination: Path, size: int = 1200) -> Path:
     """JPEG copy small enough for SauceNAO/ascii2d upload forms."""
     destination.parent.mkdir(parents=True, exist_ok=True)
-    image = load_rgb(source)
-    image.thumbnail((size, size), Image.Resampling.LANCZOS)
+    image = downscale_image(load_rgb(source), size)
     image.save(destination, "JPEG", quality=90, optimize=True)
     return destination

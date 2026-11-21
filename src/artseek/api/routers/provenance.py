@@ -390,3 +390,26 @@ def ignore_image_provenance_url(
     c: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
     return c.provenance.set_url_ignored(point_id, ignored=request.ignored)
+
+
+@router.delete("/api/images/{point_id}")
+def delete_image(
+    point_id: str,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    payload = c.images.get_by_point_id(point_id)
+    if not payload:
+        raise HTTPException(404, "图片不在索引中")
+    path = Path(str(payload["path"]))
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise HTTPException(500, f"删除原图文件失败：{exc}") from exc
+    row_ids = c.images.soft_delete_by_point_ids([point_id])
+    if row_ids:
+        c.vectors.zero_rows(row_ids)
+        c.vectors.flush()
+    thumb = c.config.thumbnail_dir / f"{point_id}.webp"
+    thumb.unlink(missing_ok=True)
+    c.invalidate_caches()
+    return {"deleted": True, "point_id": point_id, "path": str(path)}

@@ -83,6 +83,7 @@ from ..config import (
 from ..image_io import (
     PHASH_LENGTH,
     canonical_path,
+    downscale_image,
     make_search_image,
     make_thumbnail,
     perceptual_hash,
@@ -3391,7 +3392,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 prepared = ImageOps.exif_transpose(img)
                 if prepared.mode not in ("RGB", "RGBA"):
                     prepared = prepared.convert("RGBA" if "A" in prepared.getbands() else "RGB")
-                prepared.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+                prepared = downscale_image(prepared, max_dim)
                 assets_dir = config.artist_assets_dir
                 assets_dir.mkdir(parents=True, exist_ok=True)
                 token = uuid.uuid4().hex[:10]

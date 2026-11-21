@@ -21,6 +21,7 @@ from ..db.repos.collections import CollectionRepo
 from ..db.repos.images import ImageRepo
 from ..db.repos.provenance import ProvenanceRepo
 from ..db.scope_resolver import ScopeResolver
+from ..image_io import downscale_image
 from ..library import day_end_ns, day_start_ns, natural_key
 from ..provenance.store import (
     UNASSIGNED_AUTHOR_KEY,
@@ -854,7 +855,7 @@ class ArtistService:
                 prepared = ImageOps.exif_transpose(img)
                 if prepared.mode not in ("RGB", "RGBA"):
                     prepared = prepared.convert("RGBA" if "A" in prepared.getbands() else "RGB")
-                prepared.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+                prepared = downscale_image(prepared, max_dim)
                 assets_dir = self._require_assets_dir()
                 token = uuid.uuid4().hex[:10]
                 dest = assets_dir / f"{kind}-{canonical}-{token}.webp"

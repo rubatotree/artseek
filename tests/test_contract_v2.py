@@ -515,6 +515,7 @@ class V2HttpContractTests(unittest.TestCase):
 
         prov_get = self.client.get(f"/api/images/{self.items['plain_1']}/provenance")
         self.assertEqual(prov_get.status_code, 200)
+        self.assertGreater(prov_get.json()["mtime_ns"], 0)
 
         gallery = self.client.post(
             "/api/artists/gallery",
@@ -616,6 +617,20 @@ class V2HttpContractTests(unittest.TestCase):
         )
         self.assertEqual(removed.status_code, 200)
         self.assertEqual(removed.json()["image_count"], 3)
+
+    def test_delete_single_image_removes_file_and_index(self) -> None:
+        p1 = self.items["plain_1"]
+        prov_before = self.client.get(f"/api/images/{p1}/provenance")
+        self.assertEqual(prov_before.status_code, 200)
+        file_path = Path(prov_before.json()["path"])
+        self.assertTrue(file_path.exists())
+
+        res = self.client.delete(f"/api/images/{p1}")
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.json()["deleted"])
+        self.assertFalse(file_path.exists())
+        self.assertEqual(self.client.get(f"/api/images/{p1}/provenance").status_code, 404)
+        self.assertEqual(self.client.delete(f"/api/images/{p1}").status_code, 404)
 
 
 if __name__ == "__main__":

@@ -9,10 +9,12 @@ from PIL import Image
 from artseek.image_io import (
     PHASH_MAX_DISTANCE,
     canonical_path,
+    downscale_image,
     file_digest,
     hamming_distance,
     load_rgb,
     make_search_image,
+    make_thumbnail,
     perceptual_hash,
     point_id,
     scan_images,
@@ -69,6 +71,40 @@ class ImageIOTests(unittest.TestCase):
             self.assertEqual(len(left), 16)
             self.assertLessEqual(hamming_distance(left, right), PHASH_MAX_DISTANCE)
             self.assertGreater(hamming_distance(left, alien), PHASH_MAX_DISTANCE)
+
+    def test_downscale_image_progressive_linear_light_and_alpha(self) -> None:
+        rgb = Image.new("RGB", (1200, 800), (240, 240, 240))
+        scaled = downscale_image(rgb, 128)
+        self.assertEqual(scaled.mode, "RGB")
+        self.assertEqual(scaled.size, (128, 85))
+
+        # No-op when image is already within bounds
+        self.assertIs(downscale_image(scaled, 128), scaled)
+
+        # Premultiplied alpha should avoid black fringing on transparent edges
+        rgba = Image.new("RGBA", (600, 600), (0, 0, 0, 0))
+        opaque_patch = Image.new("RGBA", (300, 600), (255, 255, 255, 255))
+        rgba.paste(opaque_patch, (0, 0))
+        scaled_rgba = downscale_image(rgba, 64)
+        self.assertEqual(scaled_rgba.mode, "RGBA")
+        self.assertEqual(scaled_rgba.size, (64, 64))
+        # Boundary pixel should remain white-ish rather than darkened by black transparent pixels
+        mid_pixel = scaled_rgba.getpixel((31, 32))
+        self.assertGreater(mid_pixel[0], 200)
+        self.assertGreater(mid_pixel[1], 200)
+        self.assertGreater(mid_pixel[2], 200)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            src = root / "src.png"
+            dst = root / "thumb.webp"
+            rgb.save(src)
+            make_thumbnail(src, dst, size=128)
+            with Image.open(dst) as thumb:
+                self.assertEqual(thumb.size, (128, 85))
+
+        with self.assertRaises(ValueError):
+            downscale_image(rgb, 0)
 
 
 if __name__ == "__main__":
