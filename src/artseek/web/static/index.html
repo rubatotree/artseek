@@ -325,6 +325,27 @@
       width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px;
       color: var(--ink); background: #fff; font: inherit; font-size: 12px;
     }
+    .time-custom-foot { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
+    .time-custom-foot button {
+      min-height: 26px; padding: 4px 10px; border-radius: 9px; font-size: 11px;
+      border: 1px solid var(--line); background: #fff; color: #6d6272;
+    }
+    .time-custom-foot button:hover { transform: none; background: #fff6f9; color: #8a5268; }
+
+    /* A page opened from "前后一天" keeps a ring on the anchor card while scrolling,
+       so the vertical centring stays obvious inside a dense column flow. */
+    .card.is-time-anchor {
+      border-color: #d97f9e;
+      box-shadow: 0 0 0 2px #d97f9e, 0 14px 32px rgba(138, 82, 104, .24);
+    }
+    .card.is-time-anchor .image-wrap { border-radius: 14px; }
+    .card-time-anchor-badge {
+      position: absolute; top: 8px; right: 8px; z-index: 4;
+      padding: 3px 8px; border-radius: 999px;
+      background: rgba(217, 127, 158, .96); color: #fff;
+      font-size: 11px; font-weight: 650; letter-spacing: .02em;
+      box-shadow: 0 2px 8px rgba(69, 51, 76, .26);
+    }
     .search-panel {
       position: relative; z-index: 20;
       padding: 16px; border: 1px solid rgba(255,255,255,.9); border-radius: 22px;
@@ -2109,6 +2130,7 @@
           <div id="time-custom" class="time-custom">
             <label>从 <input id="mtime-after" type="date" autocomplete="off"></label>
             <label>到 <input id="mtime-before" type="date" autocomplete="off"></label>
+            <div class="time-custom-foot"><button type="button" id="time-custom-clear" title="清除起止日期">清除</button></div>
           </div>
         </div>
         <div class="tree-head">
@@ -2802,6 +2824,10 @@
       browseSort: loadFolderSort(), browseSeed: null, scopeTotal: 0,
       collectionRandomSeed: null,
       randomSeed: null, randomTotal: 0,
+      // Anchor card of a "前后一天" page: `{id, name}` while that page is shown.
+      rangeFocus: null,
+      scopeBase: 0,
+      scopePageSize: 0,
       collections: [], collectionId: '', collectionName: '', collectionTotal: null,
       editingCollectionId: '', pendingCreatedCollectionId: '', collectionEditMode: '', collectionEditModeTransitionTimer: 0, collectionSearchTimer: 0,
       collectionSidebarPage: 0, viewerCollectionMenuPage: 0, cardCollectionMenuPage: 0,
@@ -3503,6 +3529,7 @@
             <button type="button" data-prov-action="saucenao">SauceNAO</button>
             <button type="button" data-prov-action="ascii2d">ascii2d</button>
             <button type="button" data-prov-action="local-similar">本地查找</button>
+            <button type="button" data-prov-action="time-nearby" title="在新标签页按时间范围浏览这张画前后一天的图片">前后一天</button>
             <button type="button" data-prov-action="copy-path">复制原图路径</button>
           </div>
         </div>
@@ -3606,6 +3633,11 @@
         const pointId = currentImageId();
         if (!pointId) return;
         window.open(`/search?ref=${encodeURIComponent(pointId)}`, '_blank', 'noopener');
+      });
+      body.querySelector('[data-prov-action="time-nearby"]')?.addEventListener('click', () => {
+        const pointId = currentImageId();
+        if (!pointId) return;
+        window.open(appRouteHref({ kind: 'scope', of: pointId }), '_blank', 'noopener');
       });
       body.querySelector('[data-prov-action="copy-path"]')?.addEventListener('click', async () => {
         try { await navigator.clipboard.writeText(data.path || ''); }
@@ -9327,6 +9359,179 @@
       $('query-info').textContent = `随机浏览当前范围 · ${shown} / ${state.randomTotal} 张图`;
     }
 
+    // ------------------------------------------------------------ time range page
+    // `/scope?of=<point_id>` is an ordinary gallery page whose time panel is
+    // pre-filled with a custom range: `TIME_RANGE_FOCUS_DAYS` days before to the
+    // same number of days after the anchor image. The grid is the normal scope
+    // listing (so sorting, paging and cards stay untouched); we only jump the
+    // window to the anchor's neighbourhood and ring that card.
+    const TIME_RANGE_FOCUS_DAYS = 1;
+    const TIME_RANGE_FOCUS_PAGE = 200;
+    function isoDayFromNs(mtimeNs) {
+      const stamp = Number(mtimeNs);
+      if (!Number.isFinite(stamp) || stamp <= 0) return '';
+      const at = new Date(stamp / 1e6);
+      if (Number.isNaN(at.getTime())) return '';
+      return localISO(at);
+    }
+    function shiftIsoDay(day, delta) {
+      const parts = String(day || '').split('-').map(Number);
+      if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part))) return '';
+      const at = new Date(parts[0], parts[1] - 1, parts[2]);
+      at.setDate(at.getDate() + delta);
+      return localISO(at);
+    }
+    function timeAnchorCard() {
+      const anchorId = state.rangeFocus && state.rangeFocus.id;
+      if (!anchorId) return null;
+      const gallery = $('gallery');
+      if (!gallery) return null;
+      const escaped = String(anchorId).replace(/["\\]/g, '\\$&');
+      return gallery.querySelector(`.card[data-point-id="${escaped}"]`);
+    }
+    function markTimeAnchorCard() {
+      if (!state.rangeFocus || state.mode !== 'scope') return;
+      const card = timeAnchorCard();
+      if (!card || card.classList.contains('is-time-anchor')) return;
+      card.classList.add('is-time-anchor');
+      card.setAttribute('aria-current', 'true');
+      const wrap = card.querySelector('.image-wrap');
+      if (wrap && !wrap.querySelector('.card-time-anchor-badge')) {
+        wrap.insertAdjacentHTML('beforeend', '<span class="card-time-anchor-badge">这张画</span>');
+      }
+    }
+    function focusTimeAnchor() {
+      markTimeAnchorCard();
+      const card = timeAnchorCard();
+      if (!card) return;
+      // Instant centring first: it also works in a background tab, where the
+      // animation frame queue (and therefore smooth scrolling) is throttled.
+      const center = () => {
+        if (!state.rangeFocus) return;
+        card.scrollIntoView({ block: 'center', behavior: 'auto' });
+      };
+      center();
+      requestAnimationFrame(center);
+      // Sticky header and lazy thumbnails can shift layout; re-centre once settled.
+      setTimeout(center, 180);
+    }
+    function applyScopeTimeRange(after, before) {
+      // Transient: this page is a view of the saved scope, not a new saved scope.
+      treeState.mtimeAfter = after || '';
+      treeState.mtimeBefore = before || '';
+      timePresetOverride = 'custom';
+      syncTimeInputs();
+      updateTreeSummary();
+    }
+    function scopePagePayload({ offset, limit, sort, seed = null }) {
+      return {
+        folder_keys: [...treeState.selected],
+        sort,
+        seed,
+        limit,
+        offset,
+        mtime_after: treeState.mtimeAfter || null,
+        mtime_before: treeState.mtimeBefore || null,
+        author_key: state.authorKey || null,
+        ratings: galleryRatingValues(),
+      };
+    }
+    async function fetchScopePage({ offset, limit, sort, seed = null }) {
+      return parseResponse(await fetch('/api/scope-images', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(scopePagePayload({ offset, limit, sort, seed })),
+      }));
+    }
+    // Position of the anchor inside the filtered scope under `mtime_asc`, found by
+    // bisecting on page offsets so a busy day never needs a full scan.
+    async function findScopeAnchorOffset(anchorMtime, total) {
+      let low = 0;
+      let high = Math.max(0, total);
+      while (low < high) {
+        const mid = (low + high) >> 1;
+        const data = await fetchScopePage({ offset: mid, limit: 1, sort: 'mtime_asc' });
+        const item = (data.results || [])[0];
+        if (!item) break;
+        if (Number(item.mtime_ns) < anchorMtime) low = mid + 1;
+        else high = mid;
+      }
+      return low;
+    }
+    async function resolveAnchorOffset(anchorMtime) {
+      const probe = await fetchScopePage({ offset: 0, limit: 1, sort: 'mtime_asc' });
+      const total = Number(probe.total) || 0;
+      if (!total || !anchorMtime) return 0;
+      const index = await findScopeAnchorOffset(anchorMtime, total);
+      return Math.max(0, index - Math.floor(TIME_RANGE_FOCUS_PAGE / 2));
+    }
+    async function fetchAnchorSummary(pointId) {
+      try {
+        const payload = await parseResponse(await fetch(`/api/item/${encodeURIComponent(pointId)}`));
+        return {
+          id: pointId,
+          name: String(payload.name || ''),
+          mtime_ns: Number(payload.mtime_ns) || 0,
+        };
+      } catch (_) {
+        return { id: pointId, name: '', mtime_ns: 0 };
+      }
+    }
+    async function applyScopeTimeRoute(route) {
+      const anchorId = String(route.of || '');
+      // Back/forward (or a re-applied route) already showing this range: just re-centre.
+      const unchanged = state.mode === 'scope'
+        && state.results.length
+        && (!anchorId || (state.rangeFocus && state.rangeFocus.id === anchorId))
+        && (!route.after || route.after === treeState.mtimeAfter)
+        && (!route.before || route.before === treeState.mtimeBefore);
+      if (unchanged) {
+        markTimeAnchorCard();
+        if (anchorId) focusTimeAnchor();
+        return;
+      }
+      let after = route.after || '';
+      let before = route.before || '';
+      let anchorMtime = 0;
+      let anchorName = '';
+      if (anchorId) {
+        const anchor = await fetchAnchorSummary(anchorId);
+        anchorMtime = anchor.mtime_ns;
+        anchorName = anchor.name;
+        if (anchorMtime) {
+          const day = isoDayFromNs(anchorMtime);
+          after = shiftIsoDay(day, -TIME_RANGE_FOCUS_DAYS);
+          before = shiftIsoDay(day, TIME_RANGE_FOCUS_DAYS);
+        }
+      }
+      if (!after && !before) {
+        // Unknown anchor and no explicit range: plain scope page.
+        state.rangeFocus = null;
+        await startScopeBrowse({ skipRoute: true });
+        return;
+      }
+      state.rangeFocus = anchorId ? { id: anchorId, name: anchorName } : null;
+      applyScopeTimeRange(after, before);
+      // Chronological order makes the window read as a timeline around the anchor.
+      if (anchorId) state.browseSort = 'mtime_asc';
+      // The page is the whole library inside the time window: the sidebar checks
+      // belong to whatever the other tab was browsing, so take every folder here.
+      // In memory only — the saved scope is left untouched.
+      const everyFolder = allFolderKeys();
+      if (treeState.selected.size !== everyFolder.length) {
+        treeState.selected = new Set(everyFolder);
+        renderTree();
+        updateTreeSummary();
+      }
+      const base = anchorMtime ? await resolveAnchorOffset(anchorMtime) : 0;
+      await startScopeBrowse({
+        skipRoute: true,
+        base,
+        pageSize: anchorId ? TIME_RANGE_FOCUS_PAGE : 0,
+      });
+      if (anchorId) focusTimeAnchor();
+    }
+
     function rememberTemporaryReturn() {
       if (['browse', 'collection'].includes(state.mode)) return;
       if (state.mode === 'scope') state.scopeScrollY = window.scrollY;
@@ -9362,6 +9567,7 @@
       treeState.selected = new Set(snapshot.selected.filter((key) => valid.has(key)));
       treeState.mtimeAfter = snapshot.mtimeAfter || '';
       treeState.mtimeBefore = snapshot.mtimeBefore || '';
+      timePresetOverride = '';
       state.browseSort = snapshot.browseSort || 'name';
       state.searchSort = snapshot.searchSort || 'mtime_desc';
       state.authorKey = snapshot.authorKey || '';
@@ -9430,6 +9636,7 @@
       updateTagFilter();
       treeState.mtimeAfter = '';
       treeState.mtimeBefore = '';
+      timePresetOverride = '';
       syncTimeInputs();
       setAdvancedFilters({});
       setFilterPanelOpen(false);
@@ -9458,13 +9665,18 @@
       commitRoute(route, { replace: false, overlay: 0 });
       applyAppRoute(route);
     }
-    async function startScopeBrowse({ skipRoute = false, restoreScroll = null } = {}) {
+    async function startScopeBrowse({ skipRoute = false, restoreScroll = null, base = 0, pageSize = 0 } = {}) {
       if (!treeState.selected.size) {
         refreshDefaultGallery();
         restorePageScroll(restoreScroll);
         return;
       }
       state.mode = 'scope';
+      // `base`/`pageSize` jump the listing to an arbitrary window of the scope;
+      // plain entering (or any other view) starts from the top with the user's page size.
+      state.scopeBase = base > 0 ? Math.floor(base) : 0;
+      state.scopePageSize = pageSize > 0 ? Math.floor(pageSize) : 0;
+      if (!pageSize) state.rangeFocus = null;
       state.collectionId = '';
       state.collectionName = '';
       state.collectionTotal = null;
@@ -9483,7 +9695,6 @@
       if (!treeState.selected.size) return;
       if (!reset && (state.loadingMore || !state.hasMore)) return;
       const seq = reset ? ++state.searchSeq : state.searchSeq;
-      const timeRange = currentTimeRange();
       const sort = state.browseSort || 'mtime';
       if (sort === 'random' && state.browseSeed == null) state.browseSeed = newRandomSeed();
       if (reset) {
@@ -9497,22 +9708,12 @@
         $('load-more').hidden = false;
       }
       try {
-        const payload = {
-          folder_keys: [...treeState.selected],
+        const data = await fetchScopePage({
           sort,
           seed: sort === 'random' && state.browseSeed != null ? state.browseSeed : null,
-          limit: Number($('limit').value) || 40,
-          offset: reset ? 0 : state.results.length,
-          mtime_after: timeRange.after || null,
-          mtime_before: timeRange.before || null,
-          author_key: state.authorKey || null,
-          ratings: galleryRatingValues(),
-        };
-        const data = await parseResponse(await fetch('/api/scope-images', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        }));
+          limit: state.scopePageSize || (Number($('limit').value) || 40),
+          offset: state.scopeBase + (reset ? 0 : state.results.length),
+        });
         if (seq !== state.searchSeq) return;
         const incoming = data.results || [];
         state.scopeTotal = Number(data.total || 0);
@@ -9549,16 +9750,30 @@
 
     function renderScopeInfo(shown) {
       const sort = FOLDER_SORT_LABELS[state.browseSort] || state.browseSort;
+      const focus = state.rangeFocus;
+      const range = currentTimeRange();
+      let info;
       if (compactInfo()) {
-        $('query-info').textContent = `${shown} / ${state.scopeTotal} 张图 · ${sort}`;
+        info = `${shown} / ${state.scopeTotal} 张图 · ${sort}`;
+      } else if (focus) {
+        info = `全库 · ${shown} / ${state.scopeTotal} 张图 · ${sort}`;
       } else {
-        $('query-info').textContent = `已勾选 ${treeState.selected.size} 个目录 · ${shown} / ${state.scopeTotal} 张图 · ${sort}`;
+        info = `已勾选 ${treeState.selected.size} 个目录 · ${shown} / ${state.scopeTotal} 张图 · ${sort}`;
       }
+      if (focus && (range.after || range.before)) {
+        const span = range.after && range.before ? `${range.after} ~ ${range.before}` : (range.after || range.before);
+        info += ` · ${span}`;
+        if (focus.name && timeAnchorCard()) info += ` · 已定位到「${focus.name}」`;
+      }
+      $('query-info').textContent = info;
       renderCollectionSort();
     }
 
     function resetGalleryToIdle() {
       state.mode = 'idle';
+      state.rangeFocus = null;
+      state.scopeBase = 0;
+      state.scopePageSize = 0;
       state.authorKey = '';
       state.authorName = '';
       state.authorTotal = 0;
@@ -10253,7 +10468,9 @@
           ? '这个目录及其子目录里还没有已索引的图片。'
           : state.mode === 'random'
             ? '选定范围内没有符合时间条件的已索引图片。'
-            : state.mode === 'collection'
+            : state.mode === 'scope' && state.rangeFocus
+              ? '这张画前后一天里没有可显示的已索引图片。'
+              : state.mode === 'collection'
               ? ($('collection-search').value.trim() ? '这个收藏夹中没有匹配搜索的图片。' : '这个收藏夹里还没有可用图片。')
               : '没有找到符合条件的图片。';
         $('gallery').innerHTML = `<div class="empty">${empty}</div>`;
@@ -10279,6 +10496,7 @@
         );
       });
       bindGalleryCards();
+      markTimeAnchorCard();
       settleGalleryScroll();
       scheduleArtistPrefetch();
     }
@@ -11488,7 +11706,7 @@
       clearTimeout(treeState.saveTimer);
       treeState.saveTimer = setTimeout(() => saveLibraryTree(), 180);
     }
-    function applyLibraryPayload(data, { keepExpanded = false, keepSelection = false } = {}) {
+    function applyLibraryPayload(data, { keepExpanded = false, keepSelection = false, keepTimeRange = false } = {}) {
       treeState.roots = data.roots || [];
       treeState.sort = data.sort || 'name';
       if (!keepSelection) {
@@ -11497,10 +11715,18 @@
       treeState.newKeys = new Set(data.new_keys || []);
       treeState.imageCount = data.image_count || 0;
       treeState.selectedImageCount = data.selected_image_count || 0;
-      treeState.mtimeAfter = data.mtime_after || '';
-      treeState.mtimeBefore = data.mtime_before || '';
+      if (!keepTimeRange) {
+        treeState.mtimeAfter = data.mtime_after || '';
+        treeState.mtimeBefore = data.mtime_before || '';
+      }
       treeState.mtimeMin = data.mtime_min || '';
       treeState.mtimeMax = data.mtime_max || '';
+      if (keepSelection) {
+        // A folder may have disappeared while the refresh ran; drop only those
+        // keys so a still-open selection survives an in-place index refresh.
+        const known = new Set(allFolderKeys());
+        treeState.selected = new Set([...treeState.selected].filter((key) => known.has(key)));
+      }
       syncTimeInputs();
       if (!keepExpanded) {
         treeState.expanded = new Set();
@@ -11697,7 +11923,10 @@
               ? `${data.message}：发现 ${summary.discovered}，更新 ${summary.indexed}，未变 ${summary.unchanged}`
               : (data.message || '索引完成')
           );
-          await loadLibraryTree();
+          // Keep the reading context: an index finishing in the background must
+          // not collapse the tree, drop the checked folders, or clear a time range
+          // the user is browsing.
+          await loadLibraryTree({ keepExpanded: true, keepSelection: true, keepTimeRange: true });
           return false;
         } catch (error) {
           showIndexStatus(`无法读取索引进度：${error.message}`);
@@ -11740,11 +11969,11 @@
         showIndexStatus(`移出失败：${error.message}`);
       }
     }
-    async function loadLibraryTree() {
+    async function loadLibraryTree({ keepExpanded = false, keepSelection = false, keepTimeRange = false } = {}) {
       try {
         const response = await fetch('/api/library-tree');
         const data = await parseResponse(response);
-        applyLibraryPayload(data);
+        applyLibraryPayload(data, { keepExpanded, keepSelection, keepTimeRange });
       } catch (error) {
         $('tree-summary').textContent = `目录树不可用：${error.message}`;
       }
@@ -11806,17 +12035,27 @@
       }
       return 'custom';
     }
+    // "自定义" is a user intent, not a derived state: without this the preset select
+    // re-derives "全部时间" from empty inputs and the date fields vanish instantly.
+    let timePresetOverride = '';
     function applyTimePreset(preset) {
+      if (preset === 'custom') {
+        timePresetOverride = 'custom';
+        syncTimeInputs();
+        return;
+      }
+      timePresetOverride = '';
       if (preset === 'all') {
         treeState.mtimeAfter = '';
         treeState.mtimeBefore = '';
-      } else if (preset !== 'custom') {
+      } else {
         treeState.mtimeAfter = daysAgoISO(Number(preset));
         treeState.mtimeBefore = localISO(new Date());
       }
       syncTimeInputs();
       updateTreeSummary();
       scheduleTreeSave();
+      refreshDefaultGallery();
     }
     function syncTimeInputs() {
       const after = $('mtime-after');
@@ -11827,9 +12066,25 @@
       before.max = treeState.mtimeMax || '';
       after.value = treeState.mtimeAfter || '';
       before.value = treeState.mtimeBefore || '';
-      const preset = inferTimePreset(treeState.mtimeAfter, treeState.mtimeBefore);
+      const preset = timePresetOverride || inferTimePreset(treeState.mtimeAfter, treeState.mtimeBefore);
       $('time-preset').value = preset;
       $('time-custom').classList.toggle('visible', preset === 'custom');
+    }
+    function applyCustomTimeRange(edited) {
+      const after = $('mtime-after').value || '';
+      const before = $('mtime-before').value || '';
+      treeState.mtimeAfter = after;
+      treeState.mtimeBefore = before;
+      // Keep the range coherent: the bound the user is not editing follows the other one.
+      if (after && before && after > before) {
+        if (edited === 'before') treeState.mtimeAfter = before;
+        else treeState.mtimeBefore = after;
+      }
+      timePresetOverride = 'custom';
+      syncTimeInputs();
+      updateTreeSummary();
+      scheduleTreeSave();
+      refreshDefaultGallery();
     }
 
     $('index-add').addEventListener('click', addIndexDirectory);
@@ -11869,19 +12124,16 @@
     });
 
     $('time-preset').addEventListener('change', () => applyTimePreset($('time-preset').value));
-    $('mtime-after').addEventListener('change', () => {
-      treeState.mtimeAfter = $('mtime-after').value;
-      $('time-preset').value = 'custom';
-      $('time-custom').classList.add('visible');
+    $('mtime-after').addEventListener('change', () => applyCustomTimeRange('after'));
+    $('mtime-before').addEventListener('change', () => applyCustomTimeRange('before'));
+    $('time-custom-clear').addEventListener('click', () => {
+      treeState.mtimeAfter = '';
+      treeState.mtimeBefore = '';
+      timePresetOverride = 'custom';
+      syncTimeInputs();
       updateTreeSummary();
       scheduleTreeSave();
-    });
-    $('mtime-before').addEventListener('change', () => {
-      treeState.mtimeBefore = $('mtime-before').value;
-      $('time-preset').value = 'custom';
-      $('time-custom').classList.add('visible');
-      updateTreeSummary();
-      scheduleTreeSave();
+      refreshDefaultGallery();
     });
 
     let fileDragClear = 0;
@@ -12066,11 +12318,23 @@
         return [];
       }
     }
+    function parseDayParam(value) {
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+      return match ? match[0] : '';
+    }
+    function scopeRoute(params) {
+      return {
+        kind: 'scope',
+        after: parseDayParam(params.get('after')),
+        before: parseDayParam(params.get('before')),
+        of: params.get('of') || '',
+      };
+    }
     function parseAppRoute(url = window.location) {
       const path = (url.pathname || '/').replace(/\/+$/, '') || '/';
       const params = new URLSearchParams(url.search || '');
       const parts = path.split('/').filter(Boolean);
-      if (!parts.length) return { kind: 'scope' };
+      if (!parts.length) return scopeRoute(params);
       if (parts[0] === 'i' && parts[1]) {
         const imageId = parts[1];
         if (parts[2] === 'notes') {
@@ -12113,12 +12377,20 @@
         return { kind: 'tag', tag: decodeURIComponent(parts[1]) };
       }
       if (parts[0] === 'scope') {
-        return { kind: 'scope' };
+        return scopeRoute(params);
       }
       return { kind: 'home' };
     }
     function appRouteHref(route) {
-      if (!route || route.kind === 'home' || route.kind === 'scope') return '/';
+      if (!route || route.kind === 'home') return '/';
+      if (route.kind === 'scope') {
+        const params = new URLSearchParams();
+        if (route.after) params.set('after', route.after);
+        if (route.before) params.set('before', route.before);
+        if (route.of) params.set('of', route.of);
+        const query = params.toString();
+        return query ? `/?${query}` : '/';
+      }
       if (route.kind === 'search') {
         const params = new URLSearchParams();
         if (route.query) params.set('q', route.query);
@@ -12181,7 +12453,14 @@
           text_tags: filters.text_tags,
         };
       }
-      if (state.mode === 'scope') return { kind: 'scope' };
+      if (state.mode === 'scope') {
+        return {
+          kind: 'scope',
+          after: treeState.mtimeAfter || '',
+          before: treeState.mtimeBefore || '',
+          of: state.rangeFocus ? state.rangeFocus.id : '',
+        };
+      }
       if (state.mode === 'browse' && state.browseKey) {
         return { kind: 'folder', key: state.browseKey, author: state.authorKey || '' };
       }
@@ -12245,6 +12524,10 @@
         return;
       }
       if (route.kind === 'scope') {
+        if (route.of || route.after || route.before) {
+          document.title = '前后一天 · ArtSeek';
+          return;
+        }
         document.title = '范围浏览 · ArtSeek';
         return;
       }
@@ -12537,7 +12820,9 @@
         if (route.kind === 'search') {
           await applySearchRoute(route);
         } else if (route.kind === 'scope') {
-          if (!(state.mode === 'scope' && state.results.length)) {
+          if (route.of || route.after || route.before) {
+            await applyScopeTimeRoute(route);
+          } else if (!(state.mode === 'scope' && state.results.length)) {
             await startScopeBrowse({ skipRoute: true, restoreScroll: state.scopeScrollY });
           }
         } else if (route.kind === 'folder' && route.key) {
@@ -12669,7 +12954,7 @@
       history.replaceState(
         { artseek: 1, overlay: 0, ...route },
         '',
-        route.kind === 'scope' ? '/' : currentHref(),
+        route.kind === 'scope' ? appRouteHref(route) : currentHref(),
       );
       if (route.kind === 'home') {
         clearHomeSearch();
