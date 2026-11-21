@@ -105,6 +105,19 @@ class RandomBrowseApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("勾选", response.json()["detail"])
 
+    def test_random_browse_stays_available_while_index_job_runs(self) -> None:
+        job = self.client.app.state.index_job
+        job.running = True
+        try:
+            response = self.client.post(
+                "/api/random-browse",
+                json={"folder_keys": [self.nested_key], "seed": 1, "limit": 2},
+            )
+        finally:
+            job.running = False
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()["results"]), 2)
+
     def test_homepage_removes_random_waterfall_and_exposes_scope_sort(self) -> None:
         html = self.client.get("/").text
         self.assertNotIn('id="random-browse"', html)

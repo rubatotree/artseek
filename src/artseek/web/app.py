@@ -1256,8 +1256,8 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
     @app.post("/api/random-browse")
     def random_browse(request: RandomBrowseRequest) -> dict:
         """Return one deterministic page from a random ordering in the selected scope."""
-        if app.state.index_job.running:
-            raise HTTPException(409, "正在索引图片，请稍后再浏览")
+        # Browsing is read-only (WAL snapshots, locked vector store), so it stays
+        # available while an index job is queued or running.
         folder_keys = resolve_folder_keys(request.folder_keys)
         if not folder_keys:
             raise HTTPException(400, "请先勾选要随机浏览的文件夹")
@@ -1436,8 +1436,6 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
 
     @app.post("/api/search")
     def search(request: TextSearchRequest) -> dict:
-        if app.state.index_job.running:
-            raise HTTPException(409, "正在索引图片，请稍后再检索")
         specs = list(request.references)
         if request.reference_id:
             specs.append(ReferenceSpec(id=request.reference_id, weight=1.0))
@@ -1543,8 +1541,6 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
 
     @app.post("/api/local-search")
     def local_search(request: TextSearchRequest) -> dict:
-        if app.state.index_job.running:
-            raise HTTPException(409, "正在索引图片，请稍后再检索")
         terms = [
             term.lstrip("#")
             for term in re.split(r"\s+", request.query.strip())
@@ -1603,8 +1599,6 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         tag_text: str = Form(default="[]"),
         image_tags: str = Form(default="[]"),
     ) -> dict:
-        if app.state.index_job.running:
-            raise HTTPException(409, "正在索引图片，请稍后再检索")
         specs = parse_reference_specs(references)
         library_paths, library_weights = resolve_library_references(specs)
         upload_weights = _parse_weight_list(file_weights, len(files))

@@ -111,8 +111,9 @@ def random_browse(
     request: RandomBrowseRequest,
     c: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
-    if c.index_job.running:
-        raise HTTPException(409, "正在索引图片，请稍后再浏览")
+    # Random paging reads the same WAL snapshot + locked vector matrices as any
+    # other browse route, so it stays usable while indexing; the waterfall must
+    # not freeze just because a scan is queued or preparing.
     return c.gallery.random_browse(
         folder_keys=request.folder_keys,
         seed=request.seed,

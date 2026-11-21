@@ -22,13 +22,17 @@ from ..schemas import (
 router = APIRouter()
 
 
+# Reads stay open while an index job is queued, preparing, or running: SQLite is
+# in WAL mode (readers never block the writer) and VectorIndex guards every
+# matrix access with its own RLock, so a query during indexing returns a slightly
+# stale-but-consistent slice instead of failing. Only mutations that would
+# interleave with the scan (directory removal, task submissions, storage moves)
+# are gated in their own routers.
 @router.post("/api/search")
 def search(
     request: TextSearchRequest,
     c: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
-    if c.index_job.running:
-        raise HTTPException(409, "正在索引图片，请稍后再检索")
     return c.search.search(
         query=request.query,
         references=[{"id": r.id, "weight": r.weight} for r in request.references],
@@ -77,8 +81,6 @@ def local_search(
     request: TextSearchRequest,
     c: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
-    if c.index_job.running:
-        raise HTTPException(409, "正在索引图片，请稍后再检索")
     return c.search.local_search(
         query=request.query,
         limit=request.limit,
@@ -100,8 +102,6 @@ def search_by_character(
     request: CharacterSearchRequest,
     c: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
-    if c.index_job.running:
-        raise HTTPException(409, "正在索引图片，请稍后再检索")
     return c.search.search_by_character(
         reference_id=request.reference_id,
         bbox=request.bbox,
@@ -152,8 +152,6 @@ async def search_upload(
     exclude_ai: bool | None = Form(default=None),
     c: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
-    if c.index_job.running:
-        raise HTTPException(409, "正在索引图片，请稍后再检索")
     specs = parse_reference_specs(references)
     upload_weights = parse_weight_list(file_weights, len(files))
     temps: list[Path] = []
