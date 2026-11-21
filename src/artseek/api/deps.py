@@ -111,6 +111,7 @@ class AppContainer:
             self.resolver,
             self.collections_repo,
             self.snapshots,
+            assets_dir=self.config.artist_assets_dir,
         )
         self.collections = CollectionService(
             self.collections_repo,

@@ -42,6 +42,7 @@ def _artist_collection_result(
         "artist_key": key,
         "name": summary.get("name") or summary.get("handle") or key,
         "handle": summary.get("handle") or "",
+        "avatar_url": summary.get("avatar_url") or "",
         "members": summary.get("members") or [],
         "image_count": int(summary.get("image_count") or 0),
         "latest_mtime": int(latest_mtime or 0),

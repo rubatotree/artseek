@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi.responses import FileResponse
 
 from ..deps import AppContainer, get_container
 from ..schemas import (
@@ -180,6 +181,66 @@ def set_artist_cover(
     c: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
     return c.artists.set_cover(author_key, request.point_id)
+
+
+@router.delete("/api/authors/{author_key}/cover")
+def clear_artist_cover(
+    author_key: str,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.artists.clear_cover(author_key)
+
+
+@router.post("/api/authors/{author_key}/cover/upload")
+async def upload_artist_cover(
+    author_key: str,
+    file: UploadFile = File(...),
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.artists.upload_cover(author_key, await file.read())
+
+
+@router.get("/api/authors/{author_key}/cover-image")
+def get_artist_cover_image(
+    author_key: str,
+    c: AppContainer = Depends(get_container),
+) -> FileResponse:
+    path = c.artists.resolve_asset_path(author_key, "cover")
+    return FileResponse(
+        path,
+        media_type="image/webp",
+        headers={"Cache-Control": "public, max-age=31536000"},
+    )
+
+
+@router.post("/api/authors/{author_key}/avatar/upload")
+async def upload_artist_avatar(
+    author_key: str,
+    file: UploadFile = File(...),
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.artists.upload_avatar(author_key, await file.read())
+
+
+@router.delete("/api/authors/{author_key}/avatar")
+def clear_artist_avatar(
+    author_key: str,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return c.artists.clear_avatar(author_key)
+
+
+@router.get("/api/authors/{author_key}/avatar")
+def get_artist_avatar(
+    author_key: str,
+    c: AppContainer = Depends(get_container),
+) -> FileResponse:
+    path = c.artists.resolve_asset_path(author_key, "avatar")
+    return FileResponse(
+        path,
+        media_type="image/webp",
+        headers={"Cache-Control": "public, max-age=31536000"},
+    )
 
 
 @router.post("/api/authors/{author_key}/merge")

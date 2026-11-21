@@ -1369,6 +1369,165 @@ class ProvenanceApiTests(unittest.TestCase):
         stats = self.client.get("/api/provenance/stats").json()
         self.assertGreaterEqual(stats["total"], 1)
 
+    def test_artist_cover_rating_priority_and_filtered_blur(self) -> None:
+        alice = self.store.ensure_author("pixiv", "10", name="Alice")
+        bob = self.store.ensure_author("pixiv", "11", name="Bob")
+
+        # Alice has R18 (newest), R15, and safe (oldest): auto-cover must prefer safe.
+        for point_id, mtime, rating in (
+            ("a_safe", 1_000, "safe"),
+            ("a_r15", 2_000, "r15"),
+            ("a_r18", 3_000, "r18"),
+        ):
+            payload = dict(
+                self.payload,
+                path=str(self.root / f"{point_id}.png"),
+                path_key=str(self.root / f"{point_id}.png").casefold(),
+                name=f"{point_id}.png",
+                content_hash=(point_id * 16)[:64],
+                mtime_ns=mtime,
+                rating=rating,
+            )
+            self.engine.store.payloads[point_id] = payload
+            self.store.upsert_scan(
+                point_id,
+                payload,
+                ParsedSource(parse_filename("12345678_p0.png")),
+                path_key=str(self.root / f"{point_id}.png").casefold(),
+            )
+            self.store.set_fetch_result(
+                point_id,
+                {
+                    "platform": "pixiv",
+                    "source_id": point_id,
+                    "page": 0,
+                    "url": f"https://www.pixiv.net/artworks/{point_id}",
+                    "status": "ok",
+                    "tags": [],
+                },
+                author_key=alice,
+            )
+
+        # Bob only has an R18 image.
+        bob_payload = dict(
+            self.payload,
+            path=str(self.root / "b_r18.png"),
+            path_key=str(self.root / "b_r18.png").casefold(),
+            name="b_r18.png",
+            content_hash=("b_r18" * 16)[:64],
+            mtime_ns=4_000,
+            rating="r18",
+        )
+        self.engine.store.payloads["b_r18"] = bob_payload
+        self.store.upsert_scan(
+            "b_r18",
+            bob_payload,
+            ParsedSource(parse_filename("12345678_p0.png")),
+            path_key=str(self.root / "b_r18.png").casefold(),
+        )
+        self.store.set_fetch_result(
+            "b_r18",
+            {
+                "platform": "pixiv",
+                "source_id": "b_r18",
+                "page": 0,
+                "url": "https://www.pixiv.net/artworks/b_r18",
+                "status": "ok",
+                "tags": [],
+            },
+            author_key=bob,
+        )
+
+        # Unfiltered: Alice picks a_safe (not blurred), Bob picks b_r18 (not blurred).
+        unfiltered = self.client.post(
+            "/api/artists/gallery",
+            json={"author_keys": [alice, bob], "limit": 10},
+        ).json()["authors"]
+        by_key = {a["key"]: a for a in unfiltered}
+        self.assertEqual(by_key[alice]["cover"]["id"], "a_safe")
+        self.assertFalse(by_key[alice]["cover"]["blurred"])
+        self.assertEqual(by_key[bob]["cover"]["id"], "b_r18")
+        self.assertFalse(by_key[bob]["cover"]["blurred"])
+
+        # Explicit R18 cover on Alice: in safe mode, keep a_r18 but mark blurred=True.
+        self.client.post(f"/api/authors/{alice}/cover", json={"point_id": "a_r18"})
+        safe_mode = self.client.post(
+            "/api/artists/gallery",
+            json={"author_keys": [alice, bob], "ratings": ["safe"], "limit": 10},
+        ).json()["authors"]
+        safe_by_key = {a["key"]: a for a in safe_mode}
+        self.assertEqual(safe_by_key[alice]["cover"]["id"], "a_r18")
+        self.assertTrue(safe_by_key[alice]["cover"]["blurred"])
+        self.assertTrue(safe_by_key[alice]["cover_explicit"])
+        # Bob has no safe images, so cover is b_r18 with blurred=True.
+        self.assertEqual(safe_by_key[bob]["cover"]["id"], "b_r18")
+        self.assertTrue(safe_by_key[bob]["cover"]["blurred"])
+
+        # Clear explicit cover -> reverts to auto-selected a_safe (unblurred in safe mode).
+        cleared = self.client.delete(f"/api/authors/{alice}/cover")
+        self.assertEqual(cleared.status_code, 200)
+        self.assertIsNone(cleared.json()["author"]["cover_point_id"])
+        safe_after_clear = self.client.post(
+            "/api/artists/gallery",
+            json={"author_keys": [alice], "ratings": ["safe"], "limit": 10},
+        ).json()["authors"][0]
+        self.assertEqual(safe_after_clear["cover"]["id"], "a_safe")
+        self.assertFalse(safe_after_clear["cover"]["blurred"])
+
+    def test_artist_cover_and_avatar_upload_and_clear(self) -> None:
+        alice = self.store.ensure_author("pixiv", "20", name="UploadAlice")
+        self._add_artist_image(
+            "p_up", "up.png", mtime_ns=1_000, author_key=alice, source_id="9001"
+        )
+        img_bytes = self.image.read_bytes()
+
+        # Upload cover
+        up_cover = self.client.post(
+            f"/api/authors/{alice}/cover/upload",
+            files={"file": ("banner.png", img_bytes, "image/png")},
+        )
+        self.assertEqual(up_cover.status_code, 200)
+        author = up_cover.json()["author"]
+        self.assertEqual(author["cover_source"], "upload")
+        self.assertTrue(author["cover_url"].startswith(f"/api/authors/{alice}/cover-image"))
+
+        # Serve uploaded cover
+        get_cover = self.client.get(author["cover_url"])
+        self.assertEqual(get_cover.status_code, 200)
+        self.assertEqual(get_cover.headers["content-type"], "image/webp")
+
+        # Gallery returns uploaded cover
+        gallery_author = self.client.post(
+            "/api/artists/gallery",
+            json={"author_keys": [alice], "limit": 1},
+        ).json()["authors"][0]
+        self.assertTrue(gallery_author["cover"]["uploaded"])
+        self.assertTrue(gallery_author["cover_explicit"])
+
+        # Clear uploaded cover
+        del_cover = self.client.delete(f"/api/authors/{alice}/cover")
+        self.assertEqual(del_cover.status_code, 200)
+        self.assertIsNone(del_cover.json()["author"]["cover_source"])
+        self.assertEqual(self.client.get(f"/api/authors/{alice}/cover-image").status_code, 404)
+
+        # Upload avatar
+        up_avatar = self.client.post(
+            f"/api/authors/{alice}/avatar/upload",
+            files={"file": ("avatar.png", img_bytes, "image/png")},
+        )
+        self.assertEqual(up_avatar.status_code, 200)
+        avatar_url = up_avatar.json()["author"]["avatar_url"]
+        self.assertTrue(avatar_url.startswith(f"/api/authors/{alice}/avatar"))
+        get_avatar = self.client.get(avatar_url)
+        self.assertEqual(get_avatar.status_code, 200)
+        self.assertEqual(get_avatar.headers["content-type"], "image/webp")
+
+        # Clear avatar
+        del_avatar = self.client.delete(f"/api/authors/{alice}/avatar")
+        self.assertEqual(del_avatar.status_code, 200)
+        self.assertIsNone(del_avatar.json()["author"]["avatar_url"])
+        self.assertEqual(self.client.get(f"/api/authors/{alice}/avatar").status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

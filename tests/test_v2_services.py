@@ -545,6 +545,54 @@ class V2ServicesTests(unittest.TestCase):
         self.assertTrue((new_index_dir / "artseek.sqlite3").is_file())
         self.assertTrue((new_index_dir / "visual.f32.npy").is_file())
 
+    def test_refresh_artist_avatars_replaces_pximg_and_skips_uploaded(self) -> None:
+        class _FakeTwitter:
+            def fetch_user(self, handle: str) -> dict[str, Any]:
+                return {
+                    "handle": handle,
+                    "avatar_url": f"https://pbs.twimg.com/profile_images/{handle}.jpg",
+                }
+
+            def close(self) -> None:
+                pass
+
+        # Artist with pximg.net avatar and a linked Twitter handle should be updated.
+        px_artist = self.prov_repo.ensure_author(
+            "pixiv",
+            "705370",
+            name="しらたま",
+            avatar_url="https://i.pximg.net/user-profile/img/old.jpg",
+        )
+        tw_member = self.prov_repo.ensure_author("twitter", "shiratamacaron", handle="shiratamacaron")
+        self.prov_repo.link_authors(tw_member, px_artist, evidence="pixiv_social")
+
+        # Artist with custom uploaded avatar must NOT be overwritten.
+        custom_artist = self.prov_repo.ensure_author(
+            "twitter",
+            "custom_user",
+            handle="custom_user",
+            avatar_url="/api/authors/99/avatar?v=abc",
+        )
+
+        targets = self.provenance.select_artist_avatar_targets(skip_completed=True)
+        keys = {t["artist_key"] for t in targets}
+        self.assertIn(px_artist, keys)
+        self.assertNotIn(custom_artist, keys)
+
+        summary = self.provenance.run_artist_avatars(
+            targets, twitter_client=_FakeTwitter()  # type: ignore[arg-type]
+        )
+        self.assertGreaterEqual(summary["ok"], 1)
+        updated = self.prov_repo.author_summary(px_artist)
+        assert updated is not None
+        self.assertEqual(
+            updated["avatar_url"],
+            "https://pbs.twimg.com/profile_images/shiratamacaron.jpg",
+        )
+        custom = self.prov_repo.author_summary(custom_artist)
+        assert custom is not None
+        self.assertEqual(custom["avatar_url"], "/api/authors/99/avatar?v=abc")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -258,6 +258,11 @@ class ArtistCoverRequest(BaseModel):
     point_id: str = ""
 
 
+class ArtistAvatarsJobRequest(BaseModel):
+    skip_completed: bool = True
+    limit: int | None = Field(default=None, ge=1, le=50_000)
+
+
 class ArtistMergeRequest(BaseModel):
     source: str = ""
 

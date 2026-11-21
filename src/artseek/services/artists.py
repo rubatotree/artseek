@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import io
 import random
 import threading
 import time
+import uuid
 from collections import OrderedDict
 from collections.abc import Sequence
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
+
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from ..collections import ARTIST_ITEM_PREFIX
 from ..core.scope import ImageScope
@@ -66,6 +71,18 @@ def _normalize_image_sort(raw_sort: str) -> str:
     return mapped
 
 
+def _cover_rating_rank(rating: object) -> int:
+    """Prefer confirmed safe -> R15 -> R18 -> unrated when auto-picking a cover."""
+    value = str(rating or "").strip().casefold()
+    if value == "safe":
+        return 0
+    if value == "r15":
+        return 1
+    if value == "r18":
+        return 2
+    return 3
+
+
 class ArtistService:
     """Author listing, paginated artist waterfall, identity linking, and merge service."""
 
@@ -76,12 +93,15 @@ class ArtistService:
         resolver: ScopeResolver,
         collections: CollectionRepo,
         snapshots: SearchSnapshotStore,
+        *,
+        assets_dir: Path | None = None,
     ) -> None:
         self.images = images
         self.prov = prov
         self.resolver = resolver
         self.collections = collections
         self.snapshots = snapshots
+        self.assets_dir = assets_dir
         self._cache_lock = threading.RLock()
         self._author_scope_cache: OrderedDict[tuple[Any, ...], tuple[float, dict[str, int]]] = (
             OrderedDict()
@@ -138,29 +158,36 @@ class ArtistService:
 
     def _batch_live_meta(
         self, point_ids: Sequence[str]
-    ) -> dict[str, tuple[int, str, int]]:
-        """Return `{point_id: (row_id, name, mtime_ns)}` for live images in one SQL sweep."""
+    ) -> dict[str, tuple[int, str, int, str, int]]:
+        """Return `{point_id: (row_id, name, mtime_ns, rating, pixels)}` for live images."""
         unique = [pid for pid in dict.fromkeys(point_ids) if pid]
         if not unique:
             return {}
         conn = self.images.db.read_conn()
-        found: dict[str, tuple[int, str, int]] = {}
+        found: dict[str, tuple[int, str, int, str, int]] = {}
         for start in range(0, len(unique), 400):
             chunk = unique[start : start + 400]
             marks = ",".join("?" for _ in chunk)
             rows = conn.execute(
-                f"SELECT id, point_id, name, mtime_ns FROM images "
+                f"SELECT id, point_id, name, mtime_ns, rating, width, height FROM images "
                 f"WHERE deleted = 0 AND point_id IN ({marks})",
                 tuple(chunk),
             ).fetchall()
             for r in rows:
-                found[str(r["point_id"])] = (int(r["id"]), str(r["name"]), int(r["mtime_ns"] or 0))
+                pixels = int(r["width"] or 0) * int(r["height"] or 0)
+                found[str(r["point_id"])] = (
+                    int(r["id"]),
+                    str(r["name"]),
+                    int(r["mtime_ns"] or 0),
+                    str(r["rating"] or ""),
+                    pixels,
+                )
         return found
 
     def _sort_point_ids_in_mem(
         self,
         point_ids: Sequence[str],
-        meta: dict[str, tuple[int, str, int]],
+        meta: dict[str, tuple[int, ...]],
         sort: str,
         seed: int | None,
     ) -> tuple[list[str], str, int | None]:
@@ -518,13 +545,14 @@ class ArtistService:
 
         entry_keys = [str(item["key"]) for item in page_entries]
         id_map = self.prov.point_ids_for_authors(entry_keys) if entry_keys else {}
-        explicit_covers = self.prov.artist_cover_ids(entry_keys) if entry_keys else {}
+        explicit_covers = self.prov.artist_cover_entries(entry_keys) if entry_keys else {}
 
         candidate_ids: list[str] = []
         for key in entry_keys:
             candidate_ids.extend(id_map.get(key, ()))
-            if explicit_covers.get(key):
-                candidate_ids.append(explicit_covers[key])
+            explicit = explicit_covers.get(key)
+            if explicit and explicit.get("source") != "upload" and explicit.get("identity"):
+                candidate_ids.append(explicit["identity"])
         live_meta = self._batch_live_meta(candidate_ids)
 
         rank_map = (
@@ -535,15 +563,20 @@ class ArtistService:
         previews: dict[str, list[str]] = {}
         totals: dict[str, int] = {}
         seeds: dict[str, int | None] = {}
+        cover_plans: dict[str, tuple[dict[str, Any] | None, str, bool, bool]] = {}
         fetch_ids: list[str] = []
 
         for entry in page_entries:
             key = str(entry["key"])
-            ids = id_map.get(key, [])
-            if scope is not None:
-                ids = [pid for pid in ids if pid in scope]
+            raw_ids = id_map.get(key, [])
+            all_live_ids = [pid for pid in raw_ids if pid in live_meta]
+            scoped_ids = (
+                [pid for pid in all_live_ids if pid in scope]
+                if scope is not None
+                else list(all_live_ids)
+            )
             if rank_map is not None:
-                ids = [pid for pid in ids if pid in live_meta]
+                ids = list(scoped_ids)
                 ids.sort(key=lambda pid: rank_map.get(pid, len(rank_map)))
                 used_seed = None
             else:
@@ -551,14 +584,52 @@ class ArtistService:
                 if norm_image_sort == "random" and base_seed is not None:
                     row_seed = random.Random(f"{base_seed}:{key}").randrange(1 << 53)
                 ids, _, used_seed = self._sort_point_ids_in_mem(
-                    ids, live_meta, norm_image_sort, row_seed
+                    scoped_ids, live_meta, norm_image_sort, row_seed
                 )
             previews[key] = ids[: max(1, int(image_limit))]
             totals[key] = len(ids)
             seeds[key] = used_seed
             fetch_ids.extend(previews[key])
-            if explicit_covers.get(key) and explicit_covers[key] in live_meta:
-                fetch_ids.append(explicit_covers[key])
+
+            explicit = explicit_covers.get(key)
+            if explicit and explicit.get("source") == "upload" and explicit.get("profile_url"):
+                cover_plans[key] = (
+                    {
+                        "id": explicit["identity"],
+                        "url": explicit["profile_url"],
+                        "uploaded": True,
+                        "blurred": False,
+                        "name": None,
+                        "width": 0,
+                        "height": 0,
+                    },
+                    "",
+                    True,
+                    False,
+                )
+            elif explicit and explicit.get("source") != "upload" and explicit.get("identity") in live_meta:
+                cid = explicit["identity"]
+                blurred = scope is not None and cid not in scope
+                fetch_ids.append(cid)
+                cover_plans[key] = (None, cid, True, blurred)
+            else:
+                pool = scoped_ids or all_live_ids
+                blurred = (not scoped_ids) and bool(all_live_ids)
+                cid = (
+                    min(
+                        pool,
+                        key=lambda pid: (
+                            _cover_rating_rank(live_meta[pid][3]),
+                            -live_meta[pid][4],
+                            pid,
+                        ),
+                    )
+                    if pool
+                    else ""
+                )
+                if cid:
+                    fetch_ids.append(cid)
+                cover_plans[key] = (None, cid, False, blurred)
 
         hydrated = self._hydrate_point_ids(list(dict.fromkeys(fetch_ids)))
         by_id = {str(item["id"]): item for item in hydrated}
@@ -570,25 +641,24 @@ class ArtistService:
             entry["images_offset"] = len(images)
             entry["images_total"] = totals[key]
             entry["image_seed"] = seeds[key]
-            explicit_cover = explicit_covers.get(key)
-            if explicit_cover and (
-                explicit_cover not in live_meta
-                or (scope is not None and explicit_cover not in scope)
-            ):
-                explicit_cover = ""
-            cover_id = explicit_cover or (previews[key][0] if previews[key] else "")
-            cover_item = by_id.get(cover_id) if cover_id else None
-            entry["cover"] = (
-                {
-                    "id": cover_id,
-                    "name": cover_item.get("name"),
-                    "width": cover_item.get("width"),
-                    "height": cover_item.get("height"),
-                }
-                if cover_item is not None
-                else None
-            )
-            entry["cover_explicit"] = bool(explicit_cover) and cover_item is not None
+            uploaded_cover, cover_id, is_explicit, is_blurred = cover_plans[key]
+            if uploaded_cover is not None:
+                entry["cover"] = uploaded_cover
+                entry["cover_explicit"] = True
+            else:
+                cover_item = by_id.get(cover_id) if cover_id else None
+                entry["cover"] = (
+                    {
+                        "id": cover_id,
+                        "name": cover_item.get("name"),
+                        "width": cover_item.get("width"),
+                        "height": cover_item.get("height"),
+                        "blurred": is_blurred,
+                    }
+                    if cover_item is not None
+                    else None
+                )
+                entry["cover_explicit"] = is_explicit and cover_item is not None
             members = entry.get("members") or []
             entry["pixiv_ids"] = [
                 str(m.get("platform_id") or "")
@@ -745,13 +815,123 @@ class ArtistService:
             raise ServiceError(404, "作者不存在")
         return {"author": summary}
 
-    def set_cover(self, author_key: str, point_id: str) -> dict[str, Any]:
+    def _require_assets_dir(self) -> Path:
+        if self.assets_dir is None:
+            raise ServiceError(500, "未配置画师资源目录")
+        self.assets_dir.mkdir(parents=True, exist_ok=True)
+        return self.assets_dir
+
+    def _delete_artist_assets(self, canonical_key: str, kind: Literal["avatar", "cover"]) -> None:
+        if self.assets_dir is None or not self.assets_dir.exists():
+            return
+        for path in self.assets_dir.glob(f"{kind}-{canonical_key}-*.webp"):
+            path.unlink(missing_ok=True)
+
+    def _save_artist_asset(
+        self,
+        author_key: str,
+        kind: Literal["avatar", "cover"],
+        raw_bytes: bytes,
+        max_dim: int,
+    ) -> tuple[str, str]:
+        if not raw_bytes:
+            raise ServiceError(400, "请选择要上传的图片文件")
+        if len(raw_bytes) > 20 * 1024 * 1024:
+            raise ServiceError(400, "图片文件过大（上限 20 MB）")
+        summary = self.prov.author_summary(author_key)
+        if summary is None or str(author_key).casefold() == UNASSIGNED_AUTHOR_KEY:
+            raise ServiceError(404 if summary is None else 400, "作者不存在" if summary is None else "无画师不能上传图片")
+        canonical = str(summary["key"])
         try:
-            self.prov.set_artist_cover(author_key, point_id)
+            with Image.open(io.BytesIO(raw_bytes)) as img:
+                prepared = ImageOps.exif_transpose(img)
+                if prepared.mode not in ("RGB", "RGBA"):
+                    prepared = prepared.convert("RGBA" if "A" in prepared.getbands() else "RGB")
+                prepared.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+                assets_dir = self._require_assets_dir()
+                token = uuid.uuid4().hex[:10]
+                dest = assets_dir / f"{kind}-{canonical}-{token}.webp"
+                tmp = assets_dir / f".{kind}-{canonical}-{token}.webp.tmp"
+                prepared.save(tmp, format="WEBP", quality=90, method=4)
+                self._delete_artist_assets(canonical, kind)
+                tmp.replace(dest)
+        except (UnidentifiedImageError, OSError, ValueError) as exc:
+            raise ServiceError(400, "无法读取该图片文件，请换一张有效的图片") from exc
+        return canonical, token
+
+    def resolve_asset_path(self, author_key: str, kind: Literal["avatar", "cover"]) -> Path:
+        summary = self.prov.author_summary(author_key)
+        if summary is None:
+            raise ServiceError(404, "作者不存在")
+        canonical = str(summary["key"])
+        assets_dir = self.assets_dir
+        if assets_dir is None or not assets_dir.exists():
+            raise ServiceError(404, "资源不存在")
+        matches = sorted(assets_dir.glob(f"{kind}-{canonical}-*.webp"), reverse=True)
+        if not matches:
+            raise ServiceError(404, "资源不存在")
+        return matches[0]
+
+    def set_cover(self, author_key: str, point_id: str) -> dict[str, Any]:
+        if not str(point_id or "").strip():
+            return self.clear_cover(author_key)
+        try:
+            canonical = self.prov.set_artist_cover(author_key, point_id)
+        except ValueError as exc:
+            raise ServiceError(400, str(exc)) from exc
+        self._delete_artist_assets(canonical, "cover")
+        self.invalidate_cache()
+        summary = self.prov.author_summary(author_key)
+        if summary is None:
+            raise ServiceError(404, "作者不存在")
+        return {"author": summary}
+
+    def clear_cover(self, author_key: str) -> dict[str, Any]:
+        try:
+            canonical = self.prov.clear_artist_cover(author_key)
+        except ValueError as exc:
+            raise ServiceError(400, str(exc)) from exc
+        self._delete_artist_assets(canonical, "cover")
+        self.invalidate_cache()
+        summary = self.prov.author_summary(author_key)
+        if summary is None:
+            raise ServiceError(404, "作者不存在")
+        return {"author": summary}
+
+    def upload_cover(self, author_key: str, raw_bytes: bytes) -> dict[str, Any]:
+        canonical, token = self._save_artist_asset(author_key, "cover", raw_bytes, 1600)
+        url = f"/api/authors/{canonical}/cover-image?v={token}"
+        try:
+            self.prov.set_uploaded_artist_cover(canonical, f"upload:{token}", url)
         except ValueError as exc:
             raise ServiceError(400, str(exc)) from exc
         self.invalidate_cache()
-        summary = self.prov.author_summary(author_key)
+        summary = self.prov.author_summary(canonical)
+        if summary is None:
+            raise ServiceError(404, "作者不存在")
+        return {"author": summary}
+
+    def upload_avatar(self, author_key: str, raw_bytes: bytes) -> dict[str, Any]:
+        canonical, token = self._save_artist_asset(author_key, "avatar", raw_bytes, 512)
+        url = f"/api/authors/{canonical}/avatar?v={token}"
+        try:
+            self.prov.set_artist_avatar(canonical, url)
+        except ValueError as exc:
+            raise ServiceError(400, str(exc)) from exc
+        self.invalidate_cache()
+        summary = self.prov.author_summary(canonical)
+        if summary is None:
+            raise ServiceError(404, "作者不存在")
+        return {"author": summary}
+
+    def clear_avatar(self, author_key: str) -> dict[str, Any]:
+        try:
+            canonical = self.prov.set_artist_avatar(author_key, None)
+        except ValueError as exc:
+            raise ServiceError(400, str(exc)) from exc
+        self._delete_artist_assets(canonical, "avatar")
+        self.invalidate_cache()
+        summary = self.prov.author_summary(canonical)
         if summary is None:
             raise ServiceError(404, "作者不存在")
         return {"author": summary}

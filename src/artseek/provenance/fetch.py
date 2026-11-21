@@ -237,7 +237,7 @@ class FxTwitterClient:
         self._client = client
         self._owns_client = client is None
 
-    def _get(self, url: str) -> dict[str, Any]:
+    def _get_json(self, url: str) -> dict[str, Any]:
         client = self._client
         if client is None:
             client = httpx.Client(
@@ -251,9 +251,9 @@ class FxTwitterClient:
         except httpx.HTTPError as exc:
             raise FetchError(f"FxTwitter 请求失败：{exc}") from exc
         if response.status_code == 404:
-            raise NotFoundError("推文不存在或已删除")
+            raise NotFoundError("推文或用户不存在")
         if response.status_code in (401, 403):
-            raise ProtectedError("推文受保护或需要登录")
+            raise ProtectedError("推文或用户受保护")
         if response.status_code == 429:
             raise RateLimitError("FxTwitter 返回 429", retry_after=_retry_after(response))
         if response.status_code >= 400:
@@ -264,6 +264,10 @@ class FxTwitterClient:
             raise FetchError("FxTwitter 返回了非 JSON 内容") from exc
         if not isinstance(payload, dict):
             raise FetchError("FxTwitter 响应格式异常")
+        return payload
+
+    def _get(self, url: str) -> dict[str, Any]:
+        payload = self._get_json(url)
         tweet = payload.get("tweet")
         if not isinstance(tweet, dict):
             code = payload.get("code")
@@ -273,6 +277,27 @@ class FxTwitterClient:
                 raise ProtectedError("推文受保护或需要登录")
             raise FetchError(str(payload.get("message") or "FxTwitter 响应缺少 tweet"))
         return tweet
+
+    def fetch_user(self, handle: str) -> dict[str, Any]:
+        clean = str(handle or "").strip().lstrip("@")
+        if not clean:
+            return {}
+        payload = self._get_json(f"https://api.fxtwitter.com/{clean}")
+        user = payload.get("user")
+        if not isinstance(user, dict):
+            code = payload.get("code")
+            if code == 404:
+                raise NotFoundError("Twitter 用户不存在")
+            if code in (401, 403):
+                raise ProtectedError("Twitter 用户受保护")
+            raise FetchError(str(payload.get("message") or "FxTwitter 响应缺少 user"))
+        return {
+            "id": _str_or_none(user.get("id")),
+            "name": _str_or_none(user.get("name")),
+            "handle": _str_or_none(user.get("screen_name")) or clean,
+            "avatar_url": _str_or_none(user.get("avatar_url")),
+            "profile_url": _str_or_none(user.get("url")) or f"https://x.com/{clean}",
+        }
 
     def fetch(self, ref: SourceRef, *, local_size: tuple[int, int] | None = None) -> FetchResult:
         tweet = self._get(f"https://api.fxtwitter.com/status/{ref.source_id}")

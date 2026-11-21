@@ -197,6 +197,10 @@ class AppConfig:
     def ccip_vectors_path(self) -> Path:
         return self.index_dir / CCIP_VECTORS_NAME
 
+    @property
+    def artist_assets_dir(self) -> Path:
+        return self.index_dir / "artist-assets"
+
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.index_dir.mkdir(parents=True, exist_ok=True)

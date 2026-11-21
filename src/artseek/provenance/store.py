@@ -1493,6 +1493,22 @@ class ProvenanceStore:
         return unique
 
     @staticmethod
+    def _should_replace_avatar(current: str | None, incoming: str | None) -> bool:
+        new_url = str(incoming or "").strip()
+        if not new_url:
+            return False
+        cur_url = str(current or "").strip()
+        if not cur_url:
+            return True
+        if cur_url.startswith("/api/authors/"):
+            return False
+        if new_url.startswith("/api/authors/"):
+            return True
+        # Pixiv's pximg.net rejects browser requests without a pixiv.net referrer;
+        # prefer directly loadable social avatars such as Twitter's pbs.twimg.com.
+        return "pximg.net" in cur_url.casefold() and "pximg.net" not in new_url.casefold()
+
+    @staticmethod
     def _name_priority(value: Any) -> tuple[int, int, int]:
         text = str(value or "").strip()
         if not text:
@@ -1640,7 +1656,7 @@ class ProvenanceStore:
         ):
             updates.extend(["name = ?", "name_key = ?", "name_source = ?"])
             values.extend([incoming, _author_text(incoming), incoming_source or None])
-        if avatar_url and not row["avatar_url"]:
+        if self._should_replace_avatar(row["avatar_url"], avatar_url):
             updates.append("avatar_url = ?")
             values.append(avatar_url)
         if profile_fetched:
@@ -1685,7 +1701,11 @@ class ProvenanceStore:
         ):
             name = source["name"]
             name_source = source["name_source"]
-        avatar = target["avatar_url"] or source["avatar_url"]
+        avatar = (
+            source["avatar_url"]
+            if self._should_replace_avatar(target["avatar_url"], source["avatar_url"])
+            else (target["avatar_url"] or source["avatar_url"])
+        )
         note = target["note"] or source["note"]
         profile_fetched = max(
             int(target["profile_fetched"] or 0), int(source["profile_fetched"] or 0)
@@ -2111,10 +2131,69 @@ class ProvenanceStore:
             connection.commit()
         return base
 
-    def artist_cover_ids(self, keys: Sequence[str]) -> dict[str, str]:
+    def clear_artist_cover(self, artist_key: str) -> str:
+        """Remove any explicit or uploaded representative cover for an artist."""
+        if self._is_unassigned_key(artist_key):
+            raise ValueError("无画师不能取消代表图")
+        with self._read() as connection:
+            base = self._canonical_locked(connection, artist_key)
+            if not base.isdigit():
+                raise ValueError("作者不存在")
+            connection.execute(
+                "DELETE FROM artist_identity WHERE artist_id = ? AND kind = ?",
+                (int(base), IDENTITY_COVER),
+            )
+            connection.execute(
+                "UPDATE artist SET updated_at = ? WHERE id = ?", (_now(), int(base))
+            )
+            connection.commit()
+        return base
+
+    def set_uploaded_artist_cover(
+        self, artist_key: str, asset_token: str, url: str
+    ) -> str:
+        """Store a manually uploaded custom representative cover for an artist."""
+        if self._is_unassigned_key(artist_key):
+            raise ValueError("无画师不能设置代表图")
+        with self._read() as connection:
+            base = self._canonical_locked(connection, artist_key)
+            if not base.isdigit():
+                raise ValueError("作者不存在")
+            connection.execute(
+                "DELETE FROM artist_identity WHERE artist_id = ? AND kind = ?",
+                (int(base), IDENTITY_COVER),
+            )
+            connection.execute(
+                "INSERT INTO artist_identity"
+                "(kind, identity, display, profile_url, source, artist_id, updated_at) "
+                "VALUES (?, ?, ?, ?, 'upload', ?, ?)",
+                (IDENTITY_COVER, asset_token, asset_token, url, int(base), _now()),
+            )
+            connection.execute(
+                "UPDATE artist SET updated_at = ? WHERE id = ?", (_now(), int(base))
+            )
+            connection.commit()
+        return base
+
+    def set_artist_avatar(self, artist_key: str, avatar_url: str | None) -> str:
+        """Set or clear the artist's avatar URL."""
+        if self._is_unassigned_key(artist_key):
+            raise ValueError("无画师不能设置头像")
+        with self._read() as connection:
+            base = self._canonical_locked(connection, artist_key)
+            if not base.isdigit():
+                raise ValueError("作者不存在")
+            connection.execute(
+                "UPDATE artist SET avatar_url = ?, updated_at = ? WHERE id = ?",
+                (avatar_url, _now(), int(base)),
+            )
+            connection.commit()
+        return base
+
+    def artist_cover_entries(self, keys: Sequence[str]) -> dict[str, dict[str, str]]:
         clean = list(dict.fromkeys(str(key) for key in keys if key))
         numeric = sorted({key for key in clean if key.isdigit()})
-        result: dict[str, str] = {}
+        result: dict[str, dict[str, str]] = {}
         if not numeric:
             return result
         with self._read() as connection:
@@ -2122,12 +2201,23 @@ class ProvenanceStore:
                 batch = numeric[start : start + 400]
                 placeholders = ",".join("?" for _ in batch)
                 for row in connection.execute(
-                    "SELECT artist_id, identity FROM artist_identity "
+                    "SELECT artist_id, identity, profile_url, source FROM artist_identity "
                     f"WHERE kind = ? AND artist_id IN ({placeholders})",
                     [IDENTITY_COVER, *batch],
                 ).fetchall():
-                    result[str(row["artist_id"])] = str(row["identity"])
+                    result[str(row["artist_id"])] = {
+                        "identity": str(row["identity"] or ""),
+                        "profile_url": str(row["profile_url"] or ""),
+                        "source": str(row["source"] or "manual"),
+                    }
         return result
+
+    def artist_cover_ids(self, keys: Sequence[str]) -> dict[str, str]:
+        return {
+            key: entry["identity"]
+            for key, entry in self.artist_cover_entries(keys).items()
+            if entry.get("source") != "upload" and entry.get("identity")
+        }
 
     def set_author_name(self, artist_key: str, name: str) -> str:
         """Set the display name for an artist without merging other artists."""
@@ -2569,6 +2659,8 @@ class ProvenanceStore:
                 "xiaohongshu_names": [],
                 "links": [],
                 "cover_point_id": None,
+                "cover_url": None,
+                "cover_source": None,
             }
         with self._read() as connection:
             artist_id = self._canonical_locked(connection, key)
@@ -2587,14 +2679,26 @@ class ProvenanceStore:
         summary = self._author_view(row, identities)
         summary["members"] = self._member_views(row, identities)
         summary["image_count"] = int(row["image_count"] or 0)
-        summary["cover_point_id"] = next(
+        cover_identity = next(
             (
-                identity["identity"]
+                identity
                 for identity in summary["identities"]
                 if identity["kind"] == IDENTITY_COVER
             ),
             None,
         )
+        if cover_identity and cover_identity.get("source") == "upload":
+            summary["cover_point_id"] = None
+            summary["cover_url"] = cover_identity.get("profile_url") or None
+            summary["cover_source"] = "upload"
+        elif cover_identity:
+            summary["cover_point_id"] = cover_identity["identity"]
+            summary["cover_url"] = None
+            summary["cover_source"] = "manual"
+        else:
+            summary["cover_point_id"] = None
+            summary["cover_url"] = None
+            summary["cover_source"] = None
         return summary
 
     def unassigned_count(self) -> int:

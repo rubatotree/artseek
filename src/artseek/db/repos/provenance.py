@@ -319,6 +319,20 @@ class ProvenanceRepo(ProvenanceStore):
         with self._tx():
             return super().set_artist_cover(artist_key, point_id)
 
+    def clear_artist_cover(self, artist_key: str) -> str:
+        with self._tx():
+            return super().clear_artist_cover(artist_key)
+
+    def set_uploaded_artist_cover(
+        self, artist_key: str, asset_token: str, url: str
+    ) -> str:
+        with self._tx():
+            return super().set_uploaded_artist_cover(artist_key, asset_token, url)
+
+    def set_artist_avatar(self, artist_key: str, avatar_url: str | None) -> str:
+        with self._tx():
+            return super().set_artist_avatar(artist_key, avatar_url)
+
     def set_author_name(self, artist_key: str, name: str) -> str:
         with self._tx():
             return super().set_author_name(artist_key, name)

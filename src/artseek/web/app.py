@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import io
 import json
 import mimetypes
 import random
@@ -8,17 +9,21 @@ import re
 import tempfile
 import threading
 import time
+import uuid
 from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..api.app import create_app as create_v2_app
+from ..services.common import normalize_ratings, rating_matches
 from ..api.schemas import (
     ArtistCoverRequest,
     ArtistGalleryRequest,
@@ -3071,7 +3076,7 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         entries = [dict(item) for item in page["authors"]]
         entry_keys = [str(item["key"]) for item in entries]
         id_map = store.point_ids_for_authors(entry_keys)
-        explicit_covers = store.artist_cover_ids(entry_keys)
+        explicit_covers = store.artist_cover_entries(entry_keys)
         rank = (
             {point_id: index for index, point_id in enumerate(order_ids)}
             if order_ids is not None
@@ -3081,14 +3086,21 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         totals: dict[str, int] = {}
         seeds: dict[str, int | None] = {}
         all_ids: list[str] = []
+        all_ids_by_author: dict[str, list[str]] = {}
+        scoped_ids_by_author: dict[str, list[str]] = {}
         for entry in entries:
             key = str(entry["key"])
             row_seed = base_seed
             if image_sort == "random" and base_seed is not None:
                 row_seed = random.Random(f"{base_seed}:{key}").randrange(1 << 53)
-            ids = id_map.get(key, [])
-            if scope is not None:
-                ids = [point_id for point_id in ids if point_id in scope]
+            raw_ids = id_map.get(key, [])
+            all_ids_by_author[key] = list(raw_ids)
+            ids = (
+                [point_id for point_id in raw_ids if point_id in scope]
+                if scope is not None
+                else list(raw_ids)
+            )
+            scoped_ids_by_author[key] = list(ids)
             if rank is not None:
                 ids.sort(key=lambda point_id: rank.get(point_id, len(rank)))
                 used_seed = None
@@ -3097,41 +3109,114 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             previews[key] = ids[: request.image_limit]
             totals[key] = len(ids)
             seeds[key] = used_seed
-            all_ids.extend(previews[key])
-            if explicit_covers.get(key):
-                all_ids.append(explicit_covers[key])
+            all_ids.extend(raw_ids)
+            explicit = explicit_covers.get(key)
+            if explicit and explicit.get("source") != "upload" and explicit.get("identity"):
+                all_ids.append(explicit["identity"])
         payloads = retrieve_collection_payloads(list(dict.fromkeys(all_ids)))
+        preview_ids = list(dict.fromkeys(pid for pids in previews.values() for pid in pids))
         result_rows = attach_provenance(
             [
                 gallery_result(point_id, payloads[point_id])
-                for point_id in dict.fromkeys(all_ids)
+                for point_id in preview_ids
                 if isinstance(payloads.get(point_id), dict)
             ]
         )
         by_id = {str(item["id"]): item for item in result_rows}
+
+        def _cover_rating_rank(rating: object) -> int:
+            value = str(rating or "").strip().casefold()
+            if value == "safe":
+                return 0
+            if value == "r15":
+                return 1
+            if value == "r18":
+                return 2
+            return 3
+
         for entry in entries:
             key = str(entry["key"])
             images = [by_id[point_id] for point_id in previews[key] if point_id in by_id]
+            clean_ratings = normalize_ratings(request.ratings)
+            if clean_ratings:
+                images = [
+                    img for img in images if rating_matches(img.get("rating"), clean_ratings)
+                ]
             entry["images"] = images
             entry["images_has_more"] = totals[key] > len(previews[key])
             entry["images_offset"] = len(images)
             entry["images_total"] = totals[key]
             entry["image_seed"] = seeds[key]
-            cover_id = explicit_covers.get(key) or (previews[key][0] if previews[key] else "")
-            cover_payload = payloads.get(cover_id) if cover_id else None
-            entry["cover"] = (
-                {
+            explicit = explicit_covers.get(key)
+            if explicit and explicit.get("source") == "upload" and explicit.get("profile_url"):
+                entry["cover"] = {
+                    "id": explicit["identity"],
+                    "url": explicit["profile_url"],
+                    "uploaded": True,
+                    "blurred": False,
+                    "name": None,
+                    "width": 0,
+                    "height": 0,
+                }
+                entry["cover_explicit"] = True
+            elif (
+                explicit
+                and explicit.get("source") != "upload"
+                and isinstance(payloads.get(explicit.get("identity", "")), dict)
+            ):
+                cover_id = explicit["identity"]
+                cover_payload = payloads[cover_id]
+                rating_ok = (not clean_ratings) or rating_matches(
+                    cover_payload.get("rating"), clean_ratings
+                )
+                entry["cover"] = {
                     "id": cover_id,
                     "name": cover_payload.get("name"),
                     "width": cover_payload.get("width"),
                     "height": cover_payload.get("height"),
+                    "blurred": (scope is not None and cover_id not in scope) or (not rating_ok),
                 }
-                if isinstance(cover_payload, dict)
-                else None
-            )
-            entry["cover_explicit"] = bool(
-                explicit_covers.get(key) and cover_id == explicit_covers.get(key)
-            )
+                entry["cover_explicit"] = True
+            else:
+                live_all = [
+                    pid for pid in all_ids_by_author[key] if isinstance(payloads.get(pid), dict)
+                ]
+                live_scoped = [
+                    pid
+                    for pid in scoped_ids_by_author[key]
+                    if isinstance(payloads.get(pid), dict)
+                    and (
+                        not clean_ratings
+                        or rating_matches(payloads[pid].get("rating"), clean_ratings)
+                    )
+                ]
+                pool = live_scoped or live_all
+                blurred = (not live_scoped) and bool(live_all)
+                cover_id = (
+                    min(
+                        pool,
+                        key=lambda pid: (
+                            _cover_rating_rank(payloads[pid].get("rating")),
+                            -(int(payloads[pid].get("width") or 0) * int(payloads[pid].get("height") or 0)),
+                            pid,
+                        ),
+                    )
+                    if pool
+                    else ""
+                )
+                cover_payload = payloads.get(cover_id) if cover_id else None
+                entry["cover"] = (
+                    {
+                        "id": cover_id,
+                        "name": cover_payload.get("name"),
+                        "width": cover_payload.get("width"),
+                        "height": cover_payload.get("height"),
+                        "blurred": blurred,
+                    }
+                    if isinstance(cover_payload, dict)
+                    else None
+                )
+                entry["cover_explicit"] = False
             members = entry.get("members") or []
             entry["pixiv_ids"] = [
                 str(member.get("platform_id") or "")
@@ -3274,20 +3359,170 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
             raise HTTPException(404, "作者不存在")
         return {"author": summary}
 
+    def _delete_artist_assets(canonical_key: str, kind: Literal["avatar", "cover"]) -> None:
+        assets_dir = config.artist_assets_dir
+        if not assets_dir.exists():
+            return
+        for path in assets_dir.glob(f"{kind}-{canonical_key}-*.webp"):
+            path.unlink(missing_ok=True)
+
+    def _save_artist_asset(
+        author_key: str,
+        kind: Literal["avatar", "cover"],
+        raw_bytes: bytes,
+        max_dim: int,
+    ) -> tuple[str, str]:
+        store: ProvenanceStore = app.state.provenance
+        if not raw_bytes:
+            raise HTTPException(400, "请选择要上传的图片文件")
+        if len(raw_bytes) > 20 * 1024 * 1024:
+            raise HTTPException(400, "图片文件过大（上限 20 MB）")
+        summary = store.author_summary(author_key)
+        if summary is None or str(author_key).casefold() == UNASSIGNED_AUTHOR_KEY:
+            raise HTTPException(
+                404 if summary is None else 400,
+                "作者不存在" if summary is None else "无画师不能上传图片",
+            )
+        canonical = str(summary["key"])
+        try:
+            with Image.open(io.BytesIO(raw_bytes)) as img:
+                prepared = ImageOps.exif_transpose(img)
+                if prepared.mode not in ("RGB", "RGBA"):
+                    prepared = prepared.convert("RGBA" if "A" in prepared.getbands() else "RGB")
+                prepared.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+                assets_dir = config.artist_assets_dir
+                assets_dir.mkdir(parents=True, exist_ok=True)
+                token = uuid.uuid4().hex[:10]
+                dest = assets_dir / f"{kind}-{canonical}-{token}.webp"
+                tmp = assets_dir / f".{kind}-{canonical}-{token}.webp.tmp"
+                prepared.save(tmp, format="WEBP", quality=90, method=4)
+                _delete_artist_assets(canonical, kind)
+                tmp.replace(dest)
+        except (UnidentifiedImageError, OSError, ValueError) as exc:
+            raise HTTPException(400, "无法读取该图片文件，请换一张有效的图片") from exc
+        return canonical, token
+
     @app.post("/api/authors/{author_key}/cover")
     def set_artist_cover(
         author_key: str, request: ArtistCoverRequest
     ) -> dict[str, Any]:
         store: ProvenanceStore = app.state.provenance
+        if not str(request.point_id or "").strip():
+            return clear_artist_cover(author_key)
         try:
-            store.set_artist_cover(author_key, request.point_id)
+            canonical = store.set_artist_cover(author_key, request.point_id)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+        _delete_artist_assets(canonical, "cover")
         invalidate_author_cache()
         summary = store.author_summary(author_key)
         if summary is None:
             raise HTTPException(404, "作者不存在")
         return {"author": summary}
+
+    @app.delete("/api/authors/{author_key}/cover")
+    def clear_artist_cover(author_key: str) -> dict[str, Any]:
+        store: ProvenanceStore = app.state.provenance
+        try:
+            canonical = store.clear_artist_cover(author_key)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        _delete_artist_assets(canonical, "cover")
+        invalidate_author_cache()
+        summary = store.author_summary(author_key)
+        if summary is None:
+            raise HTTPException(404, "作者不存在")
+        return {"author": summary}
+
+    @app.post("/api/authors/{author_key}/cover/upload")
+    async def upload_artist_cover(
+        author_key: str, file: UploadFile = File(...)
+    ) -> dict[str, Any]:
+        store: ProvenanceStore = app.state.provenance
+        canonical, token = _save_artist_asset(author_key, "cover", await file.read(), 1600)
+        url = f"/api/authors/{canonical}/cover-image?v={token}"
+        try:
+            store.set_uploaded_artist_cover(canonical, f"upload:{token}", url)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        invalidate_author_cache()
+        summary = store.author_summary(canonical)
+        if summary is None:
+            raise HTTPException(404, "作者不存在")
+        return {"author": summary}
+
+    @app.get("/api/authors/{author_key}/cover-image")
+    def get_artist_cover_image(author_key: str) -> FileResponse:
+        store: ProvenanceStore = app.state.provenance
+        summary = store.author_summary(author_key)
+        if summary is None:
+            raise HTTPException(404, "作者不存在")
+        canonical = str(summary["key"])
+        assets_dir = config.artist_assets_dir
+        matches = (
+            sorted(assets_dir.glob(f"cover-{canonical}-*.webp"), reverse=True)
+            if assets_dir.exists()
+            else []
+        )
+        if not matches:
+            raise HTTPException(404, "资源不存在")
+        return FileResponse(
+            matches[0],
+            media_type="image/webp",
+            headers={"Cache-Control": "public, max-age=31536000"},
+        )
+
+    @app.post("/api/authors/{author_key}/avatar/upload")
+    async def upload_artist_avatar(
+        author_key: str, file: UploadFile = File(...)
+    ) -> dict[str, Any]:
+        store: ProvenanceStore = app.state.provenance
+        canonical, token = _save_artist_asset(author_key, "avatar", await file.read(), 512)
+        url = f"/api/authors/{canonical}/avatar?v={token}"
+        try:
+            store.set_artist_avatar(canonical, url)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        invalidate_author_cache()
+        summary = store.author_summary(canonical)
+        if summary is None:
+            raise HTTPException(404, "作者不存在")
+        return {"author": summary}
+
+    @app.delete("/api/authors/{author_key}/avatar")
+    def clear_artist_avatar(author_key: str) -> dict[str, Any]:
+        store: ProvenanceStore = app.state.provenance
+        try:
+            canonical = store.set_artist_avatar(author_key, None)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        _delete_artist_assets(canonical, "avatar")
+        invalidate_author_cache()
+        summary = store.author_summary(canonical)
+        if summary is None:
+            raise HTTPException(404, "作者不存在")
+        return {"author": summary}
+
+    @app.get("/api/authors/{author_key}/avatar")
+    def get_artist_avatar(author_key: str) -> FileResponse:
+        store: ProvenanceStore = app.state.provenance
+        summary = store.author_summary(author_key)
+        if summary is None:
+            raise HTTPException(404, "作者不存在")
+        canonical = str(summary["key"])
+        assets_dir = config.artist_assets_dir
+        matches = (
+            sorted(assets_dir.glob(f"avatar-{canonical}-*.webp"), reverse=True)
+            if assets_dir.exists()
+            else []
+        )
+        if not matches:
+            raise HTTPException(404, "资源不存在")
+        return FileResponse(
+            matches[0],
+            media_type="image/webp",
+            headers={"Cache-Control": "public, max-age=31536000"},
+        )
 
     @app.post("/api/authors/{author_key}/merge")
     def merge_author(author_key: str, request: ArtistMergeRequest) -> dict[str, Any]:

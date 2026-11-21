@@ -53,6 +53,7 @@ JOB_PRIORITIES: dict[str, int] = {
     "compact": 20,
     "provenance_scan": 30,
     "provenance_enrich": 40,
+    "artist_avatars": 42,
     "retag": 45,
     "auto_tag": 50,
     "vision_enrich": 55,
@@ -703,6 +704,24 @@ class JobManager:
             lambda jid: self._execute_provenance_enrich(
                 jid,
                 platforms=clean_platforms,
+                limit=limit,
+            ),
+        )
+
+    def submit_artist_avatars_job(
+        self,
+        *,
+        skip_completed: bool = True,
+        limit: int | None = None,
+    ) -> str:
+        return self._enqueue_job(
+            "artist_avatars",
+            "artist_avatars",
+            {"skip_completed": bool(skip_completed), "limit": limit},
+            "等待更新画师头像…",
+            lambda jid: self._execute_artist_avatars(
+                jid,
+                skip_completed=bool(skip_completed),
                 limit=limit,
             ),
         )
@@ -1755,6 +1774,69 @@ class JobManager:
                 job_id,
                 status="failed",
                 message="远端元数据补全失败",
+                error=str(exc),
+            )
+
+    def _execute_artist_avatars(
+        self,
+        job_id: str,
+        *,
+        skip_completed: bool = True,
+        limit: int | None = None,
+    ) -> None:
+        targets = self.provenance_service.select_artist_avatar_targets(
+            skip_completed=skip_completed, limit=limit
+        )
+        total = len(targets)
+        if total == 0:
+            self.jobs_repo.update(
+                job_id,
+                status="completed",
+                done=0,
+                total=0,
+                message="没有需要更新头像的画师",
+                summary={"total": 0, "ok": 0, "skipped": 0, "failed": 0},
+            )
+            return
+        self.jobs_repo.update(
+            job_id,
+            status="running",
+            done=0,
+            total=total,
+            message=f"正在更新画师头像 0/{total}…",
+        )
+
+        def _progress(done: int, total_cnt: int, label: str) -> None:
+            self.jobs_repo.update(
+                job_id,
+                done=done,
+                total=total_cnt,
+                message=f"正在更新画师头像 {done}/{total_cnt} · {label}",
+            )
+
+        try:
+            summary = self.provenance_service.run_artist_avatars(
+                targets,
+                progress=_progress,
+                stop_event=self._stop_event,
+                pause_event=self._pause_event,
+            )
+            status = "stopped" if self._stop_event.is_set() else "completed"
+            ok_cnt = int(summary.get("ok", 0))
+            fail_cnt = int(summary.get("failed", 0))
+            self.jobs_repo.update(
+                job_id,
+                status=status,
+                done=ok_cnt,
+                total=total,
+                message=f"画师头像更新完成：成功 {ok_cnt}，失败 {fail_cnt}",
+                summary=summary,
+            )
+        except Exception as exc:
+            self.jobs_repo.update(
+                job_id,
+                status="failed",
+                message="画师头像更新失败",
                 error=str(exc),
             )
 

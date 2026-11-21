@@ -496,3 +496,106 @@ class ProvenanceAppService:
                 progress(done, total, "")
 
         return summary
+
+    def select_artist_avatar_targets(
+        self,
+        *,
+        skip_completed: bool = True,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Select artists with a Twitter/X handle whose avatar needs refreshing."""
+        conn = self.prov.db.read_conn()
+        rows = conn.execute(
+            """
+            SELECT a.id AS artist_id, a.name AS artist_name, a.avatar_url AS avatar_url,
+                   ai.kind AS kind, ai.identity AS identity, ai.display AS display
+            FROM artist AS a
+            JOIN artist_identity AS ai ON ai.artist_id = a.id
+            WHERE (ai.kind = 'twitter' OR (ai.kind = 'handle' AND ai.source = 'twitter'))
+              AND COALESCE(ai.inactive, 0) = 0
+            ORDER BY COALESCE(ai.sort_order, 999999), a.image_count DESC, a.id
+            """
+        ).fetchall()
+        targets: list[dict[str, Any]] = []
+        seen_artists: set[int] = set()
+        for row in rows:
+            artist_id = int(row["artist_id"])
+            if artist_id in seen_artists:
+                continue
+            current_avatar = str(row["avatar_url"] or "").strip()
+            if current_avatar.startswith("/api/authors/"):
+                continue
+            if skip_completed and current_avatar and "pximg.net" not in current_avatar.casefold():
+                continue
+            handle = normalize_twitter_handle(
+                str(row["display"] or row["identity"] or "")
+            )
+            if not handle:
+                continue
+            seen_artists.add(artist_id)
+            targets.append(
+                {
+                    "artist_key": str(artist_id),
+                    "name": str(row["artist_name"] or handle),
+                    "handle": handle,
+                }
+            )
+            if limit is not None and len(targets) >= limit:
+                break
+        return targets
+
+    def run_artist_avatars(
+        self,
+        targets: Sequence[dict[str, Any]],
+        *,
+        progress: Callable[[int, int, str], None] | None = None,
+        stop_event: threading.Event | None = None,
+        pause_event: threading.Event | None = None,
+        twitter_client: FxTwitterClient | None = None,
+    ) -> dict[str, int]:
+        """Fetch Twitter/X avatars for the selected artists within rate limits."""
+        summary = {"total": len(targets), "ok": 0, "skipped": 0, "failed": 0}
+        if not targets:
+            return summary
+        limiter = self._limiter(TWITTER_DOMAIN)
+        client = twitter_client or FxTwitterClient()
+        owns_client = twitter_client is None
+        updated = False
+        try:
+            for index, target in enumerate(targets, start=1):
+                if stop_event is not None and stop_event.is_set():
+                    break
+                while pause_event is not None and pause_event.is_set():
+                    if stop_event is not None and stop_event.is_set():
+                        break
+                    time.sleep(0.25)
+                if stop_event is not None and stop_event.is_set():
+                    break
+                handle = str(target["handle"])
+                artist_key = str(target["artist_key"])
+                try:
+                    with limiter.slot(stop_event=stop_event, pause_event=pause_event):
+                        profile = client.fetch_user(handle)
+                except BudgetExhausted:
+                    summary["failed"] += len(targets) - index + 1
+                    break
+                except FetchError:
+                    summary["failed"] += 1
+                    if progress is not None:
+                        progress(index, len(targets), f"@{handle}（失败）")
+                    continue
+                avatar_url = str((profile or {}).get("avatar_url") or "").strip()
+                if avatar_url and "pximg.net" not in avatar_url.casefold():
+                    self.prov.set_artist_avatar(artist_key, avatar_url)
+                    summary["ok"] += 1
+                    updated = True
+                else:
+                    summary["skipped"] += 1
+                if progress is not None:
+                    progress(index, len(targets), f"@{handle}")
+        finally:
+            if owns_client:
+                client.close()
+        if updated:
+            self._notify_author_change()
+        return summary

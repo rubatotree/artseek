@@ -13,6 +13,7 @@ from ...indexing.jobs import JobDependencyError
 from ...services.common import attach_provenance, gallery_result, resolve_folder_keys_from_db
 from ..deps import AppContainer, get_container
 from ..schemas import (
+    ArtistAvatarsJobRequest,
     AutoFillQueueRequest,
     CcipResetRequest,
     CcipTaskRequest,
@@ -185,6 +186,20 @@ def enqueue_provenance_enrich(
         raise HTTPException(409, "正在索引图片，请稍后再安排补全任务")
     job_id = c.job_manager.submit_provenance_enrich_job(
         platforms=list(request.platforms),
+        limit=request.limit,
+    )
+    return {"job_id": job_id, "job": c.jobs_repo.get(job_id)}
+
+
+@router.post("/api/jobs/artist-avatars")
+def enqueue_artist_avatars(
+    request: ArtistAvatarsJobRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    if c.index_job.running:
+        raise HTTPException(409, "正在索引图片，请稍后再安排更新头像任务")
+    job_id = c.job_manager.submit_artist_avatars_job(
+        skip_completed=request.skip_completed,
         limit=request.limit,
     )
     return {"job_id": job_id, "job": c.jobs_repo.get(job_id)}
