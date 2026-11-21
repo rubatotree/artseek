@@ -357,6 +357,7 @@ class ScopeResolver:
             "name",
             "random",
             "aesthetic_desc",
+            "indexed_desc",
         }
         if order not in allowed_sorts:
             order = "mtime_desc"
@@ -441,6 +442,22 @@ class ScopeResolver:
             shuffled = _deterministic_random_order(all_ids, used_seed)
             page_ids = shuffled[offset : offset + limit].tolist()
             return page_ids, total, offset + len(page_ids) < total, order, used_seed
+
+        if order == "indexed_desc":
+            total_row = cur.execute(
+                f"{with_prefix}SELECT COUNT(*) FROM images AS i WHERE {where_sql}",
+                tuple(params),
+            ).fetchone()
+            total = int(total_row[0]) if total_row else 0
+            if offset >= total:
+                return [], total, False, order, None
+            rows = cur.execute(
+                f"{with_prefix}SELECT i.id FROM images AS i WHERE {where_sql} "
+                "ORDER BY i.indexed_at DESC, i.id DESC LIMIT ? OFFSET ?",
+                (*params, limit, offset),
+            ).fetchall()
+            page_ids = [int(r[0]) for r in rows]
+            return page_ids, total, offset + len(page_ids) < total, order, None
 
         if order == "aesthetic_desc":
             total_row = cur.execute(

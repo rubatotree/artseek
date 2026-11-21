@@ -24,6 +24,8 @@ from artseek.ml.ccip import CCIPExtractor
 from artseek.ml.tag_postprocess import (
     CAT_CHARACTER,
     CAT_COPYRIGHT,
+    CAT_MEDIUM,
+    CAT_RATING,
     PredictedTags,
 )
 from artseek.ml.vision_attributes import (
@@ -632,6 +634,150 @@ class TestVisionAttributesAndCCIP(unittest.TestCase):
                 self.assertEqual(TaskStateRepo(db).summary_counts()["ccip_done"], 0)
                 visual = vectors.visual_vectors([0])[0]
                 self.assertGreater(float(np.linalg.norm(visual)), 0.0)
+            finally:
+                db.close()
+
+    def test_index_auto_enriches_vision_and_ccip(self) -> None:
+        """Directory indexing automatically queues and completes vision_enrich and ccip."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            img_dir = root / "pics"
+            img_dir.mkdir()
+            for name in ("a.png", "b.png"):
+                Image.new("RGB", (128, 128), (40, 80, 120)).save(img_dir / name)
+
+            cfg = AppConfig(
+                data_dir=root / "data",
+                cache_dir=root / "cache",
+                tagger=TaggerConfig(enabled=True, backend="camie+pixai0.9"),
+            )
+            cfg.ensure_dirs()
+            db = Database(cfg.db_path)
+            try:
+                images = ImageRepo(db)
+                prov = ProvenanceRepo(db)
+                jobs_repo = JobRepo(db)
+                vectors = VectorIndex(
+                    cfg.visual_vectors_path,
+                    cfg.descriptor_vectors_path,
+                    ccip_path=cfg.ccip_vectors_path,
+                )
+
+                class _FakeEmbedder:
+                    dimension = 8
+
+                    def encode_images(self, items):
+                        out = np.zeros((len(items), self.dimension), dtype=np.float32)
+                        out[:, 0] = 1.0
+                        return out
+
+                    def encode_texts(self, texts):
+                        out = np.zeros((len(texts), self.dimension), dtype=np.float32)
+                        out[:, 1] = 1.0
+                        return out
+
+                    def close(self):
+                        pass
+
+                class _DummyTagger:
+                    model_versions = {"camie_v2": 1, "pixai_v09": 1}
+
+                    def predict(self, items):
+                        return [
+                            PredictedTags(
+                                tags=["1girl", "blue_hair"],
+                                scores={"1girl": 0.9, "blue_hair": 0.85},
+                                categories={"1girl": 0, "blue_hair": 0},
+                            )
+                            for _ in items
+                        ]
+
+                    def close(self):
+                        pass
+
+                class _DummyAnalyzer:
+                    def __init__(self, _runtime):
+                        pass
+
+                    def analyze_batch(self, items):
+                        return [
+                            {
+                                "image_id": img_id,
+                                "media_type": "illustration",
+                                "rating": "safe",
+                                "is_monochrome": 0,
+                                "is_ai": 0,
+                                "aesthetic_score": 0.85,
+                                "focal_x": 0.5,
+                                "focal_y": 0.4,
+                                "character_crop_json": '{"body":[0.1,0.1,0.9,0.9]}',
+                                "vision_meta_version": VISION_META_VERSION,
+                                "attr_tags": {
+                                    "medium:illustration": CAT_MEDIUM,
+                                    "rating:safe": CAT_RATING,
+                                },
+                            }
+                            for img_id, _ in items
+                        ]
+
+                    def close(self):
+                        pass
+
+                class _DummyCCIP:
+                    def __init__(self, _runtime):
+                        pass
+
+                    def extract_batch(self, items):
+                        out = np.zeros((len(items), 768), dtype=np.float32)
+                        out[:, 0] = 1.0
+                        return out
+
+                    def close(self):
+                        pass
+
+                lifecycle = ModelLifecycle(cfg, embedder_factory=_FakeEmbedder)
+                prov_svc = ProvenanceAppService(cfg, images, prov, vectors)
+                with (
+                    patch("artseek.ml.tagger.build_tagger", return_value=_DummyTagger()),
+                    patch("artseek.indexing.jobs.build_tagger", return_value=_DummyTagger()),
+                    patch("artseek.indexing.jobs.VisionAttributeAnalyzer", _DummyAnalyzer),
+                    patch("artseek.indexing.jobs.CCIPExtractor", _DummyCCIP),
+                    patch("artseek.indexing.jobs.release_accelerator", return_value=None),
+                ):
+                    mgr = JobManager(
+                        cfg, db, images, prov, jobs_repo, vectors, lifecycle, prov_svc
+                    )
+                    try:
+                        mgr.submit_index_job([img_dir], recursive=True, captions=False)
+                        deadline = time.monotonic() + 15.0
+                        while time.monotonic() < deadline:
+                            counts = TaskStateRepo(db).summary_counts()
+                            if (
+                                counts["total"] == 2
+                                and counts["vision_done"] == 2
+                                and counts["ccip_done"] == 2
+                                and not mgr.is_busy()
+                            ):
+                                break
+                            time.sleep(0.05)
+                    finally:
+                        mgr.close()
+
+                counts = TaskStateRepo(db).summary_counts()
+                recent = jobs_repo.list_recent(limit=10)
+                self.assertEqual(counts["total"], 2, recent)
+                self.assertEqual(counts["camie_v2_done"], 2, recent)
+                self.assertEqual(counts["pixai_v09_done"], 2, recent)
+                self.assertEqual(counts["vision_done"], 2, recent)
+                self.assertEqual(counts["ccip_done"], 2, recent)
+
+                for pid in images.point_ids_for_rows([0, 1]).values():
+                    payload = images.get_by_point_id(pid)
+                    self.assertIsNotNone(payload)
+                    assert payload is not None
+                    self.assertIn("1girl", payload["tags"])
+                    self.assertIn("medium:illustration", payload["tags"])
+                    self.assertIn("rating:safe", payload["tags"])
             finally:
                 db.close()
 

@@ -24,7 +24,6 @@ from .embedder import SiglipEmbedder
 from .preprocess import PRE_SHRINK_SHORT_EDGE, draft_target, shrink_to_short_edge
 from .tag_postprocess import (
     CAT_RATING,
-    PredictedTags,
     build_high_density_descriptor,
 )
 
@@ -188,7 +187,7 @@ class IndexingPipeline:
             return stats
 
         eff_batch = batch_size or min(
-            16,
+            32,
             max(1, int(self.config.embedding.batch_size)),
             max(1, int(self.config.tagger.batch_size))
             if self.tagger is not None
@@ -321,15 +320,62 @@ class IndexingPipeline:
         batch: Sequence[PreparedImageItem],
         stats: PipelineBatchStats,
     ) -> None:
+        """Commit visuals first, then tags.
+
+        Rows become readable as soon as the visual vectors are written, so the
+        gallery can show new images while the (much slower) tagger is still
+        working on them. Tags and the descriptor vector are patched in place by
+        the second stage of the same batch.
+        """
         t_gpu0 = time.perf_counter()
         rgb_arrays = [item.rgb_arr for item in batch]
-        visual_vectors = self.embedder.encode_images(rgb_arrays)
+
+        # ---- Stage A: file rows + visual vectors, visible immediately.
+        visual_vectors = np.asarray(
+            self.embedder.encode_images(rgb_arrays), dtype=np.float32
+        )
         time.sleep(0)
-        if self.tagger is not None:
-            predicted_tags = self.tagger.predict(rgb_arrays)
-            time.sleep(0)
-        else:
-            predicted_tags = [PredictedTags([], {}) for _ in rgb_arrays]
+        records = [
+            ImageUpsertRecord(
+                point_id=item.point_id,
+                root_key=item.root_key,
+                root_path=item.root_path,
+                folder_key=item.folder_key,
+                folder_path=item.folder_path,
+                folder_mtime_ns=item.folder_mtime_ns,
+                path=item.path_str,
+                path_key=item.path_key,
+                name=item.name,
+                ext=item.ext,
+                mtime_ns=item.mtime_ns,
+                size_bytes=item.size_bytes,
+                width=item.orig_width,
+                height=item.orig_height,
+                content_hash=item.content_hash,
+                phash=item.phash,
+                descriptor_text="",
+                caption=None,
+                tags=[],
+                tag_scores={},
+                tag_categories={},
+            )
+            for item in batch
+        ]
+        t_db0 = time.perf_counter()
+        row_ids = self.images_repo.upsert_images_batch(records, keep_enrichment=True)
+        # Placeholder descriptor: identical to the visual vector, so visual search
+        # works before any tag-derived text embedding exists.
+        self.vectors.set_rows(row_ids, visual_vectors, np.array(visual_vectors, copy=True))
+        stats.persist_ms += (time.perf_counter() - t_db0) * 1000.0
+        stats.indexed += len(records)
+
+        if self.tagger is None:
+            stats.gpu_ms += (time.perf_counter() - t_gpu0) * 1000.0
+            return
+
+        # ---- Stage B: tags, descriptor text, descriptor vectors.
+        predicted_tags = self.tagger.predict(rgb_arrays)
+        time.sleep(0)
 
         descriptor_texts: list[str] = []
         for pred in predicted_tags:
@@ -348,22 +394,10 @@ class IndexingPipeline:
                 )
             )
 
-        descriptor_vectors = np.array(visual_vectors, copy=True)
-        nonempty_indices = [
-            idx for idx, text in enumerate(descriptor_texts) if text.strip()
-        ]
-        if nonempty_indices:
-            encoded = self.embedder.encode_texts(
-                [descriptor_texts[idx] for idx in nonempty_indices]
-            )
-            time.sleep(0)
-            for target_idx, vec in zip(nonempty_indices, encoded, strict=True):
-                descriptor_vectors[target_idx] = vec
-        stats.gpu_ms += (time.perf_counter() - t_gpu0) * 1000.0
-
-        t_db0 = time.perf_counter()
-        records: list[ImageUpsertRecord] = []
-        for idx, (item, pred) in enumerate(zip(batch, predicted_tags, strict=True)):
+        tag_updates: list[
+            tuple[int, Sequence[str], dict[str, float], dict[str, int], str]
+        ] = []
+        for idx, pred in enumerate(predicted_tags):
             tags = list(pred.tags)
             scores = dict(pred.scores)
             cats = dict(getattr(pred, "categories", {}) or {})
@@ -373,44 +407,35 @@ class IndexingPipeline:
                     tags.append(r_tag)
                     scores[r_tag] = 1.0
                     cats[r_tag] = CAT_RATING
-            records.append(
-                ImageUpsertRecord(
-                    point_id=item.point_id,
-                    root_key=item.root_key,
-                    root_path=item.root_path,
-                    folder_key=item.folder_key,
-                    folder_path=item.folder_path,
-                    folder_mtime_ns=item.folder_mtime_ns,
-                    path=item.path_str,
-                    path_key=item.path_key,
-                    name=item.name,
-                    ext=item.ext,
-                    mtime_ns=item.mtime_ns,
-                    size_bytes=item.size_bytes,
-                    width=item.orig_width,
-                    height=item.orig_height,
-                    content_hash=item.content_hash,
-                    phash=item.phash,
-                    descriptor_text=descriptor_texts[idx],
-                    caption=None,
-                    tags=tags,
-                    tag_scores=scores,
-                    tag_categories=cats,
-                )
+            tag_updates.append((row_ids[idx], tags, scores, cats, descriptor_texts[idx]))
+
+        nonempty_indices = [
+            idx for idx, text in enumerate(descriptor_texts) if text.strip()
+        ]
+        descriptor_vectors = np.array(visual_vectors, copy=True)
+        if nonempty_indices:
+            encoded = self.embedder.encode_texts(
+                [descriptor_texts[idx] for idx in nonempty_indices]
             )
-        tag_versions = (
-            dict(getattr(self.tagger, "model_versions", {}) or {})
-            if self.tagger is not None
-            else None
-        )
-        row_ids = self.images_repo.upsert_images_batch(
-            records, tag_model_versions=tag_versions
-        )
-        time.sleep(0)
-        self.vectors.set_rows(
-            row_ids,
-            np.asarray(visual_vectors, dtype=np.float32),
-            np.asarray(descriptor_vectors, dtype=np.float32),
-        )
-        stats.indexed += len(records)
-        stats.persist_ms += (time.perf_counter() - t_db0) * 1000.0
+            time.sleep(0)
+            for target_idx, vec in zip(nonempty_indices, encoded, strict=True):
+                descriptor_vectors[target_idx] = vec
+        stats.gpu_ms += (time.perf_counter() - t_gpu0) * 1000.0
+
+        t_db1 = time.perf_counter()
+        self.images_repo.update_tags_and_descriptor_batch(tag_updates)
+        if nonempty_indices:
+            self.vectors.set_descriptor_rows(
+                [row_ids[idx] for idx in nonempty_indices],
+                descriptor_vectors[nonempty_indices],
+            )
+        tag_versions = dict(getattr(self.tagger, "model_versions", {}) or {})
+        if tag_versions:
+            self.images_repo.mark_tag_models_done(
+                [
+                    (item.point_id, row_ids[idx], item.content_hash, True)
+                    for idx, item in enumerate(batch)
+                ],
+                tag_versions,
+            )
+        stats.persist_ms += (time.perf_counter() - t_db1) * 1000.0

@@ -40,6 +40,9 @@ def _job_status(c: AppContainer) -> dict[str, Any]:
         "message": job.message,
         "error": job.error,
         "summary": job.summary,
+        # Monotonic stamp of the newest committed row, so the waterfall can tell
+        # whether anything actually landed without re-querying the whole page.
+        "revision": c.images.max_id(),
     }
 
 
@@ -89,6 +92,7 @@ def add_index(
             directories,
             recursive=request.recursive,
             force=False,
+            auto_enrich=request.auto_enrich,
         )
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc

@@ -191,7 +191,7 @@ class V2IndexingPipelineTests(unittest.TestCase):
         with TestClient(app) as client:
             response = client.post(
                 "/api/index",
-                json={"path": str(root), "recursive": True},
+                json={"path": str(root), "recursive": True, "auto_enrich": False},
             )
             self.assertEqual(response.status_code, 200)
             self.assertTrue(response.json()["running"])

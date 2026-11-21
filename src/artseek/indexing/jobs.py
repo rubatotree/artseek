@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import itertools
+import queue
 import shutil
 import threading
 import time
 import uuid
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
+from PIL import Image, ImageOps
 
 from ..compute import release_accelerator
 from ..config import AppConfig
@@ -26,6 +29,7 @@ from ..image_io import composite_on_white, load_rgb
 from ..ml.captioner import Captioner
 from ..ml.ccip import CCIPExtractor
 from ..ml.llm import OllamaUnavailable
+from ..ml.preprocess import PRE_SHRINK_SHORT_EDGE, draft_target, shrink_to_short_edge
 from ..ml.tag_postprocess import (
     CAT_ATTRIBUTE,
     CAT_MEDIUM,
@@ -190,6 +194,7 @@ class JobManager:
         recursive: bool = True,
         force: bool = False,
         captions: bool | None = None,
+        auto_enrich: bool = True,
     ) -> str:
         with self._cond:
             if self.is_busy(("index",)):
@@ -227,6 +232,7 @@ class JobManager:
                     recursive=recursive,
                     force=force,
                     enqueue_captions=use_captions,
+                    auto_enrich=auto_enrich,
                 )
 
             self._insert_task_locked(
@@ -510,6 +516,7 @@ class JobManager:
         scope_row_ids: Sequence[int] | None = None,
         skip_completed: bool = True,
         limit: int | None = None,
+        auto_ccip: bool = False,
     ) -> str:
         row_list = [int(r) for r in scope_row_ids] if scope_row_ids is not None else None
         return self._enqueue_job(
@@ -526,6 +533,7 @@ class JobManager:
                 scope_row_ids=row_list,
                 skip_completed=skip_completed,
                 limit=limit,
+                auto_ccip=auto_ccip,
             ),
         )
 
@@ -705,6 +713,7 @@ class JobManager:
         backend: str | None = None,
         scope_row_ids: Sequence[int] | None = None,
         include_provenance: bool = False,
+        include_retag: bool = True,
     ) -> list[str]:
         """Automatically enqueue incomplete pipeline steps not already active or queued."""
         canon = normalize_tagger_backend(backend or self.config.tagger.backend)
@@ -724,8 +733,12 @@ class JobManager:
             )
 
         req_versions = model_versions_for_backend(canon)
-        if "retag" not in busy_kinds and self.task_state.pending_for_tagger(
-            req_versions, scope_row_ids=scope_row_ids, skip_completed=True, limit=1
+        if (
+            include_retag
+            and "retag" not in busy_kinds
+            and self.task_state.pending_for_tagger(
+                req_versions, scope_row_ids=scope_row_ids, skip_completed=True, limit=1
+            )
         ):
             added.append(
                 self.submit_retag_job(
@@ -745,6 +758,7 @@ class JobManager:
                 self.submit_vision_enrich_job(
                     scope_row_ids=scope_row_ids,
                     skip_completed=True,
+                    auto_ccip=True,
                 )
             )
 
@@ -812,6 +826,7 @@ class JobManager:
         recursive: bool,
         force: bool,
         enqueue_captions: bool,
+        auto_enrich: bool = True,
     ) -> None:
         idx_state = self.index_state
         self.jobs_repo.update(job_id, status="running", message="正在准备索引…")
@@ -866,6 +881,11 @@ class JobManager:
                 self._on_caches_invalidated()
             if not summary.stopped and self._on_index_completed is not None:
                 self._on_index_completed()
+            if auto_enrich and not summary.stopped:
+                self.auto_fill_queue(
+                    include_provenance=False,
+                    include_retag=bool(self.config.tagger.enabled),
+                )
             if enqueue_captions and summary.indexed > 0 and not summary.stopped:
                 self.submit_caption_backfill_job()
         except Exception as exc:
@@ -1104,64 +1124,140 @@ class JobManager:
         updated = 0
         failed = 0
         updated_descriptors: list[tuple[int, str]] = []
-        chunk_size = max(4, min(16, int(self.config.tagger.batch_size)))
+        chunk_size = max(4, min(32, int(self.config.tagger.batch_size)))
+        producer_stop = threading.Event()
+        work_q: queue.Queue[tuple[int, str, str, np.ndarray | None] | None] = queue.Queue(
+            maxsize=max(chunk_size * 2, 32)
+        )
+
+        def _decode_entry(
+            entry: tuple[int, str, str, str],
+        ) -> tuple[int, str, str, np.ndarray | None]:
+            img_id, pid, path_str, chash = entry
+            if producer_stop.is_set() or self._stop_event.is_set():
+                return (img_id, pid, chash, None)
+            p = Path(path_str)
+            if not p.is_file():
+                return (img_id, pid, chash, None)
+            try:
+                with Image.open(p) as img:
+                    img.seek(0)
+                    target = (
+                        draft_target(img, PRE_SHRINK_SHORT_EDGE)
+                        if (img.format or "").upper() in {"JPEG", "MPO", "WEBP"}
+                        else None
+                    )
+                    if target is not None:
+                        img.draft("RGB", target)
+                    transposed = ImageOps.exif_transpose(img)
+                    rgb = composite_on_white(transposed)
+                rgb = shrink_to_short_edge(rgb, PRE_SHRINK_SHORT_EDGE)
+                return (img_id, pid, chash, np.array(rgb, dtype=np.uint8, copy=True))
+            except Exception:
+                return (img_id, pid, chash, None)
+
+        def _producer() -> None:
+            try:
+                with ThreadPoolExecutor(
+                    max_workers=6, thread_name_prefix="artseek-retag-decode"
+                ) as pool:
+                    for res in pool.map(_decode_entry, pending):
+                        if producer_stop.is_set() or self._stop_event.is_set():
+                            break
+                        while True:
+                            try:
+                                work_q.put(res, timeout=0.2)
+                                break
+                            except queue.Full:
+                                if producer_stop.is_set() or self._stop_event.is_set():
+                                    return
+            finally:
+                while True:
+                    try:
+                        work_q.put(None, timeout=0.2)
+                        break
+                    except queue.Full:
+                        if producer_stop.is_set():
+                            break
+
         try:
             tagger = build_tagger(self.config.tagger, self.config.embedding, backend=backend)
             if tagger is None:
                 raise RuntimeError(f"无法初始化标签器 {backend}")
             versions = dict(getattr(tagger, "model_versions", req_versions))
 
-            for start in range(0, total, chunk_size):
+            prod_thread = threading.Thread(
+                target=_producer, daemon=True, name="artseek-retag-producer"
+            )
+            prod_thread.start()
+
+            processed = 0
+            while True:
                 if self._wait_if_paused():
+                    producer_stop.set()
                     break
-                chunk = pending[start : start + chunk_size]
-                loaded: list[tuple[int, str, str, Any]] = []
-                for img_id, pid, path_str, chash in chunk:
-                    p = Path(path_str)
-                    if not p.is_file():
-                        failed += 1
-                        continue
-                    try:
-                        loaded.append((img_id, pid, chash, load_rgb(p)))
-                    except Exception:
-                        failed += 1
-                if not loaded:
-                    continue
 
-                preds = tagger.predict([item[3] for item in loaded])
-                ids = [item[0] for item in loaded]
-                existing_payloads = self.images.get_payloads_by_ids(ids, include_tags=False)
+                loaded: list[tuple[int, str, str, np.ndarray]] = []
+                batch_seen = 0
+                eof = False
+                while len(loaded) < chunk_size:
+                    item = work_q.get()
+                    if item is None:
+                        eof = True
+                        break
+                    batch_seen += 1
+                    img_id, pid, chash, arr = item
+                    if arr is None:
+                        failed += 1
+                    else:
+                        loaded.append((img_id, pid, chash, arr))
 
-                db_updates: list[tuple[int, list[str], dict[str, float], dict[str, int], str]] = []
-                done_entries: list[tuple[str, int, str]] = []
-                for idx, (img_id, pid, chash, _) in enumerate(loaded):
-                    pred = preds[idx]
-                    payload = existing_payloads.get(img_id) or {}
-                    desc_text = self._build_descriptor_for_payload(
-                        pred, payload, drop_overlap=self.config.tagger.drop_overlap
+                if loaded:
+                    preds = tagger.predict([item[3] for item in loaded])
+                    ids = [item[0] for item in loaded]
+                    existing_payloads = self.images.get_payloads_by_ids(ids, include_tags=False)
+
+                    db_updates: list[
+                        tuple[int, list[str], dict[str, float], dict[str, int], str]
+                    ] = []
+                    done_entries: list[tuple[str, int, str]] = []
+                    for idx, (img_id, pid, chash, _) in enumerate(loaded):
+                        pred = preds[idx]
+                        payload = existing_payloads.get(img_id) or {}
+                        desc_text = self._build_descriptor_for_payload(
+                            pred, payload, drop_overlap=self.config.tagger.drop_overlap
+                        )
+                        db_updates.append(
+                            (img_id, pred.tags, pred.scores, pred.categories, desc_text)
+                        )
+                        done_entries.append((pid, img_id, chash))
+                        if desc_text.strip():
+                            updated_descriptors.append((img_id, desc_text))
+
+                    self.images.update_tags_and_descriptor_batch(db_updates)
+                    self.task_state.mark_tag_models_done(
+                        done_entries, versions, descriptor_done=True
                     )
-                    db_updates.append((img_id, pred.tags, pred.scores, pred.categories, desc_text))
-                    done_entries.append((pid, img_id, chash))
-                    if desc_text.strip():
-                        updated_descriptors.append((img_id, desc_text))
+                    self._sync_provenance_auto_tags(
+                        [
+                            (done_entries[i][0], preds[i].tags, preds[i].scores)
+                            for i in range(len(loaded))
+                        ]
+                    )
+                    updated += len(loaded)
 
-                self.images.update_tags_and_descriptor_batch(db_updates)
-                self.task_state.mark_tag_models_done(done_entries, versions, descriptor_done=True)
-                self._sync_provenance_auto_tags(
-                    [
-                        (done_entries[i][0], preds[i].tags, preds[i].scores)
-                        for i in range(len(loaded))
-                    ]
-                )
-                updated += len(loaded)
-                processed = min(total, start + len(chunk))
-                self.jobs_repo.update(
-                    job_id,
-                    done=processed,
-                    total=total,
-                    message=f"正在打标签 ({backend}) {processed}/{total}",
-                )
+                processed = min(total, processed + batch_seen)
+                if batch_seen > 0:
+                    self.jobs_repo.update(
+                        job_id,
+                        done=processed,
+                        total=total,
+                        message=f"正在打标签 ({backend}) {processed}/{total}",
+                    )
+                if eof:
+                    break
         except Exception as exc:
+            producer_stop.set()
             if tagger is not None:
                 tagger.close()
             release_accelerator()
@@ -1175,6 +1271,7 @@ class JobManager:
             )
             return
 
+        producer_stop.set()
         if tagger is not None:
             tagger.close()
         release_accelerator()
@@ -1304,6 +1401,33 @@ class JobManager:
                 attr_tags[f"rating:{new_rating}"] = CAT_RATING
                 u["attr_tags"] = attr_tags
 
+    def _maybe_enqueue_ccip(self, scope_row_ids: Sequence[int] | None = None) -> str | None:
+        if self._stop_event.is_set():
+            return None
+        with self._cond:
+            busy_kinds = {t.kind for t in self._queue}
+            if self._active_kind:
+                busy_kinds.add(self._active_kind)
+        if (
+            "ccip" not in busy_kinds
+            and not self.task_state.pending_for_vision(
+                min_version=VISION_META_VERSION,
+                scope_row_ids=scope_row_ids,
+                skip_completed=True,
+                limit=1,
+            )
+            and self.task_state.pending_for_ccip(
+                scope_row_ids=scope_row_ids,
+                skip_completed=True,
+                limit=1,
+            )
+        ):
+            return self.submit_ccip_job(
+                scope_row_ids=scope_row_ids,
+                skip_completed=True,
+            )
+        return None
+
     def _execute_vision_enrich(
         self,
         job_id: str,
@@ -1311,6 +1435,7 @@ class JobManager:
         scope_row_ids: Sequence[int] | None = None,
         skip_completed: bool = True,
         limit: int | None = None,
+        auto_ccip: bool = False,
     ) -> None:
         pending = self.task_state.pending_for_vision(
             min_version=VISION_META_VERSION,
@@ -1328,6 +1453,8 @@ class JobManager:
                 message="所有目标图片均已提取视觉属性",
                 summary={"updated": 0, "failed": 0},
             )
+            if auto_ccip:
+                self._maybe_enqueue_ccip(scope_row_ids)
             return
 
         self.jobs_repo.update(
@@ -1388,6 +1515,8 @@ class JobManager:
                 message=f"视觉属性提取完成：更新 {updated} 张，失败 {failed} 张",
                 summary={"updated": updated, "failed": failed},
             )
+            if auto_ccip and status == "completed":
+                self._maybe_enqueue_ccip(scope_row_ids)
         except Exception as exc:
             self.jobs_repo.update(
                 job_id,

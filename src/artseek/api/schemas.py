@@ -266,6 +266,7 @@ class IndexAddRequest(BaseModel):
     path: str = ""
     paths: list[str] = Field(default_factory=list)
     recursive: bool = True
+    auto_enrich: bool = True
 
 
 class IndexRemoveRequest(BaseModel):

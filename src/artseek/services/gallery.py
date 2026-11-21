@@ -228,7 +228,11 @@ class GalleryService:
         node = tree.nodes_by_key.get(key)
         if node is None:
             raise ServiceError(404, "该目录不在索引中")
-        method = sort if sort in SORT_KEYS or sort == "random" else DEFAULT_SORT
+        method = (
+            sort
+            if sort in SORT_KEYS or sort in {"random", "indexed"}
+            else DEFAULT_SORT
+        )
         page_size = max(1, min(int(limit), 200))
         start = max(0, int(offset))
         authors: tuple[str, ...] = ()
@@ -248,11 +252,11 @@ class GalleryService:
                 page_size=page_size,
             )
         else:
-            sql_sort = (
-                "name_asc"
-                if method == "name"
-                else ("mtime_desc" if method == "mtime" else method)
-            )
+            sql_sort = {
+                "name": "name_asc",
+                "mtime": "mtime_desc",
+                "indexed": "indexed_desc",
+            }.get(method, method)
             row_ids, total, _has_more, _order, used_seed = self.resolver.page_rows(
                 ImageScope(
                     folders=(key,),
@@ -295,11 +299,18 @@ class GalleryService:
         keys = resolve_folder_keys_from_db(self.images, folder_keys)
         if not keys:
             raise ServiceError(400, "请先勾选要查看的目录")
-        method = sort if sort in SORT_KEYS or sort == "random" else DEFAULT_SORT
+        method = (
+            sort
+            if sort in SORT_KEYS or sort in {"random", "indexed"}
+            else DEFAULT_SORT
+        )
         sql_sort = (
             "name_asc"
             if method in {"name", "count", "count_asc"}
-            else ("mtime_desc" if method == "mtime" else method)
+            else {
+                "mtime": "mtime_desc",
+                "indexed": "indexed_desc",
+            }.get(method, method)
         )
         page_size = max(1, min(int(limit), 200))
         start = max(0, min(int(offset), 50_000))

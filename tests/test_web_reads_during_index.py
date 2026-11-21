@@ -98,7 +98,7 @@ class ReadWhileIndexingTests(unittest.TestCase):
 
         response = self.client.post(
             "/api/index",
-            json={"path": str(self.root), "recursive": True},
+            json={"path": str(self.root), "recursive": True, "auto_enrich": False},
         )
         self.assertEqual(response.status_code, 200)
         # Poll the container instead of /api/index-status on purpose: that route

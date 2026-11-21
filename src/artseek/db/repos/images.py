@@ -109,6 +109,20 @@ class ImageRepo:
         ).fetchone()
         return int(row["cnt"]) if row else 0
 
+    def max_id(self) -> int:
+        """Highest row id, or -1 for an empty table.
+
+        Row ids start at 0, so 0 is a valid id and cannot double as "empty".
+        Deleted rows are included on purpose: ids only grow, and the primary key
+        makes `MAX(id)` O(1) instead of scanning for a live row.
+        """
+        row = self.db.read_conn().execute(
+            "SELECT MAX(id) AS max_id FROM images"
+        ).fetchone()
+        if row is None or row["max_id"] is None:
+            return -1
+        return int(row["max_id"])
+
     def active_row_ids(self) -> np.ndarray:
         rows = self.db.read_conn().execute(
             "SELECT id FROM images WHERE deleted = 0 ORDER BY id"
@@ -606,8 +620,14 @@ class ImageRepo:
         records: Sequence[ImageUpsertRecord],
         *,
         tag_model_versions: dict[str, int] | None = None,
+        keep_enrichment: bool = False,
     ) -> list[int]:
-        """Insert or update a batch of images atomically, returning 0-based row IDs."""
+        """Insert or update a batch of images atomically, returning 0-based row IDs.
+
+        `keep_enrichment` writes file-level metadata only: existing tags, descriptor
+        text and captions are preserved so a re-index does not blank out enrichment
+        while the tagging stage is still running in the same batch.
+        """
         if not records:
             return []
         now = int(time.time())
@@ -684,8 +704,10 @@ class ImageRepo:
                         content_hash = excluded.content_hash,
                         phash = excluded.phash,
                         indexed_at = excluded.indexed_at,
-                        descriptor_text = excluded.descriptor_text,
-                        caption_json = excluded.caption_json,
+                        descriptor_text = CASE WHEN ? THEN images.descriptor_text
+                                               ELSE excluded.descriptor_text END,
+                        caption_json = CASE WHEN ? THEN images.caption_json
+                                            ELSE excluded.caption_json END,
                         deleted = 0,
                         sort_name = excluded.sort_name
                     """,
@@ -708,30 +730,35 @@ class ImageRepo:
                         rec.descriptor_text,
                         caption_json,
                         natural_sort_text(rec.name),
+                        int(keep_enrichment),
+                        int(keep_enrichment),
                     ),
                 )
-                old_tids = conn.execute(
-                    "SELECT tag_id FROM image_tags WHERE image_id = ?", (img_id,)
-                ).fetchall()
-                touched_tag_ids.update(int(r[0]) for r in old_tids)
-                conn.execute("DELETE FROM image_tags WHERE image_id = ?", (img_id,))
-                tag_rows: list[tuple[int, int, float]] = []
-                seen_tags: set[int] = set()
-                for raw_tag in rec.tags:
-                    norm = normalize_tag(raw_tag)
-                    if not norm:
-                        continue
-                    tid = tag_cache.get(norm)
-                    if tid is None or tid in seen_tags:
-                        continue
-                    seen_tags.add(tid)
-                    score = float(rec.tag_scores.get(raw_tag, rec.tag_scores.get(norm, 1.0)))
-                    tag_rows.append((img_id, tid, score))
-                if tag_rows:
-                    conn.executemany(
-                        "INSERT INTO image_tags(image_id, tag_id, score) VALUES (?, ?, ?)",
-                        tag_rows,
-                    )
+                if not keep_enrichment:
+                    old_tids = conn.execute(
+                        "SELECT tag_id FROM image_tags WHERE image_id = ?", (img_id,)
+                    ).fetchall()
+                    touched_tag_ids.update(int(r[0]) for r in old_tids)
+                    conn.execute("DELETE FROM image_tags WHERE image_id = ?", (img_id,))
+                    tag_rows: list[tuple[int, int, float]] = []
+                    seen_tags: set[int] = set()
+                    for raw_tag in rec.tags:
+                        norm = normalize_tag(raw_tag)
+                        if not norm:
+                            continue
+                        tid = tag_cache.get(norm)
+                        if tid is None or tid in seen_tags:
+                            continue
+                        seen_tags.add(tid)
+                        score = float(
+                            rec.tag_scores.get(raw_tag, rec.tag_scores.get(norm, 1.0))
+                        )
+                        tag_rows.append((img_id, tid, score))
+                    if tag_rows:
+                        conn.executemany(
+                            "INSERT INTO image_tags(image_id, tag_id, score) VALUES (?, ?, ?)",
+                            tag_rows,
+                        )
                 conn.execute(
                     "UPDATE image_source SET image_id = ? WHERE point_id = ?",
                     (img_id, rec.point_id),
@@ -830,6 +857,21 @@ class ImageRepo:
                     (desc_text, int(img_id)),
                 )
             self._refresh_tag_doc_counts_locked(conn, touched)
+
+    def mark_tag_models_done(
+        self,
+        entries: Sequence[tuple[str, int, str, bool]],
+        model_versions: Mapping[str, int],
+    ) -> None:
+        """Record tag model versions for rows whose tags were written separately."""
+        if not entries or not model_versions:
+            return
+        with self.db.write_tx() as conn:
+            sync_task_state_from_index_locked(
+                conn,
+                entries,
+                tag_model_versions=dict(model_versions),
+            )
 
     def update_vision_attributes_batch(
         self,
