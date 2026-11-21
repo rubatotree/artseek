@@ -19,7 +19,7 @@ pnpm install
 pnpm build
 Pop-Location
 uv venv --python 3.11
-uv pip install --link-mode=copy --python .venv\Scripts\python.exe -e ".[all,dev]"
+uv pip install --link-mode=copy --python .venv\Scripts\python.exe -e ".[all,vision,dev]"
 .\scripts\install_cuda_torch.ps1
 ```
 
@@ -29,8 +29,10 @@ Linux：
 git submodule update --init --recursive
 (cd src/artseek/web/static/vendor/vditor && pnpm install && pnpm build)
 uv venv --python 3.11
-uv pip install --python .venv/bin/python -e '.[all,dev]'
+uv pip install --python .venv/bin/python -e '.[all,vision,dev]'
 ```
+
+其中 `vision` 可选依赖用于 PixAI v0.9、视觉属性分类、头部焦点检测与 CCIP 角色特征所需的 ONNX Runtime（不安装时仍可运行核心测试与基础图文检索）。
 
 ## 检查
 

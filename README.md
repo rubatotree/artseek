@@ -7,7 +7,8 @@ ArtSeek 是一个完全本地运行的插画图片收藏检索工具。它不会
 它针对插画做了两层表示：
 
 - `SigLIP 2` 多语言图文向量：负责主体、画风、氛围、整体构图和以图搜图；
-- `WD EVA02` 插画标签 + 可选本地视觉语言模型描述：负责衣服层次、袖型、领口、鞋袜、饰品、动作、视角等细节。
+- `Camie v2 + PixAI v0.9` 融合插画标签（可选 `PixAI v1.0` / `WD EVA02`）+ 可选本地视觉语言模型描述：负责衣服层次、袖型、领口、鞋袜、饰品、动作、视角、作品与角色等细节。
+- 可选视觉属性与 `CCIP` 角色向量（`vision` 扩展）：识别媒介类型（插画/漫画/照片等）、分级门控、黑白、AI 生成检测、美学评分、人物头部焦点与跨服装同角色检索。
 
 检索时两路结果会融合。Ollama 可把“想找蓝白配色、飘逸披风、回眸构图，但不要夜景”拆成语义描述、正向细节和排除条件；Ollama 未运行时，程序会自动使用内置的中英日插画词典，不会导致基本检索失效。
 
@@ -21,6 +22,8 @@ ArtSeek 是一个完全本地运行的插画图片收藏检索工具。它不会
 - `-关键词`、`不要……`、`排除……`等负向条件；
 - 上传、拖入或粘贴参考图进行以图搜图；
 - 选中库内图片作为参考，再附加“保留服装但换成仰视”等文字条件；
+- 跨服装同角色相似检索（基于 CCIP 角色特征）与画面属性筛选（媒介类型、分级门控、黑白、排除 AI、景别、美学排序）；
+- 来源元信息解析与按画师归并浏览（离线解析 Pixiv / X / 小红书文件名与嵌入备注，可选低速抓取公开作品与画师信息）；
 - 可选严格标签模式，要求结果至少精确命中一个细节标签；
 - 可选使用本地视觉语言模型，为每张插画生成结构化长描述；
 - 命令行与离线本地网页图库；
@@ -34,11 +37,12 @@ ArtSeek 是一个完全本地运行的插画图片收藏检索工具。它不会
 | 模块 | 默认模型 | 作用 |
 |---|---|---|
 | 图文向量 | `google/siglip2-base-patch16-256` | 多语言语义与以图搜图 |
-| 插画标签 | `SmilingWolf/wd-eva02-large-tagger-v3` | 服装、动作、构图等 Danbooru 风格标签 |
+| 插画标签 | `Camais03/camie-tagger-v2` + `deepghs/pixai-tagger-v0.9-onnx`（默认融合） | 服装、动作、构图、作品与角色标签；可配置切换 `pixai1.0` 或 `wd` |
+| 视觉属性与角色 | `deepghs/*` 系列 ONNX 模型（安装 `vision` 扩展后启用） | 媒介/分级/黑白/AI/美学评分、头部焦点与 CCIP 同角色检索 |
 | 查询理解 | `qwen3:4b`（Ollama，可选） | 把自然语言整理成检索计划 |
 | 图片长描述 | `qwen3-vl:4b`（Ollama，可选） | 细拆服装层次、姿势和画面设计 |
 
-默认图文向量模型约 4 亿参数，标签器约 3 亿参数。开启两个 Ollama 模型后，全部模型缓存通常需要数 GB 到十余 GB 磁盘空间，具体取决于 Ollama 的量化版本。
+默认基础图文向量模型约 4 亿参数。按需启用视觉属性/CCIP 扩展或两个 Ollama 模型后，全部模型缓存通常需要数 GB 到十余 GB 磁盘空间，具体取决于所选后端与 Ollama 量化版本。
 
 ## Windows 快速安装
 
@@ -58,10 +62,12 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ```powershell
 uv venv --python 3.11
-uv pip install --link-mode=copy --python .venv\Scripts\python.exe -e ".[all]"
+uv pip install --link-mode=copy --python .venv\Scripts\python.exe -e ".[all,vision]"
 .\scripts\install_cuda_torch.ps1
 .\.venv\Scripts\Activate.ps1
 ```
+
+若不需要 ONNX 视觉属性、CCIP 同角色检索与 PixAI v0.9 融合标签，可把 `.[all,vision]` 改为 `.[all]`，并在配置中将 `[tagger] backend` 设为 `"camie"` 或 `"wd"`。
 
 Windows 上 PyPI 的 `torch` 默认是 CPU 轮子。`install_cuda_torch.ps1` 会把它换成 CUDA 13.0 构建；漏掉这一步时，索引会静默跑在 CPU 上，速度会慢一个数量级。可用 `artseek doctor` 确认是否显示 GPU 名称。
 
@@ -73,7 +79,7 @@ cd ArtSeek
 git submodule update --init --recursive
 (cd src/artseek/web/static/vendor/vditor && pnpm install && pnpm build)
 uv venv --python 3.11
-uv pip install --python .venv/bin/python -e '.[all]'
+uv pip install --python .venv/bin/python -e '.[all,vision]'
 source .venv/bin/activate
 ```
 
@@ -168,23 +174,8 @@ artseek search "保持类似的服装轮廓，但改成仰视动态透视和蓝�
 机器可读 JSON：
 
 ```powershell
-artseek search "泡泡袖 低头" --json
+artseek search "斗篷 仰视" --json
 ```
-
-## 常用命令
-
-| 命令 | 说明 |
-|---|---|
-| `artseek init` | 生成配置 |
-| `artseek doctor` | 检查 CUDA、模型组件和 Ollama |
-| `artseek pull-models` | 预下载图文向量与插画标签模型 |
-| `artseek index DIR...` | 增量索引图片目录 |
-| `artseek rebuild DIR...` | 清空向量库后重建；不碰原图 |
-| `artseek search TEXT` | 文字或图文组合搜索 |
-| `artseek similar IMAGE` | 以图搜图 |
-| `artseek stats` | 查看各目录图片数量 |
-| `artseek migrate-v1` | 只读迁移 v1 Qdrant 与 sidecar 数据到 v2 SQLite + numpy；保留全部 v1 文件 |
-| `artseek serve` | 启动本地网页界面；模型在首次检索时载入；加 `--open` 可打开浏览器 |
 
 ## 如何理解三种检索模式
 
@@ -193,6 +184,23 @@ artseek search "泡泡袖 低头" --json
 3. **以图搜图/组合检索**：可添加多张参考图。文字与每张参考图的默认权重都是 1，点开参考图后可改该图权重；查询向量按权重加和后归一化。
 
 网页中的分数只表示本次结果列表内的相对排序，不是概率。
+
+## 常用命令
+
+| 命令 | 说明 |
+|---|---|
+| `artseek init` | 生成配置 |
+| `artseek doctor` | 检查 CUDA、模型组件和 Ollama |
+| `artseek pull-models` | 预下载基础图文向量与配置中的 `tagger.model` |
+| `artseek index DIR...` | 增量索引图片目录 |
+| `artseek rebuild DIR...` | 清空向量库后重建；不碰原图 |
+| `artseek compact` | 压缩已删除的向量矩阵行并整理连续行号 |
+| `artseek provenance scan\|enrich` | 离线扫描来源文件名/嵌入备注，或按域名限速补全来源 |
+| `artseek search TEXT` | 文字或图文组合搜索 |
+| `artseek similar IMAGE` | 以图搜图 |
+| `artseek stats` | 查看各目录图片数量 |
+| `artseek migrate-v1` | 只读迁移 v1 Qdrant 与 sidecar 数据到 v2 SQLite + numpy；保留全部 v1 文件 |
+| `artseek serve` | 启动本地网页界面；模型在首次检索时载入；加 `--open` 可打开浏览器 |
 
 ## 数据与隐私
 
@@ -240,7 +248,7 @@ enabled = false
 ## 开发与测试
 
 ```bash
-uv pip install --python .venv/bin/python -e '.[all,dev]'
+uv pip install --python .venv/bin/python -e '.[all,vision,dev]'
 python -m pytest
 ruff check src tests
 ```
@@ -250,10 +258,11 @@ ruff check src tests
 ## 模型与许可证
 
 - [SigLIP 2](https://huggingface.co/google/siglip2-base-patch16-256)：Apache-2.0；多语言图文检索；
-- [WD EVA02 Large Tagger v3](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3)：Apache-2.0；插画多标签分类；
+- [Camie Tagger v2](https://huggingface.co/Camais03/camie-tagger-v2) 与 [PixAI Tagger v0.9 ONNX](https://huggingface.co/deepghs/pixai-tagger-v0.9-onnx)：默认融合标签器（可选 [PixAI Tagger v1.0](https://huggingface.co/pixai-labs/pixai-tagger-v1.0) 与 Apache-2.0 的 [WD EVA02 Large Tagger v3](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3)）；
+- [DeepGHS 视觉属性 / 头部焦点 / CCIP 模型](https://huggingface.co/deepghs) 与 [ONNX Runtime](https://onnxruntime.ai/)（MIT）：媒介、分级、黑白、AI 检测、美学评分、人物焦点与跨服装角色检索；
 - [Qwen3](https://ollama.com/library/qwen3) 与 [Qwen3-VL](https://ollama.com/library/qwen3-vl)：通过 Ollama 可选安装；
-- [pypinyin](https://github.com/mozillazg/python-pinyin)：MIT；中文标签的拼音检索键。
-- [OpenCC](https://github.com/BYVoid/OpenCC)：Apache-2.0；简繁、区域异体与日文新字体的字形归一表（由 `scripts/gen_cjk_variants.py` 生成到 `src/artseek/core/cjk_variants.py`）。
+- [pypinyin](https://github.com/mozillazg/python-pinyin)：MIT；中文标签的拼音检索键；
+- [OpenCC](https://github.com/BYVoid/OpenCC)：Apache-2.0；简繁、区域异体与日文新字体的字形归一表（由 `scripts/gen_cjk_variants.py` 生成到 `src/artseek/core/cjk_variants.py`）；
 - [Qdrant Python Client](https://github.com/qdrant/qdrant-client)：Apache-2.0；仅用于只读解析 v1 数据，v2 索引与检索不再使用 Qdrant 服务。
 
-ArtSeek 自身使用 MIT 许可证。模型权重仍受各自模型许可证约束。
+ArtSeek 自身使用 MIT 许可证。模型权重仍受各自 Hugging Face / Ollama 仓库许可证约束。

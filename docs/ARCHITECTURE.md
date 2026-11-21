@@ -7,27 +7,33 @@
 1. 服装部件、袜型、动作和镜头角度在整张图中占比很小，整体向量容易忽略；
 2. 插画标签器能识别很多细节，却不理解“柔和、克制、电影感逆光氛围”这类自然语言。
 
-因此 ArtSeek 不把所有信息压进一个通道，而是让整体视觉与细节描述分别召回，再进行结果级融合。v2 把运行时存储从 v1 的 Qdrant + 多个 sidecar 收敛为 **单个 SQLite 元数据库 + 两个 numpy 向量矩阵**。
+因此 ArtSeek 不把所有信息压进一个通道，而是让整体视觉与细节描述分别召回，再进行结果级融合，并辅以独立通道的 `CCIP` 跨服装角色检索与结构化视觉属性筛选。v2 把运行时存储从 v1 的 Qdrant + 多个 sidecar 收敛为 **单个 SQLite 元数据库 + 最多三个 numpy 向量矩阵**。
 
 ```mermaid
 flowchart TD
     A[本地图片目录] --> B[IncrementalScanner<br/>目录 mtime 增量 / 周期全验]
     B --> C[CPU 解码池<br/>draft + 短边 512]
     C --> D[SigLIP 2 视觉向量]
-    C --> E[WD 插画标签]
+    C --> E[Camie v2 + PixAI v0.9 融合标签]
+    B -. 后台任务 .-> V[视觉属性分析 + CCIP 角色向量]
     B -. 后台低优先级 .-> F[VLM 长描述]
     E --> G[descriptor 文本向量]
     F --> G
-    D --> H[(artseek.sqlite3<br/>元数据/标签/来源/收藏/任务)]
+    C --> H[(artseek.sqlite3<br/>元数据/标签/属性/来源/收藏/任务)]
+    E --> H
+    V --> H
     D --> I[(visual.f32.npy)]
-    G --> I
     G --> J[(descriptor.f32.npy)]
+    V --> P[(ccip.f32.npy)]
     H --> K[ImageScope / ScopeResolver]
     I --> L[双路矩阵检索]
     J --> L
     K --> L
+    K --> Q[CCIP 角色近邻检索]
+    P --> Q
     L --> M[加权 RRF + 标签奖励 + 去重]
     M --> N[FastAPI services / 网页图库 / CLI]
+    Q --> N
 ```
 
 ## 数据模型
@@ -36,8 +42,9 @@ flowchart TD
 
 | 表 | 内容 |
 |---|---|
-| `images` | 行号 = 向量矩阵行号，保留 v1 `point_id`；路径、mtime、尺寸、SHA-256、dHash、`sort_name` |
-| `tags` / `image_tags` | WD 标签及分数 |
+| `images` | 行号 = 向量矩阵行号，保留 v1 `point_id`；路径、mtime、尺寸、SHA-256、dHash、`sort_name`，以及 v4 视觉属性列（`media_type`、`rating`、`is_monochrome`、`monochrome_score`、`is_ai`、`ai_source`、`ai_score`、`aesthetic_score`、`shot_type`、`focal_x`、`focal_y`、`character_crop_json`、`vision_meta_version`、`vision_meta_at`） |
+| `tags` / `image_tags` | 融合标签（Camie v2 + PixAI v0.9 / PixAI v1.0 / WD）及分数，含 `doc_count` 文档频次统计 |
+| `image_task_state` | 按图片追踪各阶段完成状态（`index_done`、`url_done`、`author_done`、`tag_models_json`、`descriptor_done`、`vision_done`、`ccip_done`、`caption_done`） |
 | `folders` / `roots` | 目录树、目录 mtime、选择与已知状态 |
 | `collections` / `collection_items` / `collection_history` | 收藏与撤销/重做栈 |
 | `artist*` / `image_source` / `source_tags` / `fetch_state` | 画师、身份、来源与抓取限速 |
@@ -50,8 +57,9 @@ flowchart TD
 
 向量只在 `.npy` 中，不写 SQLite blob：
 
-- `visual.f32.npy`：SigLIP 图像向量；
-- `descriptor.f32.npy`：WD 标签 + 可选长描述编码的文本向量；
+- `visual.f32.npy`：SigLIP 2 图像向量；
+- `descriptor.f32.npy`：融合标签 + 可选长描述编码的文本向量；
+- `ccip.f32.npy`（按需生成）：基于头部/人物裁剪框提取的 768 维 `CCIP` 角色身份向量，用于跨服装同角色检索；
 - 形状 `(capacity, D)`，`fp32`，行号 = `images.id`；删除只置 `deleted=1` 并把对应行清零，`artseek compact` 重排；
 - `VectorIndex` 内存检索；CUDA 可用时可镜像为 fp16 张量，CPU 侧始终保留 fp32。
 
@@ -72,11 +80,13 @@ flowchart TD
 
 ```text
 8 线程读取字节 → SHA-256 + PIL draft + EXIF 转正 + 短边 512 缩小 + dHash
-  → 有界队列 → 单 GPU 批次 (SigLIP encode_images + WDTagger predict)
+  → 有界队列 → 单 GPU 批次 (SigLIP encode_images + Camie v2 / PixAI v0.9 融合标签)
   → descriptor 文本批编码 → 单事务写 SQLite → 写向量行
 ```
 
-JPEG/WebP 在解码前使用 `Image.draft`，避免为 4K 图解码全分辨率；所有输入共用短边 512 的预缩放，查询图也走同一路径，保证索引/查询向量一致。SQLite 写入按批提交，向量按批刷盘；进程中断后根目录保持 dirty，下次全验恢复。索引、来源抓取、自动 Tag、长描述回填、compact 共用 `indexing/jobs.py` 的持久化优先队列，支持暂停/继续/停止。
+JPEG/WebP 在解码前使用 `Image.draft`，避免为 4K 图解码全分辨率；所有输入共用短边 512 的预缩放，查询图也走同一路径，保证索引/查询向量一致。SQLite 写入按批提交，向量按批刷盘；进程中断后根目录保持 dirty，下次全验恢复。索引、来源扫描/抓取、标签重标（`retag`）、自动 Tag、视觉属性提取（`vision_enrich`）、角色特征提取（`ccip` / `ccip_reset`）、旧标签清理（`purge_legacy`）、长描述回填（`caption`）与 `compact` 共用 `indexing/jobs.py` 的持久化优先队列，支持暂停/继续/停止与队列排序。
+
+视觉属性与角色特征按需在后台流水线中运行（`ml/vision_attributes.py`、`ml/ccip.py`）：先通过 YOLOv8 头部检测计算界面瀑布流焦点与角色裁剪区域（`character_crop_json`），并推断媒介类型、分级、黑白、AI 生成、完成度与美学评分；再基于裁剪框提取 768 维 `CCIP` 向量写入 `ccip.f32.npy`。
 
 ## 查询解析
 
@@ -97,7 +107,9 @@ JPEG/WebP 在解码前使用 `Image.draft`，避免为 4K 图解码全分辨率�
 ImageScope(
     folders=(...), time_range=(...), collection_id=...,
     author_keys=(...), tags_all=(...), tags_none=(...),
-    title_terms=(...), snapshot_ids=...
+    title_terms=(...), media_types=(...), ratings=(...),
+    monochrome=..., exclude_ai=..., shot_types=(...),
+    snapshot_ids=...
 )
 ```
 

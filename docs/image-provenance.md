@@ -7,7 +7,7 @@
 - pixiv / X 的元信息抓取本身不难，真正的瓶颈是 **SauceNAO 的免费额度** 和 **pixiv 的反自动化策略**。
 - 因此「一键补全所有图」必须做成 **有预算、可暂停、可续跑的任务队列**，而不是一个同步按钮。
 
-> **实施状态（2026-11-16）**：解析器、`provenance.sqlite3`、Pixiv/FxTwitter 抓取、按域名限速与预算、查看器来源面板、作者筛选、索引后自动补全、CLI 与 API 均已实现。SauceNAO/ascii2d 不配置 API key、不做服务端代理；查看器用浏览器表单直接上传 ≤1200px JPEG 并打开结果页，之后手动粘贴 URL。不使用 Pixiv 登录 Cookie。
+> **实施状态（v2 现状）**：解析器、Pixiv/FxTwitter 抓取、按域名限速与预算、查看器来源面板、画师页面与合并、索引后自动扫描/补全、CLI 与 API 均已实现。v2 已将原本独立的 `provenance.sqlite3` sidecar 与 `VectorStore` 合并至 `{index_dir}/artseek.sqlite3` 与 `ScopeResolver`；若存在 v1 `provenance.sqlite3`，由 `artseek migrate-v1` 只读导入。SauceNAO/ascii2d 不配置 API key、不做服务端代理；查看器用浏览器表单直接上传 ≤1200px JPEG 并打开结果页，之后手动粘贴 URL。不使用 Pixiv 登录 Cookie。
 >
 > **小红书（2026-11-19）**：网页版默认下载名可离线解析出标题、1 起序号与作者昵称，按昵称自动建立/复用画师组；笔记 ID 不在文件里，记录保持 `unresolved`，只能靠粘贴笔记 URL 或人工确认补齐。作者主页 `xhs_uid` 仅支持手动添加，不做任何默认抓取。
 
@@ -98,16 +98,16 @@ X 的嵌入备注通常只写 `.../status/{id}`，不写 `/photo/N`。实测样�
 
 ## 3. 数据模型
 
-### 3.1 为什么用 SQLite sidecar
+### 3.1 为什么用独立 SQLite 表保存用户来源状态
 
-来源元信息是「用户状态」，不是索引状态。它必须满足：
+来源元信息是「用户状态」，不是向量索引状态。它必须满足：
 
 - 重新索引、换向量模型、移动文件后仍然存在；
 - 可以手动编辑并覆盖自动结果；
 - 可以记录抓取状态、失败原因、重试时间；
 - 可以按作者过滤，而不必把全部 payload 重写一遍。
 
-因此放在 `{index_dir}/provenance.sqlite3`，与 `collections.json`、`index_state.sqlite3` 同级，随索引 sidecar 一起迁移/备份。WAL 模式，单写锁。
+v1 最初将其存放在独立的 `{index_dir}/provenance.sqlite3` sidecar 中；v2 已将 `image_source`、`artist`、`artist_identity`、`artist_legacy`、`fetch_state` 等表统一并入 `{index_dir}/artseek.sqlite3`（WAL 模式），便于与目录、收藏、标签在同一数据库中联表查询与原子迁移。v1 sidecar 可通过 `artseek migrate-v1` 只读导入。
 
 ### 3.2 表
 
@@ -331,7 +331,7 @@ GET  /api/authors/{key}/images                  # 画师下的图（分页）
 
 SPA 路由增加 `/author/{key}`，直接打开作者页时也能看到该作者的全部图。
 
-现有搜索/目录/收藏/随机接口增加可选 `author_key` 参数。实现上复用现有的 `point_ids` 子集路径：sidecar 返回该作者组的 point ID 列表，再与目录/收藏范围求交，交给 `VectorStore` 的 subset/postfilter 逻辑。
+现有搜索/目录/收藏/随机接口增加可选 `author_key` 参数。v2 中统一由 `ImageScope` 携带 `author_keys` 并交由 `ScopeResolver` 在 `artseek.sqlite3` 内求交集、排序与分页（替代了 v1 的 `VectorStore` subset 路径）。
 
 搜索框支持过滤器语法：
 
@@ -348,9 +348,7 @@ tag:オリジナル tag:女の子
 
 | 字段 | 语义 |
 |---|---|
-| 作者 | 作者组（名称/key/handle，服务端解析与归并） |
 | 标题模糊词 | 在来源标题中做子串匹配，多个词取交集 |
-| 标题模糊词 | 来源标题中的词 |
 | 文字标签 | 参与模型检索的文字标签 |
 | 作者 | 作者组名称/key/handle；支持多选 |
 | 来源 Tag | 精确/别名匹配来源、手动、自动标签；也可直接输入 `+`/`or`、`*`/`and`、`-`/`not` 表达式，支持括号和别名组 |

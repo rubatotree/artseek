@@ -1,11 +1,11 @@
 # ArtSeek Roadmap
 
-## v2（当前分支 `refactor/v2`）
+## v2（已合入 `main`）
 
 v2 将运行时存储从 Qdrant + 多 sidecar 收敛为：
 
 - 单个 WAL SQLite 元数据库 `{index_dir}/artseek.sqlite3`；
-- 两个 `fp32` numpy 向量矩阵 `visual.f32.npy` / `descriptor.f32.npy`；
+- `fp32` numpy 向量矩阵 `visual.f32.npy` / `descriptor.f32.npy` / `ccip.f32.npy`；
 - 统一 `ImageScope` / `ScopeResolver` 与持久化后台任务队列。
 
 设计与验收指标见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
@@ -20,6 +20,6 @@ v2 将运行时存储从 Qdrant + 多 sidecar 收敛为：
 | M5 前端 | 待开始 | Vite + TypeScript + Svelte 5，替换单文件 `index.html`，逐项手测视图循环/localStorage/列数/滚动保留 |
 | M6 收尾 | 待开始 | 删除 Qdrant 运行时与 v1 sidecar 读取代码；旧前端移除；README/ARCHITECTURE/CHANGELOG 收口 |
 
-### 回滚
+### v1 数据兼容性
 
-v1 数据文件从不被修改或删除。切回 `main`（或 tag `v1-baseline`）即可恢复 v1 服务。
+`artseek migrate-v1` 为只读迁移：旧版 v1 数据文件不会被修改或删除。
