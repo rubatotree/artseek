@@ -3922,6 +3922,7 @@
       retag: '自动打标',
       vision_enrich: '视觉属性 & 人脸',
       ccip: 'CCIP 角色特征',
+      ccip_reset: '清空 CCIP 向量',
       provenance_scan: '本地扫源',
       provenance_enrich: '补全 Pixiv/X',
       purge_legacy: '清理旧版标签',
@@ -4090,6 +4091,7 @@
             <button type="button" data-bg-job="retag">+ 自动打标</button>
             <button type="button" data-bg-job="vision">+ 视觉属性 &amp; 人脸</button>
             <button type="button" data-bg-job="ccip">+ CCIP 角色向量</button>
+            <button type="button" data-bg-job="ccip-reset">+ 清空 CCIP 向量</button>
             <button type="button" data-bg-job="pscan">+ 本地增量扫源</button>
             <button type="button" data-bg-job="pscan-deep">+ 深度扫源</button>
             <button type="button" data-bg-job="penrich">+ 补全 Pixiv/X</button>
@@ -4211,6 +4213,10 @@
     }
     function purgeJobNotice(job) {
       if (!job) return '';
+      if (job.kind === 'ccip_reset') {
+        if (job.status === 'failed') return `清空 CCIP 向量失败：${job.error || '未知错误'}`;
+        return job.message || '正在清空 CCIP 向量…';
+      }
       const sum = job.summary || {};
       const imgs = Number(sum.purged_images || 0).toLocaleString();
       const links = Number(sum.deleted_tag_links || 0).toLocaleString();
@@ -4252,7 +4258,7 @@
         const status = String(job.status || '');
         if (!['completed', 'failed', 'stopped', 'interrupted'].includes(status)) continue;
         if (status === 'completed' || status === 'stopped') {
-          applyPurgeToClientState();
+          if (job.kind !== 'ccip_reset') applyPurgeToClientState();
           await reloadCurrentGallery();
         }
         if ($('provenance-dialog').open) await refreshProvenanceDialog();
@@ -4269,6 +4275,25 @@
           state.purgeJobId = res.job_id || (res.job && res.job.id) || '';
           state.purgeNotice = '清理旧版标签任务已加入队列。';
           if (state.purgeJobId) void watchPurgeJob(state.purgeJobId);
+        } catch (error) {
+          state.purgeNotice = `加入队列失败：${error.message}`;
+        }
+        state.provenanceIdlePolls = 3;
+        await refreshProvenanceDialog();
+        return;
+      }
+      if (action === 'ccip-reset') {
+        if (!window.confirm('将清空已存的 CCIP 角色向量并重置完成标记（旧向量矩阵会备份为 ccip.f32.npy.bak-*）。之后需先跑「视觉属性 & 人脸」再重新提取，确认加入队列？')) {
+          return;
+        }
+        try {
+          const res = await parseResponse(await fetch('/api/jobs/ccip/reset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folder_keys: treeState.selected.size ? [...treeState.selected] : null }),
+          }));
+          state.purgeNotice = '清空 CCIP 向量任务已加入队列。';
+          if (res.job_id) void watchPurgeJob(res.job_id);
         } catch (error) {
           state.purgeNotice = `加入队列失败：${error.message}`;
         }

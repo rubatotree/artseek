@@ -19,7 +19,7 @@ from artseek.db.repos.images import ImageRepo, ImageUpsertRecord
 from artseek.db.repos.jobs import JobRepo
 from artseek.db.repos.provenance import ProvenanceRepo
 from artseek.db.repos.task_state import TaskStateRepo
-from artseek.indexing.jobs import JobManager
+from artseek.indexing.jobs import JobDependencyError, JobManager
 from artseek.ml.ccip import CCIPExtractor
 from artseek.ml.tag_postprocess import (
     CAT_CHARACTER,
@@ -27,6 +27,7 @@ from artseek.ml.tag_postprocess import (
     PredictedTags,
 )
 from artseek.ml.vision_attributes import (
+    VISION_META_VERSION,
     HeadFocalDetector,
     VisionAttributeAnalyzer,
     extract_embedded_ai_metadata,
@@ -471,16 +472,20 @@ class TestVisionAttributesAndCCIP(unittest.TestCase):
                     patch("artseek.indexing.jobs.CCIPExtractor", _DummyCCIP),
                     patch("artseek.indexing.jobs.release_accelerator", return_value=None),
                 ):
+                    def _wait(job_ids: tuple[str, ...]) -> None:
+                        deadline = time.monotonic() + 15.0
+                        while time.monotonic() < deadline:
+                            statuses = [jobs_repo.get(jid)["status"] for jid in job_ids]
+                            if all(s in {"completed", "failed", "stopped"} for s in statuses):
+                                return
+                            time.sleep(0.05)
+
                     j1 = mgr.submit_retag_job(skip_completed=True)
                     j2 = mgr.submit_vision_enrich_job(skip_completed=True)
+                    # CCIP crops from the vision output, so it may only be queued afterwards.
+                    _wait((j1, j2))
                     j3 = mgr.submit_ccip_job(skip_completed=True)
-
-                    deadline = time.monotonic() + 15.0
-                    while time.monotonic() < deadline:
-                        statuses = [jobs_repo.get(jid)["status"] for jid in (j1, j2, j3)]
-                        if all(s in {"completed", "failed", "stopped"} for s in statuses):
-                            break
-                        time.sleep(0.05)
+                    _wait((j3,))
 
                 mgr.close()
                 for jid in (j1, j2, j3):
@@ -497,6 +502,136 @@ class TestVisionAttributesAndCCIP(unittest.TestCase):
                 self.assertEqual(summary["camie_v2_done"], 2)
                 self.assertEqual(summary["pixai_v09_done"], 2)
                 self.assertIsNotNone(vectors.ccip_vector(1))
+            finally:
+                db.close()
+
+    def test_ccip_gate_and_reset(self) -> None:
+        """CCIP refuses to run before vision crops exist; reset clears vectors and flags."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            img_dir = root / "imgs"
+            img_dir.mkdir()
+            img_path = img_dir / "a.png"
+            Image.new("RGB", (64, 64), (10, 20, 30)).save(img_path)
+
+            cfg = AppConfig(
+                data_dir=root / "data",
+                cache_dir=root / "cache",
+                tagger=TaggerConfig(backend="camie+pixai0.9"),
+            )
+            cfg.ensure_dirs()
+            db = Database(cfg.db_path)
+            try:
+                images = ImageRepo(db)
+                prov = ProvenanceRepo(db)
+                jobs_repo = JobRepo(db)
+                task_state = TaskStateRepo(db)
+                vectors = VectorIndex(
+                    cfg.visual_vectors_path,
+                    cfg.descriptor_vectors_path,
+                    ccip_path=cfg.ccip_vectors_path,
+                )
+                images.upsert_images_batch(
+                    [
+                        ImageUpsertRecord(
+                            point_id="p1",
+                            root_key="r1",
+                            root_path=str(img_dir),
+                            folder_key="r1",
+                            folder_path=str(img_dir),
+                            folder_mtime_ns=1,
+                            path=str(img_path),
+                            path_key=str(img_path).casefold(),
+                            name=img_path.name,
+                            ext=".png",
+                            mtime_ns=10,
+                            size_bytes=100,
+                            width=64,
+                            height=64,
+                            content_hash="hash_0",
+                            phash="0" * 16,
+                            descriptor_text="x",
+                            tags=["x"],
+                            tag_scores={"x": 0.5},
+                        )
+                    ]
+                )
+                vectors.set_rows(
+                    [0], np.eye(1, 8, dtype=np.float32), np.eye(1, 8, dtype=np.float32)
+                )
+
+                class _DummyCCIP:
+                    def __init__(self, _runtime):
+                        pass
+
+                    def extract_batch(self, items):
+                        out = np.zeros((len(items), 768), dtype=np.float32)
+                        out[:, 0] = 1.0
+                        return out
+
+                    def close(self):
+                        pass
+
+                def _wait(job_ids: tuple[str, ...]) -> None:
+                    deadline = time.monotonic() + 15.0
+                    while time.monotonic() < deadline:
+                        statuses = [jobs_repo.get(jid)["status"] for jid in job_ids]
+                        if all(s in {"completed", "failed", "stopped"} for s in statuses):
+                            return
+                        time.sleep(0.05)
+
+                lifecycle = ModelLifecycle(cfg, embedder_factory=_FakeEmbedder)
+                prov_svc = ProvenanceAppService(cfg, images, prov, vectors)
+                with (
+                    patch("artseek.indexing.jobs.CCIPExtractor", _DummyCCIP),
+                    patch("artseek.indexing.jobs.release_accelerator", return_value=None),
+                ):
+                    mgr = JobManager(
+                        cfg, db, images, prov, jobs_repo, vectors, lifecycle, prov_svc
+                    )
+                    try:
+                        with self.assertRaises(JobDependencyError):
+                            mgr.submit_ccip_job(skip_completed=True)
+
+                        forced = mgr.submit_ccip_job(skip_completed=True, require_vision=False)
+                        _wait((forced,))
+                        job = jobs_repo.get(forced)
+                        self.assertEqual(job["status"], "completed", job)
+                        # No crop boxes yet, so the whole-image fallback must be reported.
+                        self.assertEqual(job["summary"]["missing_crop"], 1)
+
+                        # The gate reads both the task flag and images.vision_meta_version.
+                        with db.write_tx() as conn:
+                            conn.execute(
+                                "UPDATE images SET vision_meta_version = ?, "
+                                "character_crop_json = ? WHERE id = 0",
+                                (
+                                    VISION_META_VERSION,
+                                    '{"body":[0.1,0.1,0.9,0.9]}',
+                                ),
+                            )
+                        task_state.mark_vision_done(
+                            [("p1", 0, "hash_0")], version=VISION_META_VERSION
+                        )
+                        allowed = mgr.submit_ccip_job(skip_completed=False)
+                        _wait((allowed,))
+                        done = jobs_repo.get(allowed)
+                        self.assertEqual(done["status"], "completed", done)
+                        self.assertEqual(done["summary"]["missing_crop"], 0)
+                    finally:
+                        mgr.close()
+
+                # Reset clears the stored vectors and the completion flags, nothing else.
+                vectors.set_ccip_rows([0], np.ones((1, 768), dtype=np.float32))
+                task_state.mark_ccip_done([("p1", 0, "hash_0")])
+                self.assertIsNotNone(vectors.ccip_vector(0))
+
+                self.assertEqual(TaskStateRepo(db).reset_ccip(), 1)
+                self.assertEqual(vectors.clear_ccip_rows([0]), 1)
+                self.assertIsNone(vectors.ccip_vector(0))
+                self.assertEqual(TaskStateRepo(db).summary_counts()["ccip_done"], 0)
+                visual = vectors.visual_vectors([0])[0]
+                self.assertGreater(float(np.linalg.norm(visual)), 0.0)
             finally:
                 db.close()
 

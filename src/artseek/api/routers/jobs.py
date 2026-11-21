@@ -9,10 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from ...core.scope import ImageScope
 from ...image_io import canonical_path
+from ...indexing.jobs import JobDependencyError
 from ...services.common import attach_provenance, gallery_result, resolve_folder_keys_from_db
 from ..deps import AppContainer, get_container
 from ..schemas import (
     AutoFillQueueRequest,
+    CcipResetRequest,
+    CcipTaskRequest,
     IndexAddRequest,
     IndexRemoveRequest,
     JobMoveRequest,
@@ -296,17 +299,36 @@ def submit_vision_enrich_job(
 
 @router.post("/api/jobs/ccip")
 def submit_ccip_job(
-    request: VisionTaskRequest,
+    request: CcipTaskRequest,
     c: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
     if c.index_job.running:
         raise HTTPException(409, "正在索引图片，请稍后再安排角色特征任务")
     scope_rows = _scope_rows_for_folders(c, request.folder_keys)
-    job_id = c.job_manager.submit_ccip_job(
-        scope_row_ids=scope_rows,
-        skip_completed=request.skip_completed,
-        limit=request.limit,
-    )
+    try:
+        job_id = c.job_manager.submit_ccip_job(
+            scope_row_ids=scope_rows,
+            skip_completed=request.skip_completed,
+            limit=request.limit,
+            require_vision=not request.allow_incomplete_vision,
+        )
+    except JobDependencyError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"job_id": job_id, "job": c.jobs_repo.get(job_id)}
+
+
+@router.post("/api/jobs/ccip/reset")
+def reset_ccip_job(
+    request: CcipResetRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    """Invalidate stored CCIP vectors so they are recomputed from freshly detected crops."""
+    if c.index_job.running:
+        raise HTTPException(409, "正在索引图片，请稍后再安排向量重置任务")
+    if c.job_manager.is_busy(("ccip", "ccip_reset")):
+        raise HTTPException(409, "CCIP 任务已在队列中，请先等待或停止")
+    scope_rows = _scope_rows_for_folders(c, request.folder_keys)
+    job_id = c.job_manager.submit_ccip_reset_job(scope_row_ids=scope_rows)
     return {"job_id": job_id, "job": c.jobs_repo.get(job_id)}
 
 

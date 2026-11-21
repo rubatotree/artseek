@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import shutil
 import threading
 import time
 import uuid
@@ -44,6 +45,7 @@ from .scan import IncrementalScanner
 
 JOB_PRIORITIES: dict[str, int] = {
     "index": 10,
+    "ccip_reset": 15,
     "compact": 20,
     "provenance_scan": 30,
     "provenance_enrich": 40,
@@ -54,6 +56,10 @@ JOB_PRIORITIES: dict[str, int] = {
     "purge_legacy": 70,
     "caption": 90,
 }
+
+
+class JobDependencyError(RuntimeError):
+    """Raised when a job is queued before the upstream stage that feeds it has finished."""
 
 
 @dataclass(order=True)
@@ -529,8 +535,11 @@ class JobManager:
         scope_row_ids: Sequence[int] | None = None,
         skip_completed: bool = True,
         limit: int | None = None,
+        require_vision: bool = True,
     ) -> str:
         row_list = [int(r) for r in scope_row_ids] if scope_row_ids is not None else None
+        if require_vision:
+            self._assert_vision_ready(row_list)
         return self._enqueue_job(
             "ccip",
             "ccip",
@@ -546,6 +555,106 @@ class JobManager:
                 skip_completed=skip_completed,
                 limit=limit,
             ),
+        )
+
+    def _assert_vision_ready(self, scope_row_ids: Sequence[int] | None) -> None:
+        """CCIP crops characters from `character_crop_json`; refuse to run without it."""
+        blocking = self.task_state.pending_for_vision(
+            min_version=VISION_META_VERSION,
+            scope_row_ids=scope_row_ids,
+            skip_completed=True,
+            limit=1,
+        )
+        if blocking:
+            image_id, _point_id, _path, _hash = blocking[0]
+            raise JobDependencyError(
+                "视觉属性尚未完成，CCIP 无法裁剪角色区域（会退化为整图特征）。"
+                f"仍有待处理图片（例：image_id={image_id}），"
+                "请先运行“视觉属性 & 人脸”，或显式允许用整图提取。"
+            )
+
+    def submit_ccip_reset_job(self, *, scope_row_ids: Sequence[int] | None = None) -> str:
+        """Invalidate existing CCIP vectors so they can be recomputed from fresh crops."""
+        row_list = [int(r) for r in scope_row_ids] if scope_row_ids is not None else None
+        return self._enqueue_job(
+            "ccip_reset",
+            "ccipreset",
+            {"scope_count": len(row_list) if row_list is not None else None},
+            "等待清空 CCIP 角色特征向量…",
+            lambda jid: self._execute_ccip_reset(jid, scope_row_ids=row_list),
+            use_priority=True,
+        )
+
+    def _backup_ccip_matrix(self) -> Path | None:
+        path = getattr(self.vectors, "ccip_path", None)
+        if path is None or not Path(path).is_file():
+            return None
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        target = Path(path).with_name(f"{Path(path).name}.bak-{stamp}")
+        try:
+            shutil.copy2(path, target)
+        except OSError:
+            return None
+        return target
+
+    def _execute_ccip_reset(
+        self,
+        job_id: str,
+        *,
+        scope_row_ids: Sequence[int] | None = None,
+    ) -> None:
+        self.jobs_repo.update(
+            job_id, status="running", message="正在清空 CCIP 角色特征向量…"
+        )
+        try:
+            backup = self._backup_ccip_matrix()
+            if scope_row_ids is None:
+                ids = np.arange(int(self.vectors.count), dtype=np.int64)
+            else:
+                ids = np.asarray(sorted({int(r) for r in scope_row_ids}), dtype=np.int64)
+            cleared = self.vectors.clear_ccip_rows(ids)
+            self.vectors.flush_ccip()
+            reset_rows = self.task_state.reset_ccip(scope_row_ids=scope_row_ids)
+        except Exception as exc:
+            self.jobs_repo.update(
+                job_id,
+                status="failed",
+                message="CCIP 向量清空失败",
+                error=str(exc),
+            )
+            return
+
+        if callable(self._on_caches_invalidated):
+            self._on_caches_invalidated()
+
+        vision_pending = self.task_state.pending_for_vision(
+            min_version=VISION_META_VERSION,
+            scope_row_ids=scope_row_ids,
+            skip_completed=True,
+            limit=1,
+        )
+        backup_note = f"，旧矩阵已备份为 {backup.name}" if backup is not None else ""
+        if vision_pending:
+            message = (
+                f"已清空 {cleared} 行 CCIP 特征、重置 {reset_rows} 条完成标记{backup_note}；"
+                "视觉属性尚未完成，完成后再提取角色特征"
+            )
+        else:
+            message = (
+                f"已清空 {cleared} 行 CCIP 特征、重置 {reset_rows} 条完成标记{backup_note}；"
+                "可以重新提取 CCIP 角色特征"
+            )
+        self.jobs_repo.update(
+            job_id,
+            status="completed",
+            done=reset_rows,
+            total=reset_rows,
+            message=message,
+            summary={
+                "cleared_vectors": cleared,
+                "reset_rows": reset_rows,
+                "backup": str(backup) if backup is not None else None,
+            },
         )
 
     def submit_provenance_scan_job(
@@ -639,10 +748,22 @@ class JobManager:
                 )
             )
 
-        if "ccip" not in busy_kinds and self.task_state.pending_for_ccip(
-            scope_row_ids=scope_row_ids,
-            skip_completed=True,
-            limit=1,
+        # CCIP reads character_crop_json produced by the vision stage; queue it only once
+        # no vision work is left, otherwise the crops are missing and it degrades to whole
+        # images (silently, with a low-quality vector already marked as done).
+        if (
+            "ccip" not in busy_kinds
+            and not self.task_state.pending_for_vision(
+                min_version=VISION_META_VERSION,
+                scope_row_ids=scope_row_ids,
+                skip_completed=True,
+                limit=1,
+            )
+            and self.task_state.pending_for_ccip(
+                scope_row_ids=scope_row_ids,
+                skip_completed=True,
+                limit=1,
+            )
         ):
             added.append(
                 self.submit_ccip_job(
@@ -1306,12 +1427,20 @@ class JobManager:
             )
             return
 
+        # Rows without a crop box fall back to whole-image features. Surface the count so a
+        # silent quality drop stays traceable instead of showing up only in retrieval quality.
+        missing_crop = sum(1 for item in pending if not item[4])
+        load_note = (
+            f"；其中 {missing_crop} 张缺少角色裁剪框，将以整图特征代替"
+            if missing_crop
+            else ""
+        )
         self.jobs_repo.update(
             job_id,
             status="running",
             done=0,
             total=total,
-            message=f"正在加载 CCIP 角色编码器（共 {total} 张待处理）…",
+            message=f"正在加载 CCIP 角色编码器（共 {total} 张待处理）{load_note}",
         )
         self._free_vram_for_worker()
 
@@ -1343,7 +1472,7 @@ class JobManager:
                 self.task_state.mark_ccip_done([(item[1], item[0], item[2]) for item in loaded])
                 updated += len(loaded)
                 if updated % 128 == 0:
-                    self.vectors.flush()
+                    self.vectors.flush_ccip()
                 processed = min(total, start + len(chunk))
                 self.jobs_repo.update(
                     job_id,
@@ -1352,15 +1481,20 @@ class JobManager:
                     message=f"正在提取 CCIP 角色特征 {processed}/{total}",
                 )
             if updated > 0:
-                self.vectors.flush()
+                self.vectors.flush_ccip()
             status = "stopped" if self._stop_event.is_set() else "completed"
+            crop_note = f"（{missing_crop} 张缺裁剪框，用整图代替）" if missing_crop else ""
             self.jobs_repo.update(
                 job_id,
                 status=status,
                 done=updated,
                 total=total,
-                message=f"CCIP 角色特征提取完成：更新 {updated} 张，失败 {failed} 张",
-                summary={"updated": updated, "failed": failed},
+                message=f"CCIP 角色特征提取完成：更新 {updated} 张，失败 {failed} 张{crop_note}",
+                summary={
+                    "updated": updated,
+                    "failed": failed,
+                    "missing_crop": missing_crop,
+                },
             )
         except Exception as exc:
             self.jobs_repo.update(

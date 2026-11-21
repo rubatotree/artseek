@@ -454,7 +454,12 @@ class TestStageDSearchAndWebAPI(unittest.TestCase):
                     )
                     self.assertEqual(res_fill.status_code, 200)
                     added = res_fill.json()["added"]
-                    self.assertEqual(len(added), 3)  # retag, vision_enrich, ccip
+                    # CCIP is gated on the vision crops, so auto-fill queues only these two.
+                    self.assertEqual(len(added), 2)  # retag, vision_enrich
+
+                    blocked = client.post("/api/jobs/ccip", json={})
+                    self.assertEqual(blocked.status_code, 409)
+                    self.assertIn("视觉属性", blocked.json()["detail"])
 
                     # Auto-fill again immediately should add 0 duplicates
                     res_fill2 = client.post(
@@ -467,18 +472,18 @@ class TestStageDSearchAndWebAPI(unittest.TestCase):
                     q_ids = [j["id"] for j in q0["queued"]]
                     self.assertEqual(q_ids, added)
 
-                    # Move last queued item (ccip) up once
-                    mv = client.post(f"/api/jobs/{added[2]}/move", json={"direction": "up"})
+                    # Move last queued item (vision_enrich) up once
+                    mv = client.post(f"/api/jobs/{added[1]}/move", json={"direction": "up"})
                     self.assertEqual(mv.status_code, 200)
                     self.assertTrue(mv.json()["moved"])
                     after_mv = [j["id"] for j in mv.json()["queue"]["queued"]]
-                    self.assertEqual(after_mv, [added[0], added[2], added[1]])
+                    self.assertEqual(after_mv, [added[1], added[0]])
 
                     # Delete queued item
-                    dl = client.delete(f"/api/jobs/{added[2]}")
+                    dl = client.delete(f"/api/jobs/{added[1]}")
                     self.assertEqual(dl.status_code, 200)
                     after_del = [j["id"] for j in dl.json()["queue"]["queued"]]
-                    self.assertEqual(after_del, [added[0], added[1]])
+                    self.assertEqual(after_del, [added[0]])
 
                     # Clear remaining queued jobs via stop so teardown is instant
                     client.post("/api/jobs/stop")

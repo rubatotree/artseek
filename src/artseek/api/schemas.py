@@ -488,6 +488,16 @@ class VisionTaskRequest(BaseModel):
     limit: int | None = Field(default=None, ge=1, le=200_000)
 
 
+class CcipTaskRequest(VisionTaskRequest):
+    """CCIP needs `character_crop_json`; set this to accept whole-image fallback."""
+
+    allow_incomplete_vision: bool = False
+
+
+class CcipResetRequest(BaseModel):
+    folder_keys: list[str] | None = None
+
+
 class SingleRetagRequest(BaseModel):
     backend: str | None = None
 

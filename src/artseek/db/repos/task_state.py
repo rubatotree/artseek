@@ -298,6 +298,41 @@ class TaskStateRepo:
                 [(pid, img_id, chash, now) for pid, img_id, chash in entries],
             )
 
+    def reset_ccip(self, *, scope_row_ids: Sequence[int] | None = None) -> int:
+        """Clear `ccip_done` so the next CCIP job recomputes the affected rows.
+
+        Returns the number of task-state rows actually flipped back to pending.
+        """
+        now = int(time.time())
+        with self.db.write_tx() as conn:
+            if scope_row_ids is None:
+                cur = conn.execute(
+                    """
+                    UPDATE image_task_state
+                    SET ccip_done = 0, updated_at = ?
+                    WHERE ccip_done <> 0
+                    """,
+                    (now,),
+                )
+                return int(cur.rowcount or 0)
+            ids = [int(r) for r in dict.fromkeys(scope_row_ids)]
+            if not ids:
+                return 0
+            total = 0
+            for chunk in range(0, len(ids), _SQL_CHUNK):
+                batch = ids[chunk : chunk + _SQL_CHUNK]
+                cur = conn.execute(
+                    f"""
+                    UPDATE image_task_state
+                    SET ccip_done = 0, updated_at = ?
+                    WHERE ccip_done <> 0
+                      AND image_id IN ({",".join("?" for _ in batch)})
+                    """,
+                    (now, *batch),
+                )
+                total += int(cur.rowcount or 0)
+            return total
+
     def mark_caption_done(self, image_id: int) -> None:
         now = int(time.time())
         with self.db.write_tx() as conn:

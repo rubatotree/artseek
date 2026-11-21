@@ -283,6 +283,23 @@ class VectorIndex:
             self._ccip[ids] = vecs
             self._ccip_dirty = True
 
+    def clear_ccip_rows(self, row_ids: Sequence[int] | np.ndarray) -> int:
+        """Zero CCIP vectors for `row_ids` only; visual/descriptor channels are untouched."""
+        ids = np.asarray(row_ids, dtype=np.int64)
+        if ids.size == 0:
+            return 0
+        with self._lock:
+            ccip_mat = self._ensure_ccip_loaded()
+            if ccip_mat is None or ccip_mat.ndim != 2:
+                return 0
+            valid = ids[(ids >= 0) & (ids < ccip_mat.shape[0])]
+            if valid.size == 0:
+                return 0
+            self._cuda_ccip = None
+            ccip_mat[valid] = 0.0
+            self._ccip_dirty = True
+            return int(valid.size)
+
     def zero_rows(self, row_ids: Sequence[int] | np.ndarray) -> None:
         ids = np.asarray(row_ids, dtype=np.int64)
         if ids.size == 0:
@@ -344,6 +361,19 @@ class VectorIndex:
                 self._ccip_dirty = False
             self._dirty = False
             return n
+
+    def flush_ccip(self) -> None:
+        """Persist only the CCIP channel, leaving visual/descriptor files untouched."""
+        with self._lock:
+            if not self._ccip_dirty or self._ccip is None or not self.ccip_path:
+                return
+            n = min(self._count, int(self._ccip.shape[0]))
+            cdim = self._ccip_dim or int(self._ccip.shape[1])
+            if n > 0 and cdim > 0:
+                _save_npy_atomic(self.ccip_path, self._ccip[:n])
+            elif cdim > 0:
+                _save_npy_atomic(self.ccip_path, np.zeros((0, cdim), dtype=np.float32))
+            self._ccip_dirty = False
 
     def compact(self, live_row_ids_in_order: Sequence[int] | np.ndarray) -> int:
         """Pack active rows densely into [0..M-1] matching the caller's new 0-based IDs."""
