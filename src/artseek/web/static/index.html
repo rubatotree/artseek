@@ -138,46 +138,91 @@
     }
     .side-tab:hover { transform: none; }
     .side-tab.is-active { background: var(--rose-soft); color: #8a5268; }
-    .advanced-options { display: grid; gap: 14px; color: var(--muted); font-size: 13px; }
-    .advanced-options label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .advanced-options input[type="range"] { flex: 1; min-width: 80px; }
-    .model-block {
-      display: grid; gap: 8px; padding-top: 4px;
-      border-top: 1px solid var(--line);
+    .advanced-options { display: grid; gap: 10px; color: var(--ink); font-size: 12.5px; }
+    .advanced-options label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; cursor: pointer; }
+    .advanced-options input[type="checkbox"] {
+      width: 15px; height: 15px; margin: 0; accent-color: #b85f7e; cursor: pointer; flex: 0 0 auto;
     }
+    .advanced-options input[type="range"] {
+      flex: 1; min-width: 80px; accent-color: #b85f7e; cursor: pointer;
+    }
+    .adv-card {
+      display: grid; gap: 9px; padding: 11px 12px;
+      border: 1px solid #efe7ec; border-radius: 14px; background: #fcf9fb;
+    }
+    .adv-card-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .adv-card-title { color: var(--ink); font-size: 12.5px; font-weight: 700; }
+    .adv-divider { height: 1px; background: #efe7ec; margin: 2px 0; }
+    .adv-range-row {
+      display: flex; align-items: center; gap: 8px;
+      padding-top: 2px; color: var(--muted); font-size: 12px;
+    }
+    .adv-range-val {
+      min-width: 24px; text-align: right; color: #8a5268;
+      font-weight: 650; font-variant-numeric: tabular-nums;
+    }
+    .adv-inline-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      color: var(--ink); font-size: 12.5px;
+    }
+    .adv-inline-control { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+    .adv-action-btn {
+      width: 100%; padding: 8px 12px; border: 1px solid #e8d5de; border-radius: 10px;
+      background: #fff; color: #7a4b5e; font: 600 12.5px/1.2 inherit; text-align: center;
+    }
+    .adv-action-btn:hover { background: #fff7fa; border-color: #d9a8ba; }
+    .model-block { display: grid; gap: 8px; }
     .model-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    .model-state { color: #8a5268; font-size: 12px; font-weight: 650; }
-    .model-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
-    .storage-block {
-      display: grid; gap: 10px; padding-top: 8px;
-      border-top: 1px solid var(--line);
+    .model-state {
+      padding: 2px 8px; border-radius: 999px; background: var(--rose-soft);
+      color: #8a5268; font-size: 11px; font-weight: 650;
     }
-    .rating-gate-block {
-      display: grid; gap: 6px; padding-top: 8px;
-      border-top: 1px solid var(--line);
-    }
-    .rating-gate-field { justify-content: space-between; }
-    .rating-gate-field > span { color: var(--ink); font-weight: 650; }
-    .rating-gate-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
-    .storage-block .storage-title { color: var(--ink); font-weight: 650; }
+    .model-hint { margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+    .model-hint:empty { display: none; }
+    .storage-block { display: grid; gap: 9px; }
+    .rating-gate-block { display: grid; gap: 6px; }
+    .rating-gate-field { justify-content: space-between; cursor: default !important; }
+    .rating-gate-field > span { color: var(--ink); font-weight: 600; font-size: 12.5px; }
+    .storage-block .storage-title { color: var(--ink); font-size: 12.5px; font-weight: 700; }
     .storage-field { display: grid; gap: 4px; }
+    .storage-field label { color: var(--muted); font-size: 11.5px; font-weight: 500; cursor: default; }
     .storage-path-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; }
     .storage-field input[type="text"] {
-      width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 10px;
-      padding: 7px 8px; color: var(--ink); background: #fff; font: 12px/1.2 inherit;
+      width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 9px;
+      padding: 6px 9px; color: var(--ink); background: #fff; font: 11.5px/1.25 inherit;
     }
-    .storage-path-row button { padding: 7px 10px; font-size: 12px; white-space: nowrap; }
+    .storage-field input[type="text"]:focus {
+      border-color: #c97a98; box-shadow: 0 0 0 2px rgba(201,122,152,.16);
+    }
+    .storage-path-row button {
+      padding: 6px 10px; border: 1px solid var(--line); border-radius: 9px;
+      background: #fff; color: #665866; font-size: 11.5px; font-weight: 600; white-space: nowrap;
+    }
+    .storage-path-row button:hover:not(:disabled) {
+      border-color: #dfc2cd; background: #fefbfd; color: #8a5268;
+    }
     .storage-path-row button:disabled,
     .storage-actions button:disabled {
       opacity: .45; cursor: default; box-shadow: none; transform: none;
     }
-    .storage-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-    .storage-actions button { padding: 7px 10px; font-size: 12px; }
-    .storage-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .storage-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding-top: 2px; }
+    .storage-actions button {
+      width: 100%; padding: 8px 12px; border: 1px solid #ecd4de; border-radius: 10px;
+      background: var(--rose-soft); color: #8a5268; font-size: 12.5px; font-weight: 650;
+    }
+    .storage-actions button:hover:not(:disabled) { background: #f5dce6; border-color: #dfbac8; }
+    .storage-hint { margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+    .storage-hint:empty { display: none; }
     .notes-close-pane { display: none; }
     .advanced-options input[type="number"] {
-      width: 64px; border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px;
-      color: var(--ink); background: #fff; font: inherit; font-size: 13px;
+      width: 56px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px;
+      color: var(--ink); background: #fff; font: inherit; font-size: 12.5px;
+      text-align: center; font-variant-numeric: tabular-nums;
+    }
+    .advanced-options input[type="number"]:focus {
+      outline: none; border-color: #c97a98; box-shadow: 0 0 0 2px rgba(201,122,152,.16);
     }
     #tab-scope[hidden], #tab-advanced[hidden], #tab-collections[hidden] { display: none; }
     .collections-panel { display: grid; gap: 10px; }
@@ -2099,34 +2144,46 @@
           </div>
         </div>
         <div id="tab-advanced" class="advanced-options" role="tabpanel" aria-labelledby="tab-btn-advanced" hidden>
-          <div class="storage-block">
-            <div class="storage-title">图库扫描与标注</div>
-            <button class="secondary" id="provenance-tools" type="button" title="管理图库扫描、打标与视觉特征任务队列">图库扫描与标注</button>
+          <div class="adv-card">
+            <div class="adv-card-head">
+              <span class="adv-card-title">图库扫描与标注</span>
+            </div>
+            <button class="adv-action-btn" id="provenance-tools" type="button" title="管理图库扫描、打标与视觉特征任务队列">打开任务队列</button>
           </div>
-          <label><input id="use-llm" type="checkbox" checked> 本地大模型理解条件</label>
-          <label><input id="strict-tags" type="checkbox"> 细节标签至少命中一项</label>
-          <label title="相同文件、相同内容哈希或相同感知哈希的图片只保留最先检索到的"><input id="dedupe" type="checkbox" checked> 去除重复</label>
-          <label>每批 <input id="limit" type="range" min="12" max="80" step="4" value="40"> <span id="limit-value">40</span></label>
-          <div class="model-block">
+          <div class="adv-card">
+            <div class="adv-card-title">检索选项</div>
+            <label><input id="use-llm" type="checkbox" checked> 本地大模型理解条件</label>
+            <label><input id="strict-tags" type="checkbox"> 细节标签至少命中一项</label>
+            <label title="相同文件、相同内容哈希或相同感知哈希的图片只保留最先检索到的"><input id="dedupe" type="checkbox" checked> 去除重复</label>
+            <label class="adv-range-row">
+              <span>每批</span>
+              <input id="limit" type="range" min="12" max="80" step="4" value="40">
+              <span id="limit-value" class="adv-range-val">40</span>
+            </label>
+          </div>
+          <div class="adv-card model-block">
             <div class="model-head">
               <label><input id="model-loaded" type="checkbox"> 图文向量模型</label>
               <span id="model-state" class="model-state">未载入</span>
             </div>
             <p id="model-hint" class="model-hint"></p>
-            <label title="0 表示保持载入，直到手动卸载">自动卸载 <input id="auto-unload" type="number" min="0" max="1440" step="1" value="10"> 分钟</label>
-          </div>
-          <div class="rating-gate-block">
-            <label class="rating-gate-field" for="rating-gate">
-              <span>显示类型</span>
-              <select id="rating-gate" class="artseek-select" aria-label="图库显示的分级上限" title="全部：显示所有图片；R15：只显示全年龄与 R15；全年龄：只显示标签为全年龄的图片">
-                <option value="all" selected>全部</option>
-                <option value="r15">R15</option>
-                <option value="safe">全年龄</option>
-              </select>
+            <label class="adv-inline-row" title="0 表示保持载入，直到手动卸载">
+              <span>自动卸载</span>
+              <span class="adv-inline-control"><input id="auto-unload" type="number" min="0" max="1440" step="1" value="10"> 分钟</span>
             </label>
-            <p class="rating-gate-hint" id="rating-gate-hint">全部显示所有图片；R15 只显示全年龄与 R15；全年龄只显示标签为全年龄的图片。</p>
+            <div class="adv-divider"></div>
+            <div class="rating-gate-block">
+              <label class="rating-gate-field" for="rating-gate">
+                <span>显示类型</span>
+                <select id="rating-gate" class="artseek-select" aria-label="图库显示的分级上限" title="全部：显示所有图片；R15：只显示全年龄与 R15；全年龄：只显示标签为全年龄的图片">
+                  <option value="all" selected>全部</option>
+                  <option value="r15">R15</option>
+                  <option value="safe">全年龄</option>
+                </select>
+              </label>
+            </div>
           </div>
-          <div class="storage-block">
+          <div class="adv-card storage-block">
             <div class="storage-title">存储位置</div>
             <div class="storage-field">
               <label for="qdrant-path">向量库</label>
@@ -3791,6 +3848,11 @@
     }
     function renderVisionBadgesHTML(item) {
       if (!item) return '';
+      const hasVisionMeta = Number(item.vision_meta_version || 0) > 0
+        || Boolean(item.media_type || item.rating);
+      if (!hasVisionMeta) {
+        return '<div class="provenance-row"><span>视觉属性</span><div class="provenance-tags"><span class="provenance-tag">无标注</span></div></div>';
+      }
       const badges = [];
       const mediaNames = {
         illustration: '插画',
@@ -3804,10 +3866,12 @@
       if (item.is_monochrome) badges.push('黑白/线稿');
       if (item.is_ai === true || item.is_ai === 1) badges.push('AI生成');
       else if (item.is_ai === false || item.is_ai === 0) badges.push('手绘');
-      if (Number.isFinite(item.aesthetic_score)) {
+      if (typeof item.aesthetic_score === 'number' && Number.isFinite(item.aesthetic_score)) {
         badges.push(`美学 ${Math.round(Number(item.aesthetic_score) * 100)}%`);
       }
-      if (!badges.length) return '';
+      if (!badges.length) {
+        return '<div class="provenance-row"><span>视觉属性</span><div class="provenance-tags"><span class="provenance-tag">无标注</span></div></div>';
+      }
       const markup = badges.map((b) => `<span class="provenance-tag">${escapeHtml(b)}</span>`).join('');
       return `<div class="provenance-row"><span>视觉属性</span><div class="provenance-tags">${markup}</div></div>`;
     }
@@ -3992,10 +4056,7 @@
         <div class="task-section">
           <div class="task-section-head">
             <strong>图库状态概览</strong>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <span class="task-section-sub">${escapeHtml(scopeHint)}</span>
-              <button type="button" class="task-mini-btn" data-bg-job="purge-legacy" title="加入队列：清理旧版错误自动标签及旧版视觉属性（保留手动与 Pixiv/X 来源标签）">清理旧版错误标签</button>
-            </div>
+            <span class="task-section-sub">${escapeHtml(scopeHint)}</span>
           </div>
           <div class="provenance-stat-grid">
             <div class="provenance-stat"><b>${Number(counts.total || 0).toLocaleString()}</b>已索引图片</div>

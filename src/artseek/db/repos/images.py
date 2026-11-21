@@ -186,6 +186,14 @@ class ImageRepo:
     ) -> dict[str, Any]:
         tags, scores = tags_entry if tags_entry is not None else ([], {})
         keys = set(row.keys())
+        media_type = row["media_type"] if "media_type" in keys else None
+        rating = row["rating"] if "rating" in keys else None
+        vision_ver = (
+            int(row["vision_meta_version"] or 0)
+            if "vision_meta_version" in keys and row["vision_meta_version"] is not None
+            else 0
+        )
+        has_vision = bool(vision_ver > 0 or media_type is not None or rating is not None)
         return {
             "row_id": int(row["id"]),
             "id": str(row["point_id"]),
@@ -207,29 +215,30 @@ class ImageRepo:
             "tag_scores": dict(scores),
             "caption": _decode_caption(row["caption_json"]),
             "descriptor_text": str(row["descriptor_text"] or ""),
-            "media_type": row["media_type"] if "media_type" in keys else None,
-            "rating": row["rating"] if "rating" in keys else None,
+            "vision_meta_version": vision_ver,
+            "media_type": media_type,
+            "rating": rating,
             "is_monochrome": (
                 bool(row["is_monochrome"])
-                if "is_monochrome" in keys and row["is_monochrome"] is not None
+                if has_vision and "is_monochrome" in keys and row["is_monochrome"] is not None
                 else None
             ),
             "is_ai": (
                 bool(row["is_ai"])
-                if "is_ai" in keys and row["is_ai"] is not None
+                if has_vision and "is_ai" in keys and row["is_ai"] is not None
                 else None
             ),
             "ai_score": (
                 float(row["ai_score"])
-                if "ai_score" in keys and row["ai_score"] is not None
+                if has_vision and "ai_score" in keys and row["ai_score"] is not None
                 else None
             ),
             "aesthetic_score": (
                 float(row["aesthetic_score"])
-                if "aesthetic_score" in keys and row["aesthetic_score"] is not None
+                if has_vision and "aesthetic_score" in keys and row["aesthetic_score"] is not None
                 else None
             ),
-            "shot_type": row["shot_type"] if "shot_type" in keys else None,
+            "shot_type": row["shot_type"] if has_vision and "shot_type" in keys else None,
             "focal_x": (
                 float(row["focal_x"])
                 if "focal_x" in keys and row["focal_x"] is not None
@@ -1513,7 +1522,14 @@ class ImageRepo:
                     OR (COALESCE(ts.vision_done, 0) > 0 AND COALESCE(ts.vision_done, 0) < ?)
                     OR (
                       COALESCE(i.vision_meta_version, 0) < ?
-                      AND (i.media_type IS NOT NULL OR i.rating IS NOT NULL)
+                      AND (
+                        i.media_type IS NOT NULL
+                        OR i.rating IS NOT NULL
+                        OR i.is_ai IS NOT NULL
+                        OR i.aesthetic_score IS NOT NULL
+                        OR i.is_monochrome IS NOT NULL
+                        OR i.shot_type IS NOT NULL
+                      )
                     )
                   )
                 """,
@@ -1551,15 +1567,15 @@ class ImageRepo:
                     UPDATE images
                     SET media_type = NULL,
                         rating = NULL,
-                        is_monochrome = 0,
-                        monochrome_score = 0.0,
-                        is_ai = 0,
-                        ai_source = '',
-                        ai_score = 0.0,
-                        aesthetic_score = 0.0,
-                        shot_type = '',
-                        focal_x = 0.5,
-                        focal_y = 0.35,
+                        is_monochrome = NULL,
+                        monochrome_score = NULL,
+                        is_ai = NULL,
+                        ai_source = NULL,
+                        ai_score = NULL,
+                        aesthetic_score = NULL,
+                        shot_type = NULL,
+                        focal_x = NULL,
+                        focal_y = NULL,
                         character_crop_json = NULL,
                         vision_meta_version = 0,
                         vision_meta_at = NULL

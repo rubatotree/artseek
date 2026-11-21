@@ -652,7 +652,9 @@ class TestStageDSearchAndWebAPI(unittest.TestCase):
             ):
                 home = client.get("/")
                 self.assertEqual(home.status_code, 200)
-                self.assertIn("清理旧版错误标签", home.text)
+                self.assertIn("+ 清理旧版标签", home.text)
+                self.assertNotIn("清理旧版错误标签", home.text)
+                self.assertIn("无标注", home.text)
 
                 purge = client.post("/api/jobs/purge-legacy-tags")
                 self.assertEqual(purge.status_code, 200)
@@ -701,12 +703,20 @@ class TestStageDSearchAndWebAPI(unittest.TestCase):
                 self.assertIn("keep_new_tag", new_tags)
                 self.assertNotIn("rating:r18", new_tags)
                 row_new = conn.execute(
-                    "SELECT rating, is_ai, vision_meta_version FROM images WHERE id = ?",
+                    "SELECT rating, is_ai, aesthetic_score, vision_meta_version "
+                    "FROM images WHERE id = ?",
                     (rec_ids[1],),
                 ).fetchone()
                 self.assertIsNone(row_new["rating"])
-                self.assertEqual(row_new["is_ai"], 0)
+                self.assertIsNone(row_new["is_ai"])
+                self.assertIsNone(row_new["aesthetic_score"])
                 self.assertEqual(row_new["vision_meta_version"], 0)
+                payload_new = app.state.container.images.get_payloads_by_point_ids(
+                    ["new_pid"]
+                )["new_pid"]
+                self.assertIsNone(payload_new["is_ai"])
+                self.assertIsNone(payload_new["aesthetic_score"])
+                self.assertEqual(payload_new["vision_meta_version"], 0)
                 ts_new = conn.execute(
                     "SELECT vision_done FROM image_task_state WHERE point_id = 'new_pid'"
                 ).fetchone()

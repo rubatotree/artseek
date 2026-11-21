@@ -89,6 +89,7 @@ def gallery_result(
         "tags": list(payload.get("tags") or []),
         "tag_hits": [],
         "caption": payload.get("caption"),
+        "vision_meta_version": payload.get("vision_meta_version"),
         "media_type": payload.get("media_type"),
         "rating": payload.get("rating"),
         "is_monochrome": payload.get("is_monochrome"),
