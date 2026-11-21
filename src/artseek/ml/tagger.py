@@ -5,7 +5,6 @@ from __future__ import annotations
 import csv
 import json
 import math
-import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -180,6 +179,12 @@ class WDTagger:
         self._input_h, self._input_w, _, self._interp_mode, self._mean, self._std = (
             self._extract_preprocess_params(self.data_config)
         )
+        self._mean_tensor = torch.tensor(
+            self._mean, device=self.device, dtype=torch.float32
+        ).view(1, 3, 1, 1)
+        self._std_tensor = torch.tensor(
+            self._std, device=self.device, dtype=torch.float32
+        ).view(1, 3, 1, 1)
         allowed = [
             cat == 0 or (self.config.include_character_tags and cat == 4)
             for cat in self.categories
@@ -241,13 +246,26 @@ class WDTagger:
                 chw, target_h, target_w, pad_rgb=(1.0, 1.0, 1.0), mode=mode
             )
             prepared.append(chw)
-            time.sleep(0)
 
         batch = torch.cat(prepared, dim=0)
         batch = batch[:, [2, 1, 0], :, :]
-        mean = torch.tensor(self._mean, device=self.device, dtype=torch.float32).view(1, 3, 1, 1)
-        std = torch.tensor(self._std, device=self.device, dtype=torch.float32).view(1, 3, 1, 1)
-        batch = (batch - mean) / std
+        mean_tensor = getattr(self, "_mean_tensor", None)
+        std_tensor = getattr(self, "_std_tensor", None)
+        if mean_tensor is None or std_tensor is None:
+            mean_tensor = torch.tensor(
+                self._mean, device=self.device, dtype=torch.float32
+            ).view(1, 3, 1, 1)
+            std_tensor = torch.tensor(
+                self._std, device=self.device, dtype=torch.float32
+            ).view(1, 3, 1, 1)
+            self._mean_tensor = mean_tensor
+            self._std_tensor = std_tensor
+        elif mean_tensor.device != self.device:
+            mean_tensor = mean_tensor.to(self.device)
+            std_tensor = std_tensor.to(self.device)
+            self._mean_tensor = mean_tensor
+            self._std_tensor = std_tensor
+        batch = (batch - mean_tensor) / std_tensor
         return batch.to(dtype=self.dtype)
 
     def predict(
@@ -265,11 +283,6 @@ class WDTagger:
             masked = probabilities.masked_fill(~self._allowed_mask.unsqueeze(0), -1.0)
             k = min(max(1, int(self.config.max_tags)), masked.shape[-1])
             top_scores, top_indices = torch.topk(masked, k=k, dim=-1, largest=True, sorted=True)
-            if top_scores.is_cuda:
-                ev = torch.cuda.Event()
-                ev.record()
-                while not ev.query():
-                    time.sleep(0.001)
             scores_cpu = top_scores.cpu().tolist()
             indices_cpu = top_indices.cpu().tolist()
 
@@ -435,6 +448,12 @@ class CamieTaggerV2:
         state = load_file(str(weights_path), device="cpu")
         net.load_state_dict(state, strict=True)
         self.model = net.eval().to(device=self.device, dtype=self.dtype)
+        self._mean_tensor = torch.tensor(
+            self._MEAN, device=self.device, dtype=torch.float32
+        ).view(1, 3, 1, 1)
+        self._std_tensor = torch.tensor(
+            self._STD, device=self.device, dtype=torch.float32
+        ).view(1, 3, 1, 1)
 
     def close(self) -> None:
         model = getattr(self, "model", None)
@@ -462,11 +481,24 @@ class CamieTaggerV2:
                 mode="bicubic",
             )
             prepared.append(chw)
-            time.sleep(0)
         batch = torch.cat(prepared, dim=0)
-        mean = torch.tensor(self._MEAN, device=self.device, dtype=torch.float32).view(1, 3, 1, 1)
-        std = torch.tensor(self._STD, device=self.device, dtype=torch.float32).view(1, 3, 1, 1)
-        return ((batch - mean) / std).to(dtype=self.dtype)
+        mean_tensor = getattr(self, "_mean_tensor", None)
+        std_tensor = getattr(self, "_std_tensor", None)
+        if mean_tensor is None or std_tensor is None:
+            mean_tensor = torch.tensor(
+                self._MEAN, device=self.device, dtype=torch.float32
+            ).view(1, 3, 1, 1)
+            std_tensor = torch.tensor(
+                self._STD, device=self.device, dtype=torch.float32
+            ).view(1, 3, 1, 1)
+            self._mean_tensor = mean_tensor
+            self._std_tensor = std_tensor
+        elif mean_tensor.device != self.device:
+            mean_tensor = mean_tensor.to(self.device)
+            std_tensor = std_tensor.to(self.device)
+            self._mean_tensor = mean_tensor
+            self._std_tensor = std_tensor
+        return ((batch - mean_tensor) / std_tensor).to(dtype=self.dtype)
 
     def predict(
         self, images: Sequence[Image.Image | np.ndarray]
@@ -479,11 +511,6 @@ class CamieTaggerV2:
             probs = torch.sigmoid(logits.float())
             top_k = min(256, probs.shape[-1])
             top_scores, top_indices = torch.topk(probs, k=top_k, dim=-1, largest=True, sorted=True)
-            if top_scores.is_cuda:
-                ev = torch.cuda.Event()
-                ev.record()
-                while not ev.query():
-                    time.sleep(0.001)
             scores_cpu = top_scores.cpu().tolist()
             indices_cpu = top_indices.cpu().tolist()
 
@@ -566,6 +593,9 @@ class PixAITaggerV09:
     """PixAI Tagger v0.9 via ONNX Runtime CUDA (448x448, character + IP mapping)."""
 
     model_versions: dict[str, int] = {"pixai_v09": 1}
+    # FP32 1.2GB ONNX model hits WDDM shared-memory paging at batch >= 16 on 8GB GPUs;
+    # micro-batching at 4 keeps VRAM bounded while maximizing throughput.
+    _MAX_MICRO_BATCH = 4
 
     def __init__(self, config: TaggerConfig, runtime: EmbeddingConfig):
         self.config = config
@@ -583,6 +613,11 @@ class PixAITaggerV09:
             outputs[-1].name,
         )
         self.names, self.categories, self.char_ips = self._load_tags(tags_path)
+        self._use_cuda_iobinding = (
+            self.device.type == "cuda"
+            and hasattr(self.session, "io_binding")
+            and "CUDAExecutionProvider" in self.session.get_providers()
+        )
 
     @staticmethod
     def _load_tags(path: Path) -> tuple[list[str], list[int], list[tuple[str, ...]]]:
@@ -623,63 +658,108 @@ class PixAITaggerV09:
             tensors.append(arr.transpose(2, 0, 1))
         return np.ascontiguousarray(np.stack(tensors, axis=0), dtype=np.float32)
 
+    def _preprocess_batch_gpu(
+        self, images: Sequence[Image.Image | np.ndarray]
+    ) -> torch.Tensor:
+        prepared: list[torch.Tensor] = []
+        for item in images:
+            chw = _to_rgb_chw_float(item, self.device, non_blocking=True)
+            if int(chw.shape[-2]) != 448 or int(chw.shape[-1]) != 448:
+                chw = F.interpolate(
+                    chw,
+                    size=(448, 448),
+                    mode="bilinear",
+                    align_corners=False,
+                    antialias=True,
+                )
+            prepared.append(chw)
+        batch = torch.cat(prepared, dim=0)
+        return ((batch - 0.5) / 0.5).contiguous()
+
+    def _run_chunk(self, chunk: Sequence[Image.Image | np.ndarray]) -> np.ndarray:
+        if getattr(self, "_use_cuda_iobinding", False):
+            tensor = self._preprocess_batch_gpu(chunk)
+            torch.cuda.current_stream(self.device).synchronize()
+            io_binding = self.session.io_binding()
+            io_binding.bind_input(
+                name=self._input_name,
+                device_type="cuda",
+                device_id=self.device.index or 0,
+                element_type=np.float32,
+                shape=tuple(tensor.shape),
+                buffer_ptr=tensor.data_ptr(),
+            )
+            io_binding.bind_output(self._output_name, device_type="cpu")
+            self.session.run_with_iobinding(io_binding)
+            outputs = io_binding.copy_outputs_to_cpu()[0]
+        else:
+            batch = self._preprocess_batch(chunk)
+            outputs = self.session.run([self._output_name], {self._input_name: batch})[0]
+        arr = np.asarray(outputs, dtype=np.float32)
+        if float(arr.min()) < 0.0 or float(arr.max()) > 1.0:
+            arr = 1.0 / (1.0 + np.exp(-np.clip(arr, -30.0, 30.0)))
+        return arr
+
     def predict(
         self, images: Sequence[Image.Image | np.ndarray]
     ) -> list[PredictedTags]:
         if not images:
             return []
-        batch = self._preprocess_batch(images)
-        outputs = self.session.run([self._output_name], {self._input_name: batch})[0]
-        # deepghs/pixai-tagger-v0.9-onnx outputs probabilities or logits; sigmoid if outside [0, 1]
-        arr = np.asarray(outputs, dtype=np.float32)
-        if float(arr.min()) < 0.0 or float(arr.max()) > 1.0:
-            arr = 1.0 / (1.0 + np.exp(-np.clip(arr, -30.0, 30.0)))
 
         gen_th = min(0.35, float(self.config.general_threshold))
         char_th = max(0.65, float(self.config.character_threshold))
         max_tags = max(1, int(self.config.max_tags))
+        top_k = max_tags * 2
 
         results: list[PredictedTags] = []
-        for row in arr:
-            order = np.argsort(-row)[: max_tags * 2]
-            selected_tags: list[str] = []
-            selected_scores: dict[str, float] = {}
-            selected_cats: dict[str, int] = {}
-            inferred_ips: dict[str, float] = {}
+        for start in range(0, len(images), self._MAX_MICRO_BATCH):
+            chunk = images[start : start + self._MAX_MICRO_BATCH]
+            arr = self._run_chunk(chunk)
+            for row in arr:
+                n_cols = row.shape[0]
+                if n_cols > top_k:
+                    part = np.argpartition(-row, top_k)[:top_k]
+                    order = part[np.argsort(-row[part])]
+                else:
+                    order = np.argsort(-row)
+                selected_tags: list[str] = []
+                selected_scores: dict[str, float] = {}
+                selected_cats: dict[str, int] = {}
+                inferred_ips: dict[str, float] = {}
 
-            for idx in order.tolist():
-                prob = float(row[idx])
-                cat = self.categories[idx]
-                if cat == CAT_CHARACTER and not self.config.include_character_tags:
-                    continue
-                th = char_th if cat == CAT_CHARACTER else gen_th
-                if prob < th:
-                    continue
-                name = normalize_tag(self.names[idx])
-                if not name:
-                    continue
-                selected_tags.append(name)
-                selected_scores[name] = round(prob, 4)
-                selected_cats[name] = cat
-                if cat == CAT_CHARACTER:
-                    for ip in self.char_ips[idx]:
-                        inferred_ips[ip] = max(inferred_ips.get(ip, 0.0), prob)
-                if len(selected_tags) >= max_tags:
-                    break
+                for idx in order.tolist():
+                    prob = float(row[idx])
+                    cat = self.categories[idx]
+                    if cat == CAT_CHARACTER and not self.config.include_character_tags:
+                        continue
+                    th = char_th if cat == CAT_CHARACTER else gen_th
+                    if prob < th:
+                        continue
+                    name = normalize_tag(self.names[idx])
+                    if not name:
+                        continue
+                    selected_tags.append(name)
+                    selected_scores[name] = round(prob, 4)
+                    selected_cats[name] = cat
+                    if cat == CAT_CHARACTER:
+                        for ip in self.char_ips[idx]:
+                            inferred_ips[ip] = max(inferred_ips.get(ip, 0.0), prob)
+                    if len(selected_tags) >= max_tags:
+                        break
 
-            for ip, ip_score in sorted(inferred_ips.items(), key=lambda x: -x[1]):
-                if ip not in selected_scores:
-                    selected_tags.insert(0, ip)
-                    selected_scores[ip] = round(ip_score, 4)
-                    selected_cats[ip] = CAT_COPYRIGHT
+                for ip, ip_score in sorted(inferred_ips.items(), key=lambda x: -x[1]):
+                    if ip not in selected_scores:
+                        selected_tags.insert(0, ip)
+                        selected_scores[ip] = round(ip_score, 4)
+                        selected_cats[ip] = CAT_COPYRIGHT
 
-            results.append(
-                PredictedTags(
-                    tags=selected_tags[:max_tags],
-                    scores=selected_scores,
-                    categories=selected_cats,
+                results.append(
+                    PredictedTags(
+                        tags=selected_tags[:max_tags],
+                        scores=selected_scores,
+                        categories=selected_cats,
+                    )
                 )
-            )
         return results
 
 

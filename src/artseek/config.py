@@ -73,7 +73,7 @@ class TaggerConfig:
     copyright_threshold: float = 0.60
     meta_threshold: float = 0.45
     max_tags: int = 80
-    batch_size: int = 8
+    batch_size: int = 16
     include_character_tags: bool = True
     mcut_enabled: bool = True
     drop_overlap: bool = True
