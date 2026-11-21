@@ -90,6 +90,7 @@ def scan_payloads(
         "authors_backfilled": 0,
     }
     live_hashes: dict[str, str | None] = {}
+    live_paths: dict[str, str] = {}
     for index, (point_id, payload) in enumerate(payloads, start=1):
         if stop_event is not None and stop_event.is_set():
             break
@@ -100,6 +101,9 @@ def scan_payloads(
         if stop_event is not None and stop_event.is_set():
             break
         summary["total"] = max(int(summary["total"]), index)
+        path_value = str(payload.get("path") or "")
+        if path_value:
+            live_paths[point_id] = path_value
         digest = str(payload.get("content_hash") or "") or None
         if only_new and point_id in known:
             known_hash, _updated, known_mtime, known_path = known[point_id]
@@ -114,9 +118,8 @@ def scan_payloads(
             ):
                 summary["skipped"] += 1
                 if progress is not None and (index == 1 or index % 50 == 0):
-                    progress(index, int(summary["total"]), str(payload.get("path") or ""))
+                    progress(index, int(summary["total"]), path_value)
                 continue
-        path_value = str(payload.get("path") or "")
         path = Path(path_value) if path_value else None
         current_path = _path_key(payload) or ""
         before = store.get(point_id)
@@ -174,19 +177,22 @@ def scan_payloads(
             progress(index, int(summary["total"]), path_value)
     if live_hashes:
         summary["stale"] = len(store.stale_points(live_hashes))
-    summary["authors_backfilled"] = _backfill_twitter_authors(store, stop_event)
+    summary["authors_backfilled"] = _backfill_twitter_authors(
+        store, stop_event, live_paths=live_paths
+    )
     return summary
 
 
 def _backfill_twitter_authors(
     store: ProvenanceStore,
     stop_event: threading.Event | None = None,
+    live_paths: dict[str, str] | None = None,
 ) -> int:
     """Recover authors from handles saved in metadata when the API is gone."""
     point_ids = store.point_ids_without_author("twitter")
     if not point_ids:
         return 0
-    known = store.known_points()
+    known: dict[str, tuple[str | None, int, int | None, str | None]] | None = None
     count = 0
     for point_id in point_ids:
         if stop_event is not None and stop_event.is_set():
@@ -194,11 +200,21 @@ def _backfill_twitter_authors(
         record = store.get(point_id)
         if record is None or record.get("author_key"):
             continue
-        raw_path = known.get(point_id, (None, 0, None, None))[3]
-        if not raw_path:
-            continue
-        path = Path(raw_path)
-        if not path.exists():
+        path: Path | None = None
+        live_path = (live_paths or {}).get(point_id)
+        if live_path:
+            candidate = Path(live_path)
+            if candidate.exists():
+                path = candidate
+        if path is None:
+            if known is None:
+                known = store.known_points()
+            raw_path = known.get(point_id, (None, 0, None, None))[3]
+            if raw_path:
+                candidate = Path(raw_path)
+                if candidate.exists():
+                    path = candidate
+        if path is None:
             continue
         status_handles, profile_handles = twitter_authors_from_metadata(path)
         candidates = status_handles.get(str(record.get("source_id") or ""), set())

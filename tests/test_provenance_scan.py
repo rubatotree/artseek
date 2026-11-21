@@ -8,7 +8,7 @@ from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 
 from artseek.provenance.parser import ParsedSource, parse_filename
-from artseek.provenance.scan import scan_payloads
+from artseek.provenance.scan import parse_payload_path, scan_payloads
 from artseek.provenance.store import ProvenanceStore
 
 
@@ -152,6 +152,54 @@ class ProvenanceScanTests(unittest.TestCase):
         )
         self.assertEqual(summary["skipped"], 1)
         self.assertEqual(summary["scanned"], 0)
+
+    def test_twitter_backfill_uses_live_path_when_path_key_is_not_openable(self) -> None:
+        payload = self._payload(self.hashfile, "b" * 64)
+        payload["path_key"] = str(
+            self.root / "nonexistent-key" / self.hashfile.name.casefold()
+        )
+        summary = scan_payloads(self.store, {"p2": payload}.items(), total=1)
+        self.assertEqual(summary["authors_backfilled"], 1)
+        record = self.store.get("p2")
+        self.assertIsNotNone(record)
+        assert record is not None
+        self.assertTrue(record["author_key"])
+        author = self.store.author_summary(str(record["author_key"]))
+        self.assertIsNotNone(author)
+        assert author is not None
+        self.assertEqual(author["name"], "example_artist")
+
+    def test_only_new_twitter_backfill_uses_live_path_when_path_key_is_not_openable(
+        self,
+    ) -> None:
+        payload = self._payload(self.hashfile, "b" * 64)
+        payload["path_key"] = str(
+            self.root / "nonexistent-key" / self.hashfile.name.casefold()
+        )
+        parsed = parse_payload_path(self.hashfile, deep=False)
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.store.upsert_scan(
+            "p2",
+            payload,
+            parsed,
+            path_key=payload["path_key"],
+            origin=parsed.primary.origin,
+        )
+        summary = scan_payloads(
+            self.store, {"p2": payload}.items(), total=1, only_new=True
+        )
+        self.assertEqual(summary["skipped"], 1)
+        self.assertEqual(summary["scanned"], 0)
+        self.assertEqual(summary["authors_backfilled"], 1)
+        record = self.store.get("p2")
+        self.assertIsNotNone(record)
+        assert record is not None
+        self.assertTrue(record["author_key"])
+        author = self.store.author_summary(str(record["author_key"]))
+        self.assertIsNotNone(author)
+        assert author is not None
+        self.assertEqual(author["name"], "example_artist")
 
 
 if __name__ == "__main__":
