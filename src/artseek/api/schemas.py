@@ -262,6 +262,15 @@ class ArtistMergeRequest(BaseModel):
     source: str = ""
 
 
+class ArtistMemberPreference(BaseModel):
+    key: str
+    active: bool = True
+
+
+class ArtistMembersRequest(BaseModel):
+    members: list[ArtistMemberPreference] = Field(default_factory=list, max_length=200)
+
+
 class IndexAddRequest(BaseModel):
     path: str = ""
     paths: list[str] = Field(default_factory=list)

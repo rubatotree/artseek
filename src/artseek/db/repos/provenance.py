@@ -327,6 +327,12 @@ class ProvenanceRepo(ProvenanceStore):
         with self._tx():
             return super().remove_identity(artist_key, platform, value)
 
+    def set_member_preferences(
+        self, artist_key: str, members: Sequence[dict[str, Any]]
+    ) -> str:
+        with self._tx():
+            return super().set_member_preferences(artist_key, members)
+
     def link_authors(
         self,
         alias_key: str,

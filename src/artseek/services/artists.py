@@ -588,6 +588,7 @@ class ArtistService:
                 if cover_item is not None
                 else None
             )
+            entry["cover_explicit"] = bool(explicit_cover) and cover_item is not None
             members = entry.get("members") or []
             entry["pixiv_ids"] = [
                 str(m.get("platform_id") or "")
@@ -723,6 +724,19 @@ class ArtistService:
     def remove_identity(self, author_key: str, kind: str, value: str) -> dict[str, Any]:
         try:
             self.prov.remove_identity(author_key, kind, value)
+        except ValueError as exc:
+            raise ServiceError(400, str(exc)) from exc
+        self.invalidate_cache()
+        summary = self.prov.author_summary(author_key)
+        if summary is None:
+            raise ServiceError(404, "作者不存在")
+        return {"author": summary}
+
+    def set_member_preferences(
+        self, author_key: str, members: Sequence[dict[str, Any]]
+    ) -> dict[str, Any]:
+        try:
+            self.prov.set_member_preferences(author_key, members)
         except ValueError as exc:
             raise ServiceError(400, str(exc)) from exc
         self.invalidate_cache()

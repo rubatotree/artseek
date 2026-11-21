@@ -13,6 +13,7 @@ from ..schemas import (
     ArtistIdentityRemoveRequest,
     ArtistIdentityRequest,
     ArtistImagesRequest,
+    ArtistMembersRequest,
     ArtistMergeRequest,
     ArtistNameRequest,
     SuggestionRequest,
@@ -188,3 +189,16 @@ def merge_author(
     c: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
     return c.artists.merge_author(author_key, request.source)
+
+
+@router.post("/api/authors/{author_key}/members")
+def set_author_members(
+    author_key: str,
+    request: ArtistMembersRequest,
+    c: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    """Reorder an artist's social accounts and toggle which ones are shown."""
+    return c.artists.set_member_preferences(
+        author_key,
+        [item.model_dump() for item in request.members],
+    )

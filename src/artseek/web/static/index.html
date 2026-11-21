@@ -502,6 +502,93 @@
       display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
       font-size: 11px; font-weight: 650;
     }
+    /* Artist name cards: shown above the results when 1–3 authors are filtered. */
+    .filter-artist-cards {
+      display: grid; gap: 10px; margin: 18px 2px 0;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+      animation: artseekPopReveal .2s cubic-bezier(.22,1,.36,1);
+    }
+    .filter-artist-cards[hidden] { display: none; }
+    .artist-namecard {
+      --card-hue: 335;
+      position: relative; isolation: isolate; overflow: hidden;
+      display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 94px;
+      padding: 14px 92px 14px 18px; border: 1px solid #eadfe6; border-radius: 16px;
+      background:
+        radial-gradient(120% 140% at 0% 0%, hsl(var(--card-hue) 70% 97%) 0%, #fff 62%);
+      box-shadow: 0 6px 18px rgba(69, 51, 76, .06);
+    }
+    .artist-namecard.is-loading .artist-namecard-body { opacity: .55; }
+    .artist-namecard-cover {
+      position: absolute; inset: 0 0 0 auto; z-index: -1; width: min(42%, 520px);
+      pointer-events: none;
+    }
+    .artist-namecard-cover img {
+      display: block; width: 100%; height: 100%; object-fit: cover; object-position: center 28%;
+      -webkit-mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,.35) 30%, rgba(0,0,0,.85) 65%, #000 100%);
+      mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,.35) 30%, rgba(0,0,0,.85) 65%, #000 100%);
+      opacity: 0; transition: opacity .35s ease, transform .6s cubic-bezier(.22,1,.36,1);
+    }
+    .artist-namecard-cover img.is-ready { opacity: 1; }
+    .artist-namecard:hover .artist-namecard-cover img { transform: scale(1.035); }
+    .artist-namecard-avatar {
+      position: relative; flex: 0 0 auto; width: 54px; height: 54px; overflow: hidden;
+      border-radius: 50%; background: hsl(var(--card-hue) 45% 92%);
+      box-shadow: 0 0 0 3px #fff, 0 4px 12px rgba(69, 51, 76, .16);
+    }
+    .artist-namecard-avatar img {
+      display: block; width: 100%; height: 100%; object-fit: cover; object-position: center 22%;
+    }
+    .artist-namecard-avatar.is-cover img { transform: scale(1.35); transform-origin: center 22%; }
+    .artist-namecard-body { display: grid; gap: 5px; min-width: 0; transition: opacity .2s ease; }
+    .artist-namecard-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+    .artist-namecard-name {
+      min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      color: var(--ink); font-size: 16px; font-weight: 750; letter-spacing: .01em;
+      text-decoration: none; text-shadow: 0 0 10px #fff, 0 0 3px #fff;
+    }
+    a.artist-namecard-name:hover { color: #8a3f5b; text-decoration: underline; text-underline-offset: 3px; }
+    .artist-namecard-handle {
+      flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      color: var(--muted); font-size: 11.5px;
+    }
+    .artist-namecard-stats {
+      display: flex; flex-wrap: wrap; gap: 2px 10px; color: #7d6f7d; font-size: 11px;
+      font-variant-numeric: tabular-nums; text-shadow: 0 0 6px #fff;
+    }
+    .artist-namecard-stats b { color: var(--ink); font-weight: 700; }
+    .artist-namecard-socials { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+    .artist-namecard-social {
+      display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 168px;
+      padding: 2px 8px 2px 2px; border: 1px solid rgba(233, 222, 230, .9); border-radius: 999px;
+      background: rgba(255, 255, 255, .82); backdrop-filter: blur(6px);
+      color: #5f5262; font-size: 11px; text-decoration: none;
+      transition: background-color .16s ease, border-color .16s ease, transform .16s ease;
+    }
+    .artist-namecard-social:hover { border-color: #dcbccb; background: #fff; transform: translateY(-1px); }
+    .artist-namecard-social .platform-icon { flex: 0 0 auto; width: 18px; height: 18px; }
+    .artist-namecard-social .platform-icon svg { width: 10px; height: 10px; }
+    .artist-namecard-social span:last-child { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .artist-namecard-empty { color: var(--muted); font-size: 11px; }
+    .artist-namecard-actions {
+      position: absolute; top: 10px; right: 10px; display: flex; gap: 6px;
+    }
+    .artist-namecard-action {
+      display: grid; place-items: center; width: 32px; height: 32px; min-height: 0; padding: 0;
+      border: 1px solid rgba(255, 255, 255, .6); border-radius: 50%;
+      background: rgba(255, 255, 255, .78); color: #8a5268; backdrop-filter: blur(8px);
+      box-shadow: 0 3px 10px rgba(43, 33, 50, .16);
+    }
+    .artist-namecard-action:hover { transform: none; background: #fff; color: #b8456f; }
+    .artist-namecard-action svg { width: 16px; height: 16px; }
+    .artist-namecard-action[data-namecard-favorite] svg { fill: none; stroke: currentColor; stroke-width: 2; }
+    .artist-namecard-action[data-namecard-settings] svg { fill: none; stroke: currentColor; stroke-width: 1.7; }
+    @media (max-width: 720px) {
+      .artist-namecard { min-height: 84px; padding: 12px 80px 12px 14px; }
+      .artist-namecard-cover { width: 55%; }
+      .artist-namecard-avatar { width: 44px; height: 44px; }
+      .artist-namecard-name { font-size: 14.5px; }
+    }
     .filter-text-label-control { flex-wrap: nowrap; }
     .filter-text-label-control > input[type="text"] { flex: 1 1 auto; }
     .filter-inline-weight {
@@ -1004,10 +1091,15 @@
     .gallery.view-artists { display: block; padding-bottom: 48px; }
     .artist-list { display: grid; gap: 14px; }
     .artist-row {
-      min-width: 0; padding: 12px 12px 10px; border: 1px solid #eee9ef;
+      min-width: 0; padding: 0 0 10px; overflow: hidden; border: 1px solid #eee9ef;
       border-radius: 18px; background: #fff;
       box-shadow: 0 7px 22px rgba(58, 47, 64, .055);
     }
+    .artist-row > .artist-namecard {
+      margin-bottom: 10px; border: 0; border-bottom: 1px solid #f1eaf0;
+      border-radius: 0; box-shadow: none;
+    }
+    .artist-row > .artist-strip { padding-inline: 12px; scroll-padding-inline: 12px; }
     .artist-head {
       display: flex; align-items: center; gap: 8px; min-width: 0;
       padding: 0 2px 9px;
@@ -1251,6 +1343,28 @@
       font-size: 14px; line-height: 1;
     }
     .artist-link-remove:hover { transform: none; background: #f3e1e8; color: #8a3f5b; }
+    .artist-member-hint { color: var(--muted); font-size: 11px; line-height: 1.4; }
+    .artist-member-row { transition: background-color .14s ease, opacity .14s ease, box-shadow .14s ease; }
+    .artist-member-row.is-inactive { background: #f6f4f6; }
+    .artist-member-row.is-inactive a,
+    .artist-member-row.is-inactive .platform-icon { opacity: .5; }
+    .artist-member-row.is-dragging { opacity: .45; }
+    .artist-member-row.is-drop-before { box-shadow: inset 0 2px 0 #c97a98; }
+    .artist-member-row.is-drop-after { box-shadow: inset 0 -2px 0 #c97a98; }
+    .artist-member-grip {
+      flex: 0 0 auto; display: grid; place-items: center; width: 18px; height: 24px; min-height: 0;
+      padding: 0; border-radius: 6px; background: transparent; color: #b5a6b2; cursor: grab;
+      touch-action: none;
+    }
+    .artist-member-grip:hover, .artist-member-grip:focus-visible { transform: none; background: #f1e6ec; color: #8a5268; }
+    .artist-member-grip:active { cursor: grabbing; }
+    .artist-member-grip svg { width: 12px; height: 14px; fill: currentColor; }
+    .artist-member-state {
+      flex: 0 0 auto; min-height: 0; padding: 2px 7px; border-radius: 999px;
+      background: #eaf4ee; color: #4c7a5c; font-size: 10.5px; font-weight: 650; line-height: 16px;
+    }
+    .artist-member-state:hover { transform: none; filter: brightness(.97); }
+    .artist-member-row.is-inactive .artist-member-state { background: #efe9ee; color: #8a7c88; }
     .artist-form { display: grid; gap: 6px; }
     .artist-form-row { display: flex; gap: 6px; min-width: 0; }
     .artist-form-row select {
@@ -1269,7 +1383,8 @@
     .artist-dialog-status.is-error { color: #a63d5e; }
     .artist-dialog-status.is-ok { color: #4c7a5c; }
     @media (max-width: 720px) {
-      .artist-row { padding: 10px 8px 8px; border-radius: 15px; }
+      .artist-row { padding: 0 0 8px; border-radius: 15px; }
+      .artist-row > .artist-strip { padding-inline: 8px; }
       .artist-thumb { width: 92px; height: 92px; border-radius: 12px; }
       .artist-thumb .card-summary,
       .artist-thumb .card-action-gradient,
@@ -2357,6 +2472,7 @@
         </form>
       </section>
       <div class="results-column">
+        <div id="filter-artist-cards" class="filter-artist-cards" aria-label="已筛选画师名片" aria-live="polite" hidden></div>
         <div class="results-head">
           <div id="query-info" class="query-info"></div>
           <div class="view-controls-slot" id="view-controls-slot">
@@ -3196,7 +3312,8 @@
       return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.07 0l1.42-1.42a5 5 0 0 0-7.07-7.07L10 5.93"/><path d="M14 11a5 5 0 0 0-7.07 0L5.5 12.42a5 5 0 0 0 7.07 7.07L13.99 18"/></svg>';
     }
     function platformIconLinks(members) {
-      return (Array.isArray(members) ? members : []).map((member) => {
+      // Inactive accounts stay searchable but are not shown beside names.
+      return (Array.isArray(members) ? members : []).filter((member) => member.active !== false).map((member) => {
         const profile = member.profile_url
           || (member.platform === 'twitter' && member.handle ? `https://x.com/${member.handle}` : '');
         if (!profile) return '';
@@ -3641,6 +3758,7 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ point_id: pointId }),
           }));
+          invalidateFilterArtistCards();
           if (currentImageId() === pointId) await loadProvenance(pointId);
           if (artistViewActive()) await fetchArtistGallery({ reset: true });
         } catch (error) {
@@ -5855,6 +5973,207 @@
       renderTagExpressionChip();
       updateFilterBadge();
     }
+    // ---- Artist name cards (above results) -------------------------------
+    // When the author filter narrows to 1–3 artists, a business-card strip
+    // above the results header shows each artist's name, active social accounts,
+    // a fading representative image, and favorite/settings shortcuts.
+    const FILTER_ARTIST_CARD_LIMIT = 3;
+    const NAMECARD_COVER_CANDIDATES = 24;
+    const filterArtistCards = { seq: 0, timer: 0, cache: new Map() };
+    function namecardHue(key) {
+      let hash = 0;
+      for (const char of String(key)) hash = (hash * 31 + char.codePointAt(0)) >>> 0;
+      return 300 + (hash % 100);
+    }
+    function namecardDate(ns) {
+      const ms = Number(ns || 0) / 1e6;
+      if (!ms) return '';
+      const date = new Date(ms);
+      const pad = (value) => String(value).padStart(2, '0');
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    }
+    function namecardSocialLabel(member) {
+      if (member.platform === 'twitter') return `@${member.handle || member.platform_id || ''}`;
+      if (member.platform === 'link') {
+        if (member.handle && member.handle !== member.platform_id) return member.handle;
+        try {
+          return new URL(member.profile_url || member.platform_id).hostname.replace(/^www\./, '');
+        } catch (_) {
+          return String(member.platform_id || '');
+        }
+      }
+      return String(member.handle || member.platform_id || member.platform || '');
+    }
+    function namecardCover(author) {
+      if (!author) return null;
+      if (author.cover && author.cover_explicit) return author.cover;
+      const best = (author.images || []).reduce((top, item) => {
+        const pixels = Number(item.width || 0) * Number(item.height || 0);
+        return pixels > top.pixels ? { item, pixels } : top;
+      }, { item: null, pixels: 0 }).item;
+      return best ? { id: best.id, width: best.width, height: best.height } : (author.cover || null);
+    }
+    function namecardAvatarUrl(author) {
+      const member = (author.members || []).find((item) => item.avatar_url);
+      const url = String(author.avatar_url || (member ? member.avatar_url : '') || '');
+      // Pixiv's CDN rejects requests without a pixiv.net referrer.
+      return /^https?:\/\//.test(url) && !/pximg\.net/i.test(url) ? url : '';
+    }
+    function artistNamecardElement(key, author, { linkName, tag = 'article' }) {
+      const card = document.createElement(tag);
+      card.className = `artist-namecard${author ? '' : ' is-loading'}`;
+      card.dataset.namecardKey = key;
+      card.style.setProperty('--card-hue', String(namecardHue(key)));
+      const data = author || {};
+      const unassigned = key === 'none';
+      const name = String(data.name || data.handle || (unassigned ? '无画师' : key));
+      const members = (Array.isArray(data.members) ? data.members : [])
+        .filter((member) => member.active !== false && member.profile_url);
+      const cover = data.namecardCover || namecardCover(author);
+      // Social avatar first; otherwise the representative image doubles as one.
+      const socialAvatar = namecardAvatarUrl(data);
+      const coverAvatar = cover ? `/thumb/${encodeURIComponent(cover.id)}` : '';
+      const avatarSrc = socialAvatar || coverAvatar;
+      const handle = data.handle && String(data.handle) !== name ? `@${data.handle}` : '';
+      const latest = namecardDate(data.latest_mtime);
+      const nameHtml = linkName
+        ? `<a class="artist-namecard-name" href="/author/${encodeURIComponent(key)}" title="${unassigned ? '无画师的独立筛选页' : `只看「${escapeHtml(name)}」`}">${escapeHtml(name)}</a>`
+        : `<strong class="artist-namecard-name" title="${escapeHtml(name)}">${escapeHtml(name)}</strong>`;
+      const socials = members.map((member) => {
+        const label = namecardSocialLabel(member);
+        return `<a class="artist-namecard-social" href="${escapeHtml(member.profile_url)}" target="_blank" rel="noopener" title="${escapeHtml(`${member.platform} · ${label}`)}"><span class="platform-icon ${escapeHtml(member.platform)}">${platformIconSvg(member.platform)}</span><span>${escapeHtml(label)}</span></a>`;
+      }).join('');
+      const emptySocials = author && !unassigned
+        ? '<span class="artist-namecard-empty">还没有社交账号，可在设置中添加</span>'
+        : '';
+      card.innerHTML = `
+        ${cover ? `<div class="artist-namecard-cover" aria-hidden="true"><img alt="" decoding="async" draggable="false" src="/search-image/${encodeURIComponent(cover.id)}"></div>` : ''}
+        ${avatarSrc ? `<div class="artist-namecard-avatar${socialAvatar ? '' : ' is-cover'}" aria-hidden="true"><img alt="" decoding="async" draggable="false" referrerpolicy="no-referrer" src="${escapeHtml(avatarSrc)}"></div>` : ''}
+        <div class="artist-namecard-body">
+          <div class="artist-namecard-title">${nameHtml}${handle ? `<span class="artist-namecard-handle">${escapeHtml(handle)}</span>` : ''}</div>
+          <div class="artist-namecard-stats">
+            ${author ? `<span><b>${Number(data.image_count || 0)}</b> 张作品</span>` : '<span>正在读取…</span>'}
+            ${latest ? `<span>最近收录 ${escapeHtml(latest)}</span>` : ''}
+            ${!unassigned && author ? `<span>ArtSeek #${escapeHtml(key)}</span>` : ''}
+          </div>
+          <div class="artist-namecard-socials">${socials || emptySocials}</div>
+        </div>
+        ${!unassigned ? `<div class="artist-namecard-actions">
+          <button class="artist-namecard-action" type="button" data-namecard-favorite aria-label="收藏画师：${escapeHtml(name)}" title="收藏画师到收藏夹" aria-haspopup="dialog" aria-expanded="false" aria-controls="card-collection-menu" ${author ? '' : 'disabled'}>${CARD_HEART_ICON}</button>
+          <button class="artist-namecard-action" type="button" data-namecard-settings aria-label="画师设置：${escapeHtml(name)}" title="画师设置">${ARTIST_GEAR_ICON}</button>
+        </div>` : ''}`;
+      const coverImg = card.querySelector('.artist-namecard-cover img');
+      if (coverImg) {
+        const ready = () => coverImg.classList.add('is-ready');
+        if (coverImg.complete && coverImg.naturalWidth) ready();
+        else coverImg.addEventListener('load', ready, { once: true });
+      }
+      const avatar = card.querySelector('.artist-namecard-avatar');
+      if (avatar) {
+        const img = avatar.querySelector('img');
+        img.addEventListener('error', () => {
+          if (coverAvatar && !avatar.classList.contains('is-cover')) {
+            avatar.classList.add('is-cover');
+            img.src = coverAvatar;
+          } else {
+            avatar.remove();
+          }
+        });
+      }
+      const favorite = card.querySelector('[data-namecard-favorite]');
+      if (favorite) {
+        favorite.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (author) openCardCollectionMenu(artistPageItem(author), favorite);
+        });
+      }
+      const settings = card.querySelector('[data-namecard-settings]');
+      if (settings) {
+        settings.addEventListener('click', (event) => {
+          event.preventDefault();
+          void openArtistDialog(key);
+        });
+      }
+      return card;
+    }
+    async function loadNamecardAuthor(key) {
+      const data = await parseResponse(await fetch('/api/artists/gallery', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          author_keys: [key],
+          include_unassigned: key === 'none',
+          limit: 1,
+          image_limit: NAMECARD_COVER_CANDIDATES,
+        }),
+      }));
+      const author = (data.authors || [])[0] || null;
+      if (!author) return null;
+      author.namecardCover = namecardCover(author);
+      author.images = [];
+      return author;
+    }
+    async function renderFilterArtistCards() {
+      const host = $('filter-artist-cards');
+      if (!host) return;
+      const keys = [...new Set(chipValues('filter-author-chips'))];
+      const seq = ++filterArtistCards.seq;
+      if (!keys.length || keys.length > FILTER_ARTIST_CARD_LIMIT) {
+        host.hidden = true;
+        host.replaceChildren();
+        return;
+      }
+      const linkName = keys.length > 1;
+      const shown = [...host.querySelectorAll('[data-namecard-key]')].map((card) => card.dataset.namecardKey);
+      const unchanged = shown.length === keys.length
+        && shown.every((key, index) => key === keys[index])
+        && keys.every((key) => filterArtistCards.cache.has(key))
+        && host.dataset.linkName === String(linkName);
+      if (unchanged) {
+        host.hidden = false;
+        return;
+      }
+      host.dataset.linkName = String(linkName);
+      host.replaceChildren(...keys.map((key) => (
+        artistNamecardElement(key, filterArtistCards.cache.get(key), { linkName })
+      )));
+      host.hidden = false;
+      const missing = keys.filter((key) => !filterArtistCards.cache.has(key));
+      if (!missing.length) return;
+      const loaded = await Promise.all(missing.map((key) => loadNamecardAuthor(key).catch(() => null)));
+      if (seq !== filterArtistCards.seq) return;
+      missing.forEach((key, index) => {
+        const author = loaded[index];
+        const current = host.querySelector(`[data-namecard-key="${CSS.escape(key)}"]`);
+        if (!author) {
+          if (current) current.remove();
+          return;
+        }
+        filterArtistCards.cache.set(key, author);
+        if (current) current.replaceWith(artistNamecardElement(key, author, { linkName }));
+      });
+      host.hidden = !host.childElementCount;
+    }
+    function scheduleFilterArtistCards() {
+      clearTimeout(filterArtistCards.timer);
+      filterArtistCards.timer = setTimeout(() => { void renderFilterArtistCards(); }, 40);
+    }
+    function invalidateFilterArtistCards(key = '') {
+      if (key) filterArtistCards.cache.delete(String(key));
+      else filterArtistCards.cache.clear();
+      const host = $('filter-artist-cards');
+      if (host) host.replaceChildren();
+      scheduleFilterArtistCards();
+      // Author chips cache their social icons too; re-read them after edits.
+      $('filter-author-chips').querySelectorAll('.filter-chip:not([data-expression])').forEach((chip) => {
+        const label = chip.querySelector(':scope > span:first-child');
+        const links = chip.querySelector('.filter-chip-links');
+        if (label && links) void enrichAuthorChip(chip, chip.dataset.value, label, links, chip.querySelector('.filter-chip-count'));
+      });
+    }
+    new MutationObserver(scheduleFilterArtistCards)
+      .observe($('filter-author-chips'), { childList: true });
     async function enrichAuthorChip(chip, key, label, links, count) {
       if (!key) return;
       try {
@@ -5870,9 +6189,7 @@
         const author = data.author || {};
         label.textContent = author.name || author.handle || key;
         label.title = key;
-        if (Array.isArray(author.members) && author.members.length) {
-          links.innerHTML = platformIconLinks(author.members);
-        }
+        if (Array.isArray(author.members)) links.innerHTML = platformIconLinks(author.members);
         if (count) count.textContent = `${Number(author.image_count || 0)} 张`;
       } catch (_) {
         // Keep the key as a readable fallback.
@@ -8650,56 +8967,11 @@
     }
     function artistRowElement(author, thumbSize) {
       const key = String(author.key || '');
-      const name = String(author.name || author.handle || key || '未命名画师');
       const section = document.createElement('section');
       section.className = 'artist-row';
       section.dataset.artistKey = key;
       section.style.setProperty('--artist-thumb-size', `${thumbSize || artistThumbSize()}px`);
-      const head = document.createElement('header');
-      head.className = 'artist-head';
-      const link = document.createElement('a');
-      link.className = 'artist-name';
-      link.href = `/author/${encodeURIComponent(key)}`;
-      link.textContent = name;
-      link.title = key === 'none' ? '无画师的独立筛选页' : `打开画师「${name}」的筛选页`;
-      head.append(link);
-      if (key !== 'none' && author.handle && String(author.handle) !== name) {
-        const sub = document.createElement('span');
-        sub.className = 'artist-sub';
-        sub.textContent = `@${author.handle}`;
-        head.append(sub);
-      }
-      const count = document.createElement('span');
-      count.className = 'artist-count';
-      count.textContent = `${Number(author.image_count || 0)} 张`;
-      count.title = '该画师在当前索引中的作品数';
-      head.append(count);
-      const socials = document.createElement('span');
-      socials.className = 'artist-socials';
-      socials.innerHTML = platformIconLinks(author.members || []);
-      if (socials.childNodes.length) head.append(socials);
-      if (key !== 'none') {
-        const favorite = document.createElement('button');
-        favorite.type = 'button';
-        favorite.className = 'card-favorite artist-self-favorite';
-        favorite.dataset.artistFavoriteSelf = '1';
-        favorite.dataset.artistKey = key;
-        favorite.setAttribute('aria-label', `收藏画师：${name}`);
-        favorite.setAttribute('aria-haspopup', 'dialog');
-        favorite.setAttribute('aria-expanded', 'false');
-        favorite.setAttribute('aria-controls', 'card-collection-menu');
-        favorite.innerHTML = CARD_HEART_ICON;
-        head.append(favorite);
-        const settings = document.createElement('button');
-        settings.type = 'button';
-        settings.className = 'artist-settings';
-        settings.dataset.artistSettings = key;
-        settings.setAttribute('aria-label', `画师设置：${name}`);
-        settings.title = '画师设置';
-        settings.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></svg>';
-        head.append(settings);
-      }
-      section.append(head);
+      section.append(artistNamecardElement(key, author, { linkName: true, tag: 'header' }));
       const strip = document.createElement('div');
       strip.className = 'artist-strip';
       strip.dataset.artistStrip = key;
@@ -9117,7 +9389,7 @@
           const label = identity.display || identity.identity;
           return `<div class="artist-link-row artist-alias-row"><span class="artist-alias-badge">别名</span><span class="artist-alias-name">${escapeHtml(label)}</span><button class="artist-link-remove" type="button" data-remove-kind="alias" data-remove-value="${escapeHtml(identity.identity)}" data-remove-label="${escapeHtml(label)}" aria-label="移除别名 ${escapeHtml(label)}" title="移除">×</button></div>`;
         });
-      const links = aliasRows.concat(members.map((member) => {
+      const memberRows = members.map((member) => {
         const url = member.profile_url || '';
         const label = member.platform === 'link'
           ? (member.handle || url)
@@ -9128,8 +9400,18 @@
           ? (member.handle || member.platform_id || '')
           : (member.platform_id || '');
         const removable = ['pixiv', 'twitter', 'xiaohongshu', 'link'].includes(member.platform);
-        return `<div class="artist-link-row"><span class="platform-icon ${escapeHtml(member.platform)}">${platformIconSvg(member.platform)}</span><a href="${escapeHtml(url)}" target="_blank" rel="noopener" title="${escapeHtml(url)}">${escapeHtml(label)}</a>${removable ? `<button class="artist-link-remove" type="button" data-remove-kind="${escapeHtml(member.platform)}" data-remove-value="${escapeHtml(removeValue)}" data-remove-label="${escapeHtml(label)}" aria-label="移除 ${escapeHtml(label)}" title="移除">×</button>` : ''}</div>`;
-      })).join('');
+        const active = member.active !== false;
+        const stateTitle = active
+          ? '活跃：显示在画师名旁。点击设为不活跃'
+          : '不活跃：不显示在画师名旁，但仍可搜索。点击设为活跃';
+        return `<div class="artist-link-row artist-member-row${active ? '' : ' is-inactive'}" data-member-key="${escapeHtml(member.key || '')}" data-member-active="${active ? '1' : '0'}">`
+          + `<button class="artist-member-grip" type="button" data-member-grip aria-label="调整「${escapeHtml(label)}」的顺序（↑/↓）" title="拖动排序（也可聚焦后按 ↑/↓）"><svg viewBox="0 0 12 14" aria-hidden="true" focusable="false"><circle cx="3.5" cy="3" r="1.3"/><circle cx="8.5" cy="3" r="1.3"/><circle cx="3.5" cy="7" r="1.3"/><circle cx="8.5" cy="7" r="1.3"/><circle cx="3.5" cy="11" r="1.3"/><circle cx="8.5" cy="11" r="1.3"/></svg></button>`
+          + `<span class="platform-icon ${escapeHtml(member.platform)}">${platformIconSvg(member.platform)}</span>`
+          + `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" title="${escapeHtml(url)}" draggable="false">${escapeHtml(label)}</a>`
+          + `<button class="artist-member-state" type="button" data-member-toggle aria-pressed="${active ? 'true' : 'false'}" title="${stateTitle}">${active ? '活跃' : '不活跃'}</button>`
+          + (removable ? `<button class="artist-link-remove" type="button" data-remove-kind="${escapeHtml(member.platform)}" data-remove-value="${escapeHtml(removeValue)}" data-remove-label="${escapeHtml(label)}" aria-label="移除 ${escapeHtml(label)}" title="移除">×</button>` : '')
+          + '</div>';
+      }).join('');
       $('artist-dialog-body').innerHTML = `
         <section class="artist-dialog-section">
           <h4>作者名</h4>
@@ -9141,9 +9423,16 @@
           </form>
         </section>
         <section class="artist-dialog-section">
-          <h4>别名与社交账号</h4>
-          <div class="artist-link-list">${links || '<div class="artist-dialog-note">还没有别名或社交账号。</div>'}</div>
+          <h4>社交账号</h4>
+          ${memberRows
+            ? `<div class="artist-member-hint">拖动左侧手柄调整显示顺序；不活跃的账号不会显示在画师名旁，但仍可被搜索与合并。</div>
+          <div class="artist-link-list" id="artist-member-list">${memberRows}</div>`
+            : '<div class="artist-dialog-note">还没有社交账号。</div>'}
         </section>
+        ${aliasRows.length ? `<section class="artist-dialog-section">
+          <h4>别名</h4>
+          <div class="artist-link-list">${aliasRows.join('')}</div>
+        </section>` : ''}
         <section class="artist-dialog-section">
           <h4>添加别名或社交账号</h4>
           <form class="artist-form" id="artist-add-form" autocomplete="off">
@@ -9213,6 +9502,7 @@
           }
         });
       });
+      bindArtistMemberList(key);
       const addForm = $('artist-add-form');
       addForm.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -9257,16 +9547,117 @@
         }
       });
     }
-    async function refreshArtistDialog(key, message) {
+    async function saveArtistMemberOrder(key) {
+      const list = $('artist-member-list');
+      if (!list) return;
+      const members = [...list.querySelectorAll('[data-member-key]')].map((row) => ({
+        key: row.dataset.memberKey,
+        active: row.dataset.memberActive !== '0',
+      }));
+      const focused = document.activeElement && document.activeElement.closest
+        ? document.activeElement.closest('[data-member-key]')
+        : null;
+      artistDialogStatus('正在保存社交账号设置…');
+      try {
+        await parseResponse(await fetch(`/api/authors/${encodeURIComponent(key)}/members`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ members }),
+        }));
+        await refreshArtistDialog(key, '已更新社交账号顺序与状态。', {
+          focusMember: focused ? focused.dataset.memberKey : '',
+        });
+      } catch (error) {
+        artistDialogStatus(error.message, 'error');
+      }
+    }
+    function bindArtistMemberList(key) {
+      const list = $('artist-member-list');
+      if (!list) return;
+      const rows = () => [...list.querySelectorAll('[data-member-key]')];
+      const orderOf = () => rows().map((row) => row.dataset.memberKey).join('\n');
+      list.querySelectorAll('[data-member-toggle]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const row = button.closest('[data-member-key]');
+          row.dataset.memberActive = row.dataset.memberActive === '0' ? '1' : '0';
+          row.classList.toggle('is-inactive', row.dataset.memberActive === '0');
+          void saveArtistMemberOrder(key);
+        });
+      });
+      // Keyboard reordering on the grip: ↑/↓ moves one slot and saves.
+      list.querySelectorAll('[data-member-grip]').forEach((grip) => {
+        grip.addEventListener('keydown', (event) => {
+          if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+          event.preventDefault();
+          const row = grip.closest('[data-member-key]');
+          const sibling = event.key === 'ArrowUp' ? row.previousElementSibling : row.nextElementSibling;
+          if (!sibling) return;
+          if (event.key === 'ArrowUp') sibling.before(row);
+          else sibling.after(row);
+          grip.focus();
+          void saveArtistMemberOrder(key);
+        });
+      });
+      // Pointer drag on the grip (mouse, pen and touch; works inside <dialog>).
+      let drag = null;
+      const clearMarks = () => rows().forEach((row) => row.classList.remove('is-drop-before', 'is-drop-after'));
+      list.addEventListener('pointerdown', (event) => {
+        const grip = event.target.closest('[data-member-grip]');
+        if (!grip || event.button !== 0) return;
+        event.preventDefault();
+        const row = grip.closest('[data-member-key]');
+        drag = { row, pointerId: event.pointerId, before: orderOf(), target: null, after: false };
+        grip.setPointerCapture(event.pointerId);
+        row.classList.add('is-dragging');
+      });
+      list.addEventListener('pointermove', (event) => {
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        const over = rows().find((row) => {
+          const rect = row.getBoundingClientRect();
+          return event.clientY >= rect.top && event.clientY <= rect.bottom;
+        });
+        clearMarks();
+        if (!over || over === drag.row) {
+          drag.target = null;
+          return;
+        }
+        const rect = over.getBoundingClientRect();
+        drag.target = over;
+        drag.after = event.clientY > rect.top + rect.height / 2;
+        over.classList.add(drag.after ? 'is-drop-after' : 'is-drop-before');
+      });
+      const finish = (event) => {
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        const { row, target, after, before } = drag;
+        drag = null;
+        clearMarks();
+        row.classList.remove('is-dragging');
+        if (target && event.type === 'pointerup') {
+          if (after) target.after(row);
+          else target.before(row);
+        }
+        if (orderOf() !== before) void saveArtistMemberOrder(key);
+      };
+      list.addEventListener('pointerup', finish);
+      list.addEventListener('pointercancel', finish);
+    }
+    async function refreshArtistDialog(key, message, { focusMember = '' } = {}) {
       try {
         const data = await parseResponse(await fetch(`/api/authors/${encodeURIComponent(key)}`));
         if (state.artistSettingsKey !== key) return;
         renderArtistDialog(data.author);
         artistDialogStatus(message, 'ok');
+        if (focusMember) {
+          const row = [...document.querySelectorAll('#artist-member-list [data-member-key]')]
+            .find((item) => item.dataset.memberKey === focusMember);
+          const grip = row ? row.querySelector('[data-member-grip]') : null;
+          if (grip) grip.focus();
+        }
       } catch (error) {
         artistDialogStatus(error.message, 'error');
       }
       filterSuggestCache.clear();
+      invalidateFilterArtistCards();
       if (artistViewActive()) await fetchArtistGallery({ reset: true });
     }
     async function openArtistDialog(key) {

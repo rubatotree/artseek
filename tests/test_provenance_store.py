@@ -544,6 +544,43 @@ class ProvenanceStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.add_link(first, "ftp://example.com/a")
 
+    def test_member_order_and_activity_persist_and_stay_searchable(self) -> None:
+        key = self.store.ensure_author("pixiv", "1", name="Alice")
+        self.store.attach_identity(key, "twitter", "alice_x")
+        self.store.add_link(key, "https://alice.example/", label="Blog")
+        summary = self.store.author_summary(key)
+        assert summary is not None
+        keys = [member["key"] for member in summary["members"]]
+        self.assertEqual(len(keys), 3)
+        self.assertTrue(all(member["active"] for member in summary["members"]))
+
+        twitter = next(m["key"] for m in summary["members"] if m["platform"] == "twitter")
+        pixiv = next(m["key"] for m in summary["members"] if m["platform"] == "pixiv")
+        self.store.set_member_preferences(
+            key,
+            [{"key": twitter, "active": True}, {"key": pixiv, "active": False}],
+        )
+        summary = self.store.author_summary(key)
+        assert summary is not None
+        members = summary["members"]
+        self.assertEqual([m["platform"] for m in members], ["twitter", "pixiv", "link"])
+        self.assertEqual([m["position"] for m in members], [0, 1, 2])
+        self.assertEqual([m["active"] for m in members], [True, False, True])
+        # Inactive accounts remain part of the identity search index.
+        self.assertEqual(self.store.identity_owner("pixiv", "1"), key)
+        self.assertEqual(self.store.author_groups([key])[key][1]["active"], False)
+
+        with self.assertRaises(ValueError):
+            self.store.set_member_preferences(key, [{"key": "pixiv:999", "active": True}])
+
+        # Order and activity follow the identities through a merge.
+        other = self.store.ensure_author("pixiv", "2", name="Alice Alt")
+        self.store.merge_authors(key, other)
+        merged = self.store.author_summary(other)
+        assert merged is not None
+        inactive = [m["key"] for m in merged["members"] if not m["active"]]
+        self.assertEqual(inactive, [pixiv])
+
     def test_xiaohongshu_name_groups_artists_and_profile_is_attachable(self) -> None:
         key = self.store.ensure_xhs_author("李岫荇")
         self.assertEqual(key, self.store.ensure_xhs_author(" 李岫荇 "))

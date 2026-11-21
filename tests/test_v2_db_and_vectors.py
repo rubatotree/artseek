@@ -51,6 +51,17 @@ class V2DataLayerTests(unittest.TestCase):
         self.db.close()
         self._tmp.cleanup()
 
+    def test_artist_member_preferences_use_unified_db(self) -> None:
+        key = self.prov.ensure_author("pixiv", "1", name="Alice")
+        self.prov.attach_identity(key, "twitter", "alice_x")
+        members = self.prov.author_summary(key)["members"]
+        twitter = next(m["key"] for m in members if m["platform"] == "twitter")
+        self.prov.set_member_preferences(key, [{"key": twitter, "active": False}])
+        saved = self.prov.author_summary(key)["members"]
+        self.assertEqual(saved[0]["key"], twitter)
+        self.assertFalse(saved[0]["active"])
+        self.assertTrue(saved[1]["active"])
+
     def test_natural_sort_text_matches_python_natural_key(self) -> None:
         names = [
             "2.jpg",

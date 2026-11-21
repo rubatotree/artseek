@@ -25,6 +25,7 @@ from ..api.schemas import (
     ArtistIdentityRemoveRequest,
     ArtistIdentityRequest,
     ArtistImagesRequest,
+    ArtistMembersRequest,
     ArtistMergeRequest,
     ArtistNameRequest,
     ArtistScopeRequest,
@@ -3128,6 +3129,9 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
                 if isinstance(cover_payload, dict)
                 else None
             )
+            entry["cover_explicit"] = bool(
+                explicit_covers.get(key) and cover_id == explicit_covers.get(key)
+            )
             members = entry.get("members") or []
             entry["pixiv_ids"] = [
                 str(member.get("platform_id") or "")
@@ -3244,6 +3248,24 @@ def create_app(config: AppConfig, *, engine: SearchEngine | None = None) -> Fast
         store: ProvenanceStore = app.state.provenance
         try:
             store.remove_identity(author_key, request.kind, request.value)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        invalidate_author_cache()
+        summary = store.author_summary(author_key)
+        if summary is None:
+            raise HTTPException(404, "作者不存在")
+        return {"author": summary}
+
+    @app.post("/api/authors/{author_key}/members")
+    def set_author_members(
+        author_key: str, request: ArtistMembersRequest
+    ) -> dict[str, Any]:
+        """Reorder an artist's social accounts and toggle which ones are shown."""
+        store: ProvenanceStore = app.state.provenance
+        try:
+            store.set_member_preferences(
+                author_key, [item.model_dump() for item in request.members]
+            )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         invalidate_author_cache()

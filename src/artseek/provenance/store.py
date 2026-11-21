@@ -297,6 +297,8 @@ class ProvenanceStore:
                     source TEXT,
                     artist_id INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL,
+                    sort_order INTEGER,
+                    inactive INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (kind, identity)
                 );
                 CREATE INDEX IF NOT EXISTS idx_artist_identity_artist
@@ -352,6 +354,20 @@ class ProvenanceStore:
                 str(row[1])
                 for row in connection.execute("PRAGMA table_info(artist)").fetchall()
             }
+            identity_columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(artist_identity)"
+                ).fetchall()
+            }
+            if "sort_order" not in identity_columns:
+                # Manual display order of social accounts on the artist card.
+                connection.execute("ALTER TABLE artist_identity ADD COLUMN sort_order INTEGER")
+            if "inactive" not in identity_columns:
+                # Inactive accounts stay searchable but are hidden next to names.
+                connection.execute(
+                    "ALTER TABLE artist_identity ADD COLUMN inactive INTEGER NOT NULL DEFAULT 0"
+                )
             if "name_source" not in artist_columns:
                 connection.execute("ALTER TABLE artist ADD COLUMN name_source TEXT")
             if "mtime_ns" not in source_columns:
@@ -2687,10 +2703,22 @@ class ProvenanceStore:
     def _member_views(
         self, artist: sqlite3.Row | None, identities: Sequence[sqlite3.Row]
     ) -> list[dict[str, Any]]:
+        return [member for member, _rows in self._member_groups(artist, identities)]
+
+    def _member_groups(
+        self, artist: sqlite3.Row | None, identities: Sequence[sqlite3.Row]
+    ) -> list[tuple[dict[str, Any], list[sqlite3.Row]]]:
+        """Group identity rows into displayable social members.
+
+        One member may be backed by several rows (an X numeric ID and its
+        handle), so manual order/activity is stored on every backing row and
+        read back as ``min(sort_order)`` / ``any(inactive)``.  Members without a
+        manual position keep the natural ``kind, identity`` order after the
+        positioned ones.
+        """
         name = str(artist["name"] or "") if artist is not None else ""
         avatar = str(artist["avatar_url"] or "") if artist is not None else ""
-        members: list[dict[str, Any]] = []
-        seen: set[tuple[str, str]] = set()
+        groups: dict[tuple[str, str], tuple[dict[str, Any], list[sqlite3.Row]]] = {}
         for row in identities:
             kind = str(row["kind"])
             identity = str(row["identity"])
@@ -2727,10 +2755,10 @@ class ProvenanceStore:
                 key = (platform, identity.casefold())
             else:
                 continue
-            if key in seen:
+            if key in groups:
+                groups[key][1].append(row)
                 continue
-            seen.add(key)
-            members.append(
+            groups[key] = (
                 {
                     "key": f"{platform}:{platform_id}",
                     "platform": platform,
@@ -2739,9 +2767,84 @@ class ProvenanceStore:
                     "name": name,
                     "profile_url": profile,
                     "avatar_url": avatar,
-                }
+                },
+                [row],
             )
-        return members
+        ordered: list[tuple[int, int, int, dict[str, Any], list[sqlite3.Row]]] = []
+        for index, (member, rows) in enumerate(groups.values()):
+            positions = [
+                int(value)
+                for value in (_row_get(row, "sort_order") for row in rows)
+                if value is not None
+            ]
+            member["active"] = not any(int(_row_get(row, "inactive") or 0) for row in rows)
+            if positions:
+                ordered.append((0, min(positions), index, member, rows))
+            else:
+                ordered.append((1, 0, index, member, rows))
+        ordered.sort(key=lambda item: item[:3])
+        result: list[tuple[dict[str, Any], list[sqlite3.Row]]] = []
+        for position, (_, _, _, member, rows) in enumerate(ordered):
+            member["position"] = position
+            result.append((member, rows))
+        return result
+
+    def set_member_preferences(
+        self, artist_key: str, members: Sequence[dict[str, Any]]
+    ) -> str:
+        """Persist the display order and active flag of an artist's members.
+
+        ``members`` is the desired order; each item carries ``key`` (the
+        member key returned by :meth:`author_summary`) and ``active``.  Members
+        that are not listed keep their flags and move after the listed ones.
+        """
+        if self._is_unassigned_key(artist_key):
+            raise ValueError("无画师没有社交身份")
+        with self._read() as connection:
+            base = self._canonical_locked(connection, artist_key)
+            if not base.isdigit():
+                raise ValueError("作者不存在")
+            artist_id = int(base)
+            artist = connection.execute(
+                "SELECT * FROM artist WHERE id = ?", (artist_id,)
+            ).fetchone()
+            identities = connection.execute(
+                "SELECT * FROM artist_identity WHERE artist_id = ? ORDER BY kind, identity",
+                (artist_id,),
+            ).fetchall()
+            groups = self._member_groups(artist, identities)
+            by_key = {str(member["key"]): rows for member, rows in groups}
+            listed: list[str] = []
+            flags: dict[str, bool] = {}
+            for item in members:
+                key = str(item.get("key") or "")
+                if key not in by_key:
+                    raise ValueError(f"社交账号不存在：{key}")
+                if key in flags:
+                    continue
+                listed.append(key)
+                flags[key] = bool(item.get("active", True))
+            rest = [str(member["key"]) for member, _ in groups if str(member["key"]) not in flags]
+            now = _now()
+            for position, key in enumerate(listed + rest):
+                for row in by_key[key]:
+                    if key in flags:
+                        connection.execute(
+                            "UPDATE artist_identity SET sort_order = ?, inactive = ?, "
+                            "updated_at = ? WHERE kind = ? AND identity = ?",
+                            (position, 0 if flags[key] else 1, now, row["kind"], row["identity"]),
+                        )
+                    else:
+                        connection.execute(
+                            "UPDATE artist_identity SET sort_order = ?, updated_at = ? "
+                            "WHERE kind = ? AND identity = ?",
+                            (position, now, row["kind"], row["identity"]),
+                        )
+            connection.execute(
+                "UPDATE artist SET updated_at = ? WHERE id = ?", (now, artist_id)
+            )
+            connection.commit()
+        return base
 
     def _primary_handles_locked(
         self, connection: sqlite3.Connection, ids: Sequence[int]
@@ -3375,6 +3478,14 @@ class ProvenanceStore:
         record["candidates"] = _loads(record.pop("candidates_json", None), [])
         record["manual_fields"] = _loads(record.pop("manual_fields", None), [])
         return record
+
+
+def _row_get(row: sqlite3.Row, name: str) -> Any:
+    """Read an optional column from rows selected before a schema upgrade."""
+    try:
+        return row[name]
+    except (IndexError, KeyError):
+        return None
 
 
 def _int_or_none(value: Any) -> int | None:

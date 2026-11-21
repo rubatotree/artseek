@@ -492,6 +492,29 @@ class ProvenanceApiTests(unittest.TestCase):
         self.assertEqual(removed.status_code, 200)
         self.assertEqual(removed.json()["author"]["xiaohongshu_ids"], [other_uid])
 
+    def test_author_member_preferences_endpoint(self) -> None:
+        key = self.store.ensure_author("pixiv", "1", name="Alice")
+        self.store.attach_identity(key, "twitter", "alice_x")
+        members = self.client.get(f"/api/authors/{key}").json()["author"]["members"]
+        reordered = [
+            {"key": member["key"], "active": member["platform"] != "pixiv"}
+            for member in reversed(members)
+        ]
+        response = self.client.post(
+            f"/api/authors/{key}/members", json={"members": reordered}
+        )
+        self.assertEqual(response.status_code, 200)
+        saved = response.json()["author"]["members"]
+        self.assertEqual([m["key"] for m in saved], [m["key"] for m in reordered])
+        self.assertEqual(
+            {m["platform"]: m["active"] for m in saved},
+            {"pixiv": False, "twitter": True},
+        )
+        bad = self.client.post(
+            f"/api/authors/{key}/members", json={"members": [{"key": "link:nope"}]}
+        )
+        self.assertEqual(bad.status_code, 400)
+
     def test_provenance_tag_aliases_are_returned_for_tooltips(self) -> None:
         self.store.upsert_scan(
             "p1", self.payload, ParsedSource(parse_filename(self.image.name))
