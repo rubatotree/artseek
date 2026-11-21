@@ -479,6 +479,33 @@ class V2ServicesTests(unittest.TestCase):
         # Artists: gallery + "none" pinned first + merge + legacy lookup
         gal = self.artists.artists_gallery(include_unassigned=True, sort="latest_desc")
         self.assertEqual(gal["authors"][0]["key"], "none")
+        # Filtered lookups go through the lazily built artist search index;
+        # ProvenanceRepo skips ProvenanceStore.__init__, so this guards against
+        # the index cache being missing there.
+        self.assertGreaterEqual(gal["total"], 2)
+        searched = self.artists.artists_gallery(
+            q="alice", include_unassigned=True, sort="latest_desc"
+        )
+        self.assertEqual([item["name"] for item in searched["authors"]], ["Alice"])
+        self.assertEqual(
+            [
+                item["name"]
+                for item in self.artists.artists_gallery(
+                    q="ＡＬＩＣＥ", include_unassigned=True, sort="latest_desc"
+                )["authors"]
+            ],
+            ["Alice"],
+        )
+        # Simplified/variant/romaji input must reach a CJK artist name too.
+        self.artists.rename_author(self.alice, "花宮なつか")
+        for query in ("花宫なつか", "花宮ナツカ", "natsuka"):
+            names = [
+                item["name"]
+                for item in self.artists.artists_gallery(
+                    q=query, include_unassigned=True, sort="latest_desc"
+                )["authors"]
+            ]
+            self.assertIn("花宮なつか", names, query)
         first_page = self.artists.artists_gallery(include_unassigned=True, limit=1, offset=0)
         self.assertEqual(first_page["has_more"], first_page["total"] > 1)
         last_page = self.artists.artists_gallery(

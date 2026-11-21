@@ -110,6 +110,8 @@ class ProvenanceRepo(ProvenanceStore):
         self._schema_lock = db._write_lock
         self._schema_ready = True
         self._tx_local = threading.local()
+        # The store's __init__ never runs here, so seed its caches explicitly.
+        self._ensure_artist_index_cache()
 
     @property
     def path(self) -> Path:

@@ -187,10 +187,28 @@ class ProvenanceStore:
 
     def __init__(self, path: Path):
         self.path = path
+        self._init_caches()
+
+    def _init_caches(self) -> None:
+        """Initialise the schema guards shared by the store subclasses."""
         self._schema_lock = threading.Lock()
         self._schema_ready = False
         self._artist_index_lock = threading.Lock()
         self._artist_index: _ArtistSearchIndex | None = None
+
+    def _ensure_artist_index_cache(self) -> threading.Lock:
+        """Create the artist index cache on demand.
+
+        ``ProvenanceRepo`` builds its own connection and never runs
+        ``ProvenanceStore.__init__``, so the cache fields have to be created
+        lazily instead of assuming construction went through this class.
+        """
+        lock = getattr(self, "_artist_index_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._artist_index_lock = lock
+            self._artist_index = None
+        return lock
 
     def _connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -2834,11 +2852,12 @@ class ProvenanceStore:
         self, connection: sqlite3.Connection
     ) -> tuple[_ArtistSearchIndex, bool]:
         """Return the artist index and whether it reflects the current tables."""
+        lock = self._ensure_artist_index_cache()
         signature = self._artist_index_signature(connection)
         cached = self._artist_index
         if cached is not None and cached.signature == signature:
             return cached, True
-        with self._artist_index_lock:
+        with lock:
             cached = self._artist_index
             if cached is not None and cached.signature == signature:
                 return cached, True
@@ -3160,15 +3179,23 @@ class ProvenanceStore:
             key = str(item.get("key") or "")
             artist_id = int(key) if key.isdigit() else 0
             prepared = index.values.get(artist_id) if artist_id else None
-            if prepared is None:
-                prepared = name_match.build_all(
-                    item.get("_search_values") or [item.get("name"), key]
+            if prepared is None or not fresh:
+                # Unindexed rows, and every row while the index is throttled
+                # after a rename/import, are scored from the authoritative
+                # entry values so a fresh name is never hidden by a stale key.
+                value = name_match.best_score(
+                    needle,
+                    name_match.build_all(
+                        item.get("_search_values") or [item.get("name"), key]
+                    ),
                 )
-            elif fresh and artist_id not in pooled:
-                # The index is current, so staying out of the candidate pool
-                # means this artist cannot match; skip the costly difflib pass.
-                continue
-            value = name_match.best_score(needle, prepared)
+            else:
+                if artist_id not in pooled:
+                    # The index is current, so staying out of the candidate
+                    # pool means this artist cannot match; skip the costly
+                    # per-entry scoring pass.
+                    continue
+                value = name_match.best_score(needle, prepared)
             if value <= 0:
                 continue
             copy = dict(item)
