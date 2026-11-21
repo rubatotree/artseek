@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import difflib
 import json
 import re
 import sqlite3
@@ -9,9 +8,13 @@ import time
 import unicodedata
 from collections.abc import Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..core import name_match
+from ..core.name_match import NameKey
+from ..core.transliterate import fold_text
 from .parser import (
     ParsedSource,
     SourceRef,
@@ -70,6 +73,39 @@ def _author_text(value: Any) -> str:
     text = unicodedata.normalize("NFKC", str(value or "")).casefold()
     text = text.lstrip("@")
     return re.sub(r"\s+", " ", text).strip()
+
+
+@dataclass(slots=True)
+class _ArtistSearchIndex:
+    """Folded + pinyin/romaji keys for every artist name and identity.
+
+    Built lazily from ``artist`` / ``artist_identity`` and reused until the
+    tables change (see ``ProvenanceStore._artist_search_index``).
+    """
+
+    signature: tuple[int, int, int, int, int]
+    built_at: float
+    values: dict[int, tuple[NameKey, ...]]
+    entries: tuple[tuple[str, set[int]], ...]
+    initials: dict[str, set[int]]
+
+    @property
+    def newest_id(self) -> int:
+        return max(self.values) if self.values else 0
+
+    def candidates(self, needle: NameKey) -> set[int]:
+        """Artist ids whose folded/romanized keys overlap the query keys."""
+        found: set[int] = set()
+        for wanted in name_match.search_keys(needle):
+            for key, artist_ids in self.entries:
+                if wanted in key:
+                    found.update(artist_ids)
+        return found
+
+    def typo_candidates(self, needle: NameKey) -> set[int]:
+        """Artist ids sharing the query's first folded character (typo pass)."""
+        initial = needle.compact[:1]
+        return set(self.initials.get(initial, ())) if initial else set()
 
 
 def normalize_pixiv_user_id(value: str | None) -> str:
@@ -153,6 +189,8 @@ class ProvenanceStore:
         self.path = path
         self._schema_lock = threading.Lock()
         self._schema_ready = False
+        self._artist_index_lock = threading.Lock()
+        self._artist_index: _ArtistSearchIndex | None = None
 
     def _connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -2729,28 +2767,130 @@ class ProvenanceStore:
     def _author_text(value: Any) -> str:
         return _author_text(value)
 
-    @classmethod
-    def _author_score(cls, query: str, *values: Any) -> float:
-        needle = _author_text(query)
-        if not needle:
-            return 1.0
-        best = 0.0
-        for raw in values:
-            text = _author_text(raw)
-            if not text:
+    # ------------------------------------------------------ artist search index
+    @staticmethod
+    def _artist_index_signature(
+        connection: sqlite3.Connection,
+    ) -> tuple[int, int, int, int, int]:
+        """Cheap fingerprint of every table the artist index is built from."""
+        artist = connection.execute(
+            "SELECT COUNT(*) AS total, COALESCE(MAX(id), 0) AS newest, "
+            "COALESCE(SUM(updated_at), 0) AS touched, "
+            "COALESCE(SUM(LENGTH(COALESCE(name, ''))), 0) AS name_chars "
+            "FROM artist"
+        ).fetchone()
+        identity = connection.execute(
+            "SELECT COUNT(*) AS total, "
+            "COALESCE(SUM(LENGTH(COALESCE(display, identity, ''))), 0) AS chars "
+            "FROM artist_identity"
+        ).fetchone()
+        return (
+            int(artist["total"]),
+            int(artist["newest"]),
+            int(artist["touched"]),
+            int(artist["name_chars"]),
+            int(identity["total"]) * 1_000_003 + int(identity["chars"]),
+        )
+
+    def _build_artist_index(
+        self,
+        connection: sqlite3.Connection,
+        signature: tuple[int, int, int, int, int],
+    ) -> _ArtistSearchIndex:
+        identities: dict[int, list[str]] = {}
+        for row in connection.execute(
+            "SELECT artist_id, identity, display FROM artist_identity"
+        ):
+            bucket = identities.setdefault(int(row["artist_id"]), [])
+            bucket.extend(
+                str(value) for value in (row["display"], row["identity"]) if value
+            )
+        values: dict[int, tuple[NameKey, ...]] = {}
+        by_key: dict[str, set[int]] = {}
+        initials: dict[str, set[int]] = {}
+        for row in connection.execute("SELECT id, name FROM artist"):
+            artist_id = int(row["id"])
+            keys = name_match.build_all(
+                [row["name"], str(artist_id), *(identities.get(artist_id) or ())]
+            )
+            if not keys:
                 continue
-            if text == needle:
-                return 1.0
-            if needle in text:
-                best = max(
-                    best,
-                    0.85 + 0.15 * (len(needle) / max(len(text), 1)),
-                )
-                continue
-            ratio = difflib.SequenceMatcher(None, needle, text).ratio()
-            if ratio >= 0.45:
-                best = max(best, ratio * 0.8)
-        return best
+            values[artist_id] = keys
+            for key in keys:
+                for token in (key.compact, *key.keys):
+                    if len(token) < 2:
+                        continue
+                    by_key.setdefault(token, set()).add(artist_id)
+                    initials.setdefault(token[:1], set()).add(artist_id)
+        return _ArtistSearchIndex(
+            signature=signature,
+            built_at=time.monotonic(),
+            values=values,
+            entries=tuple(by_key.items()),
+            initials=initials,
+        )
+
+    def _artist_search_index(
+        self, connection: sqlite3.Connection
+    ) -> tuple[_ArtistSearchIndex, bool]:
+        """Return the artist index and whether it reflects the current tables."""
+        signature = self._artist_index_signature(connection)
+        cached = self._artist_index
+        if cached is not None and cached.signature == signature:
+            return cached, True
+        with self._artist_index_lock:
+            cached = self._artist_index
+            if cached is not None and cached.signature == signature:
+                return cached, True
+            # Bulk imports touch the artist tables constantly; rebuilding on
+            # every keystroke would be wasteful, so serve the previous index
+            # for a short window instead of thrashing. Callers compensate for
+            # the lag by also looking at rows the index has never seen.
+            if cached is not None and time.monotonic() - cached.built_at < 1.5:
+                return cached, False
+            index = self._build_artist_index(connection, signature)
+            self._artist_index = index
+            return index, True
+
+    @staticmethod
+    def _author_like_ids(connection: sqlite3.Connection, needle: str) -> set[int]:
+        search = needle.split(":", 1)[-1] if ":" in needle else needle
+        pattern = (
+            "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        )
+        rows = connection.execute(
+            """
+            SELECT DISTINCT artist.id
+            FROM artist
+            LEFT JOIN artist_identity
+              ON artist_identity.artist_id = artist.id
+            WHERE artist.name_key LIKE ? ESCAPE '\\'
+               OR artist_identity.identity LIKE ? ESCAPE '\\'
+               OR LOWER(artist_identity.display) LIKE ? ESCAPE '\\'
+            LIMIT 8000
+            """,
+            (pattern, pattern, pattern),
+        ).fetchall()
+        return {int(row[0]) for row in rows}
+
+    @staticmethod
+    def _author_rows(
+        connection: sqlite3.Connection,
+        artist_ids: Sequence[int],
+    ) -> list[sqlite3.Row]:
+        rows: list[sqlite3.Row] = []
+        ids = list(dict.fromkeys(int(value) for value in artist_ids))
+        for chunk_start in range(0, len(ids), 800):
+            batch = ids[chunk_start : chunk_start + 800]
+            placeholders = ",".join("?" for _ in batch)
+            rows.extend(
+                connection.execute(
+                    "SELECT id, name, image_count FROM artist "
+                    f"WHERE id IN ({placeholders})",
+                    batch,
+                ).fetchall()
+            )
+        return rows
 
     def list_authors(
         self,
@@ -2760,54 +2900,36 @@ class ProvenanceStore:
         offset: int = 0,
         image_counts: dict[str, int] | None = None,
     ) -> list[dict[str, Any]]:
-        needle = _author_text(query)
+        needle_text = _author_text(query)
         page_size = max(1, min(int(limit), 500))
         start = max(0, int(offset))
+        needle = name_match.build(needle_text)
         with self._read() as connection:
             rows: list[sqlite3.Row]
-            if not needle:
+            index: _ArtistSearchIndex | None = None
+            if needle.empty:
                 rows = connection.execute(
                     "SELECT id, name, image_count FROM artist"
                 ).fetchall()
             else:
-                search = needle.split(":", 1)[-1] if ":" in needle else needle
-                pattern = (
-                    "%"
-                    + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-                    + "%"
-                )
-                rows = connection.execute(
-                    """
-                    SELECT DISTINCT artist.id, artist.name, artist.image_count
-                    FROM artist
-                    LEFT JOIN artist_identity
-                      ON artist_identity.artist_id = artist.id
-                    WHERE artist.name_key LIKE ? ESCAPE '\\'
-                       OR artist_identity.identity LIKE ? ESCAPE '\\'
-                       OR LOWER(artist_identity.display) LIKE ? ESCAPE '\\'
-                    ORDER BY artist.image_count DESC, artist.id
-                    LIMIT 2000
-                    """,
-                    (pattern, pattern, pattern),
-                ).fetchall()
-                if len(rows) < page_size + start + 1:
-                    rows = connection.execute(
-                        "SELECT id, name, image_count FROM artist"
-                    ).fetchall()
-            identities: dict[int, list[sqlite3.Row]] = {}
-            if needle and rows:
-                candidate_ids = sorted({int(row["id"]) for row in rows})
-                for chunk_start in range(0, len(candidate_ids), 400):
-                    batch = candidate_ids[chunk_start : chunk_start + 400]
-                    placeholders = ",".join("?" for _ in batch)
-                    for identity in connection.execute(
-                        "SELECT artist_id, kind, identity, display, source "
-                        f"FROM artist_identity WHERE artist_id IN ({placeholders})",
-                        batch,
-                    ).fetchall():
-                        identities.setdefault(int(identity["artist_id"]), []).append(
-                            identity
+                index, fresh = self._artist_search_index(connection)
+                candidate_ids = index.candidates(needle)
+                candidate_ids |= self._author_like_ids(connection, needle_text)
+                # Typo tolerance: candidates that share the query's first
+                # character still get a difflib pass, which keeps the scan
+                # bounded instead of walking the whole artist table.
+                candidate_ids |= index.typo_candidates(needle)
+                if not fresh:
+                    # Artists created after the cached index was built.
+                    candidate_ids.update(
+                        int(row[0])
+                        for row in connection.execute(
+                            "SELECT id FROM artist WHERE id > ?", (index.newest_id,)
                         )
+                    )
+                rows = self._author_rows(connection, candidate_ids)
+                rows.sort(key=lambda row: -int(row["image_count"] or 0))
+                rows = rows[:4000]
             scored: list[tuple[float, sqlite3.Row, int]] = []
             for row in rows:
                 artist_id = int(row["id"])
@@ -2817,15 +2939,19 @@ class ProvenanceStore:
                     else int(row["image_count"] or 0)
                 )
                 score = 1.0
-                if needle:
-                    values: list[Any] = [row["name"], artist_id]
-                    for identity in identities.get(artist_id, []):
-                        values.extend([identity["display"], identity["identity"]])
-                    score = self._author_score(needle, *values)
+                if index is not None:
+                    prepared = index.values.get(artist_id) or ()
+                    score = name_match.best_score(needle, prepared)
+                    # The index may lag behind a fresh rename; the row itself is
+                    # always authoritative.
+                    score = max(
+                        score,
+                        name_match.score(needle, name_match.build_cached(str(row["name"] or ""))),
+                    )
                     if score <= 0:
                         continue
                 scored.append((score, row, scoped_count))
-            if needle:
+            if index is not None:
                 scored.sort(
                     key=lambda item: (
                         -item[0],
@@ -2849,7 +2975,7 @@ class ProvenanceStore:
             if view is None:
                 continue
             view["image_count"] = count
-            if needle:
+            if index is not None:
                 view["score"] = round(score, 3)
             result.append(view)
         return result
@@ -2943,7 +3069,7 @@ class ProvenanceStore:
                     text = str(value or "").strip()
                     if not text:
                         continue
-                    folded = text.casefold()
+                    folded = fold_text(text)
                     if folded in seen_values:
                         continue
                     seen_values.add(folded)
@@ -2958,7 +3084,7 @@ class ProvenanceStore:
                         "latest_mtime": latest,
                         "_unassigned": is_unassigned,
                         "_search_values": clean_values,
-                        "_search_text": "\n".join(value.casefold() for value in clean_values),
+                        "_search_text": "\n".join(fold_text(value) for value in clean_values),
                     }
                 )
         return entries
@@ -3012,31 +3138,43 @@ class ProvenanceStore:
         ordered.sort(key=lambda item: not item["_unassigned"])
         return ordered
 
-    @classmethod
     def search_artist_entries(
-        cls,
+        self,
         entries: Sequence[dict[str, Any]],
         query: str,
         sort: str = "latest_desc",
         *,
         include_unassigned: bool = True,
     ) -> list[dict[str, Any]]:
-        needle = _author_text(query)
-        ordered = cls.sort_artist_entries(
+        needle = name_match.build(_author_text(query))
+        ordered = self.sort_artist_entries(
             entries, sort, include_unassigned=include_unassigned
         )
-        if not needle:
+        if needle.empty:
             return ordered
+        with self._read() as connection:
+            index, fresh = self._artist_search_index(connection)
+        pooled = index.candidates(needle) | index.typo_candidates(needle)
         scored: list[dict[str, Any]] = []
         for item in ordered:
-            if needle not in item.get("_search_text", ""):
+            key = str(item.get("key") or "")
+            artist_id = int(key) if key.isdigit() else 0
+            prepared = index.values.get(artist_id) if artist_id else None
+            if prepared is None:
+                prepared = name_match.build_all(
+                    item.get("_search_values") or [item.get("name"), key]
+                )
+            elif fresh and artist_id not in pooled:
+                # The index is current, so staying out of the candidate pool
+                # means this artist cannot match; skip the costly difflib pass.
+                continue
+            value = name_match.best_score(needle, prepared)
+            if value <= 0:
                 continue
             copy = dict(item)
-            copy["score"] = 1.0 if needle == str(item["name"] or "").casefold() else 0.9
+            copy["score"] = round(value, 3)
             scored.append(copy)
-        scored.sort(key=lambda item: -item["score"])
-        # Preserve the requested artist order for equal substring matches.
-        scored.sort(key=lambda item: not item["_unassigned"])
+        scored.sort(key=lambda item: (-item["score"], not item["_unassigned"]))
         return scored
 
     def artist_stats(

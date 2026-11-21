@@ -1,4 +1,14 @@
-"""Pinyin/romaji lookup keys for fuzzy Chinese and Japanese search."""
+"""Script folding and pinyin/romaji lookup keys for fuzzy CJK search.
+
+Three layers are provided, each cheaper than the next:
+
+* ``fold_text`` normalizes a string to a comparison form: NFKC, casefold,
+  katakana→hiragana and simplified/traditional/variant folding (宫/宮, 髪/髮).
+* ``fold_key`` additionally drops punctuation, emoji and spaces so that
+  ``"ぴおてぐ（旧:potg）"`` and ``"ぴおてぐ 旧potg"`` compare equal.
+* ``lookup_keys``/``transliteration_keys`` add latin keys so a query typed as
+  pinyin (huagong) or romaji (natsuka) still reaches a CJK name.
+"""
 
 from __future__ import annotations
 
@@ -7,9 +17,21 @@ import unicodedata
 from functools import lru_cache
 from itertools import product
 
-_HAN_RE = re.compile(r"[\u3400-\u9fff]")
+from .cjk_variants import GROUPS
+
+_HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 _KANA_RE = re.compile(r"[\u3040-\u30ff]")
 _HIRA_RE = re.compile(r"[\u3041-\u3096\u309d-\u309f]")
+_HAN_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
+_KANA_RUN = re.compile(r"[\u3040-\u309f\u30a0-\u30fa\u30fc-\u30ff]+")
+_SCRIPT_RUN = re.compile(
+    r"[\u3040-\u309f\u30a0-\u30fa\u30fc-\u30ff]+"
+    r"|[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+"
+    r"|[0-9a-z]+"
+)
+_KEY_KEEP = re.compile(
+    r"[0-9a-z\u3040-\u309f\u30a0-\u30fa\u30fc-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+"
+)
 
 _KANA_TO_ROMAJI: dict[str, str] = {
     "あ": "a", "い": "i", "う": "u", "え": "e", "お": "o",
@@ -47,14 +69,45 @@ _KANA_DIGRAPHS: dict[str, str] = {
     "ふぁ": "fa", "ふぃ": "fi", "ふぇ": "fe", "ふぉ": "fo",
     "うぃ": "wi", "うぇ": "we", "うぉ": "wo",
     "てぃ": "ti", "でぃ": "di", "とぅ": "tu", "どぅ": "du",
+    "ゔぁ": "va", "ゔぃ": "vi", "ゔぇ": "ve", "ゔぉ": "vo",
 }
+
+
+def _build_variant_translation() -> dict[int, str]:
+    table: dict[int, str] = {}
+    for group in GROUPS:
+        canonical = group[0]
+        for char in group[1:]:
+            table[ord(char)] = canonical
+    return table
+
+
+_VARIANT_TRANSLATION = _build_variant_translation()
+
+
+def fold_text(value: str) -> str:
+    """Return the comparison form of a name/tag: case, kana and variant folded."""
+    return _fold_text_cached(str(value or ""))
+
+
+@lru_cache(maxsize=32768)
+def _fold_text_cached(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text)
+    text = _to_hiragana(text).casefold()
+    return text.translate(_VARIANT_TRANSLATION)
+
+
+def fold_key(value: str) -> str:
+    """Return ``fold_text`` with spaces, punctuation and emoji removed."""
+    return "".join(_KEY_KEEP.findall(fold_text(value)))
 
 
 def normalize_latin(value: str) -> str:
     """Lowercase, strip tones/punctuation and ü/v ambiguity for lookup keys."""
     text = unicodedata.normalize("NFKD", str(value or ""))
+    text = text.replace("u\u0308", "v").replace("U\u0308", "v")
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    text = text.casefold().replace("ü", "v").replace("u:", "v")
+    text = text.casefold().replace("u:", "v")
     return re.sub(r"[^0-9a-z]+", "", text)
 
 
@@ -121,65 +174,106 @@ def _loose_romaji(value: str) -> str:
 
 
 def romaji_keys(value: str) -> set[str]:
-    if not _KANA_RE.search(str(value or "")):
+    text = fold_text(value)
+    if not _KANA_RE.search(text):
         return set()
     keys = {
-        normalize_latin(_kana_to_romaji(value)),
-        normalize_latin(_loose_romaji(value)),
+        normalize_latin(_kana_to_romaji(text)),
+        normalize_latin(_loose_romaji(text)),
     }
     return {key for key in keys if len(key) >= 2}
 
 
-def pinyin_keys(value: str) -> set[str]:
-    text = str(value or "")
-    if not _HAN_RE.search(text) or _KANA_RE.search(text):
-        return set()
+@lru_cache(maxsize=16384)
+def _pinyin_options(value: str) -> tuple[tuple[str, ...], ...]:
+    """All readings of one Han run: per character, tone and ü folded."""
     try:
         from pypinyin import Style, pinyin
     except ImportError:
-        return set()
-    syllables = pinyin(text, style=Style.NORMAL, heteronym=True)
-    options: list[list[str]] = []
-    for item in syllables:
+        return ()
+    options: list[tuple[str, ...]] = []
+    for item in pinyin(value, style=Style.NORMAL, heteronym=True):
         values = [item] if isinstance(item, str) else list(item)
-        clean = [normalize_latin(value) for value in values]
-        clean = [value for value in clean if value]
+        clean = [normalize_latin(entry) for entry in values]
+        clean = [entry for entry in clean if entry]
         if clean:
-            options.append(clean)
+            options.append(tuple(dict.fromkeys(clean)))
+    return tuple(options)
+
+
+def _pinyin_reading(value: str) -> str:
+    """Most common pinyin reading of one Han run."""
+    return "".join(option[0] for option in _pinyin_options(value))
+
+
+def pinyin_keys(value: str) -> frozenset[str]:
+    text = fold_text(value)
+    if not _HAN_RE.search(text) or _KANA_RE.search(text):
+        return frozenset()
+    options = _pinyin_options(text)
     if not options:
-        return set()
+        return frozenset()
     combinations = 1
     for option in options:
         combinations *= len(option)
     if combinations > 32:
-        options = [[option[0]] for option in options]
+        options = tuple((option[0],) for option in options)
     keys: set[str] = set()
     for combination in product(*options):
         joined = "".join(combination)
         keys.add(joined)
         keys.add(joined.replace("v", "u"))
-    return {key for key in keys if len(key) >= 2}
+    return frozenset(key for key in keys if len(key) >= 2)
+
+
+def _script_reading(value: str) -> str:
+    """Romanize a folded string run by run, keeping the original order."""
+
+    def replace(match: re.Match[str]) -> str:
+        chunk = match.group()
+        if _KANA_RUN.fullmatch(chunk):
+            return _kana_to_romaji(chunk)
+        if _HAN_RUN.fullmatch(chunk):
+            return _pinyin_reading(chunk)
+        return chunk
+
+    # Drop separators first: "旧:potg" must not trip the legacy "u:" → "v" rule.
+    romanized = re.sub(r"[^0-9A-Za-z]+", "", _SCRIPT_RUN.sub(replace, value))
+    return normalize_latin(romanized)
 
 
 def transliteration_keys(value: str) -> set[str]:
-    """Return normalized pinyin/romaji keys for one Chinese/Japanese field."""
-    text = str(value or "").strip()
+    """Latin keys (pinyin and/or romaji) for one Chinese/Japanese field.
+
+    Mixed fields keep both halves: ``花宮なつか`` yields ``natsuka`` from the
+    kana, ``huagong`` from the kanji, and the combined ``huagongnatsuka``.
+    """
+    text = fold_text(str(value or "")).strip()
     if not text:
         return set()
-    if _KANA_RE.search(text):
-        return romaji_keys(text)
-    if _HAN_RE.search(text):
-        return pinyin_keys(text)
-    return set()
-
-
-@lru_cache(maxsize=4096)
-def query_lookup_key(value: str) -> str:
-    return normalize_latin(value)
-
-
-def lookup_keys(value: str) -> set[str]:
-    """Latin/romaji/pinyin keys used to compare one query against alias keys."""
-    keys = {normalize_latin(value)}
-    keys.update(transliteration_keys(value))
+    keys: set[str] = set()
+    for run in _KANA_RUN.findall(text):
+        keys.add(normalize_latin(_kana_to_romaji(run)))
+        keys.add(normalize_latin(_loose_romaji(run)))
+    for run in _HAN_RUN.findall(text):
+        keys.update(pinyin_keys(run))
+    keys.add(_script_reading(text))
+    keys.discard("")
     return {key for key in keys if len(key) >= 2}
+
+
+@lru_cache(maxsize=8192)
+def query_lookup_key(value: str) -> str:
+    return fold_key(value)
+
+
+@lru_cache(maxsize=16384)
+def lookup_keys(value: str) -> frozenset[str]:
+    """Latin/folded keys used to compare one query against alias keys."""
+    text = str(value or "")
+    folded = fold_key(text)
+    keys = {normalize_latin(text), folded}
+    keys.update(transliteration_keys(text))
+    if "v" in folded:
+        keys.add(folded.replace("v", "u"))
+    return frozenset(key for key in keys if len(key) >= 2)

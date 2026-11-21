@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .tag_dictionary import fuzzy_tag_entries
-from .transliterate import lookup_keys, transliteration_keys
+from .transliterate import fold_text, lookup_keys
 
 
 def normalize_tag(value: str) -> str:
@@ -225,7 +225,7 @@ def _lexicon_fuzzy_tags(value: str, *, limit: int = 12) -> list[str]:
     if _LEXICON_FUZZY is None:
         index: dict[str, set[str]] = {}
         for alias, tags in ILLUSTRATION_LEXICON.items():
-            for key in transliteration_keys(alias):
+            for key in lookup_keys(alias):
                 index.setdefault(key, set()).update(tags)
         _LEXICON_FUZZY = {
             key: tuple(sorted(tags)) for key, tags in index.items()
@@ -293,7 +293,7 @@ def _unique(values: list[str]) -> list[str]:
 def static_expand(query: str) -> QueryPlan:
     positive: list[str] = []
     negative: list[str] = []
-    lowered = query.lower()
+    lowered = fold_text(query)
 
     try:
         tokens = shlex.split(query)
@@ -311,7 +311,10 @@ def static_expand(query: str) -> QueryPlan:
             positive.append(token)
 
     negative_match = re.search(
-        r"(?:不要|排除|不含|没有|无)\s*([A-Za-z0-9_ -]+)",
+        r"(?:不要|排除|不含|没有|无)\s*([A-Za-z0-9][A-Za-z0-9_ -]*)",
+        query,
+    ) or re.search(
+        r"(?:不要|排除|不含|没有)\s*([^\s，,。;；]+)",
         query,
     )
     negative_text = negative_match.group(1).strip() if negative_match else ""
@@ -320,15 +323,19 @@ def static_expand(query: str) -> QueryPlan:
         negative.extend(_lexicon_fuzzy_tags(negative_text))
 
     for alias, tags in ILLUSTRATION_LEXICON.items():
-        if alias.lower() in lowered:
+        alias_key = fold_text(alias)
+        if alias_key in lowered:
             negative_context = re.search(
-                rf"(?:(?:不要|排除|不含|没有|无)\s*|(?:^|\s)-){re.escape(alias.lower())}",
+                rf"(?:(?:不要|排除|不含|没有|无)\s*|(?:^|\s)-){re.escape(alias_key)}",
                 lowered,
             )
             (negative if negative_context else positive).extend(tags)
 
     positive_text = re.sub(r"(?:^|\s)-\S+", " ", query)
-    positive_text = re.sub(r"(?:不要|排除|不含|没有|无)\s*[A-Za-z0-9_ -]+", " ", positive_text)
+    positive_text = re.sub(
+        r"(?:不要|排除|不含|没有|无)\s*[A-Za-z0-9][A-Za-z0-9_ -]*", " ", positive_text
+    )
+    positive_text = re.sub(r"(?:不要|排除|不含|没有)\s*[^\s，,。;；]+", " ", positive_text)
     if positive_text.strip():
         positive.extend(entry.tag for entry in fuzzy_tag_entries(positive_text))
         positive.extend(_lexicon_fuzzy_tags(positive_text))

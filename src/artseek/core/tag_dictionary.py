@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .transliterate import lookup_keys, transliteration_keys
+from .transliterate import fold_key, lookup_keys
 
 
 @dataclass(frozen=True)
@@ -174,7 +174,7 @@ def _fuzzy_index() -> list[tuple[TagEntry, tuple[str, ...]]]:
         for entry in (*_TAG_ENTRIES, *_GENERATED_ENTRIES):
             keys: set[str] = set()
             for value in (entry.tag, entry.zh, *entry.aliases):
-                keys.update(transliteration_keys(value))
+                keys.update(lookup_keys(value))
             if keys:
                 indexed.append((entry, tuple(sorted(keys))))
         _FUZZY_INDEX = indexed
@@ -232,58 +232,60 @@ def _fuzzy_fields(value: str, *, limit: int = 6) -> set[str] | None:
 
 
 def expand_tag_aliases(value: str) -> set[str]:
-    needle = str(value or "").strip().casefold()
+    raw = str(value or "").strip()
+    needle = fold_key(raw)
     if not needle:
         return set()
     for entry in _TAG_ENTRIES:
-        fields = {entry.tag.casefold(), entry.zh.casefold()}
-        fields.update(alias.casefold() for alias in entry.aliases)
+        fields = {fold_key(entry.tag), fold_key(entry.zh)}
+        fields.update(fold_key(alias) for alias in entry.aliases)
         if needle in fields:
             return {entry.tag, entry.zh, *entry.aliases}
-    generated = _GENERATED_BY_TAG.get(needle)
+    generated = _GENERATED_BY_TAG.get(raw.casefold())
     if generated is not None:
         return {generated.tag, generated.zh}
     for entry in _GENERATED_ENTRIES:
-        if entry.zh.casefold() == needle:
+        if fold_key(entry.zh) == needle or fold_key(entry.tag) == needle:
             return {entry.tag, entry.zh}
-    fuzzy = _fuzzy_fields(value)
+    fuzzy = _fuzzy_fields(raw)
     if fuzzy:
         return fuzzy
-    return {str(value).strip().lower().replace(" ", "_")}
+    return {raw.lower().replace(" ", "_")}
 
 
 def tag_info(tag: str) -> TagEntry | None:
-    text = str(tag or "").strip().casefold()
-    direct = _ENTRIES.get(text.replace(" ", "_"))
+    raw = str(tag or "").strip()
+    needle = fold_key(raw)
+    direct = _ENTRIES.get(raw.casefold().replace(" ", "_"))
     if direct is not None:
         return direct
     for entry in _TAG_ENTRIES:
-        fields = {entry.tag.casefold(), entry.zh.casefold()}
-        fields.update(alias.casefold() for alias in entry.aliases)
-        if text in fields:
+        fields = {fold_key(entry.tag), fold_key(entry.zh)}
+        fields.update(fold_key(alias) for alias in entry.aliases)
+        if needle in fields:
             return entry
-    generated = _GENERATED_BY_TAG.get(text)
+    generated = _GENERATED_BY_TAG.get(raw.casefold())
     if generated is not None:
         return generated
-    fuzzy = fuzzy_tag_entries(tag, limit=1)
+    fuzzy = fuzzy_tag_entries(raw, limit=1)
     return fuzzy[0] if fuzzy else None
 
 
 def search_tags(query: str, *, limit: int = 40) -> list[TagEntry]:
-    needle = str(query or "").strip().casefold()
+    raw = str(query or "").strip()
+    needle = fold_key(raw)
     entries = [*_TAG_ENTRIES, *_GENERATED_ENTRIES]
     if not needle:
         return entries[: max(1, int(limit))]
     result: list[TagEntry] = []
     seen: set[str] = set()
-    fuzzy_matches = fuzzy_tag_entries(query, limit=limit)
+    fuzzy_matches = fuzzy_tag_entries(raw, limit=limit)
     fuzzy_tags = {entry.tag for entry in fuzzy_matches}
     for entry in (*fuzzy_matches, *entries):
         if entry.tag in seen:
             continue
-        fields = (entry.tag, entry.zh, *entry.aliases)
         include = entry.tag in fuzzy_tags or any(
-            needle in value.casefold() for value in fields
+            needle in fold_key(value) for value in (entry.tag, entry.zh, *entry.aliases)
         )
         if include:
             seen.add(entry.tag)

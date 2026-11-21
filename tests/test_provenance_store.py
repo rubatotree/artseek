@@ -265,6 +265,54 @@ class ProvenanceStoreTests(unittest.TestCase):
         self.assertEqual(by_name[0]["key"], key)
         self.assertGreaterEqual(by_name[0]["score"], 0.85)
 
+    def test_author_search_ignores_simplified_traditional_variants(self) -> None:
+        key = self.store.ensure_author("pixiv", "4476264", name="花宮なつか")
+        self.store.ensure_author("pixiv", "4476265", name="宮坂みゆ")
+        for query in ("花宮なつか", "花宫なつか", "花宮ナツカ", "花宫ナツカ"):
+            matches = self.store.list_authors(query, limit=5)
+            self.assertTrue(matches, query)
+            self.assertEqual(matches[0]["key"], key, query)
+            self.assertGreaterEqual(matches[0]["score"], 0.85, query)
+
+    def test_author_search_accepts_pinyin_and_romaji(self) -> None:
+        key = self.store.ensure_author("pixiv", "4476264", name="花宮なつか")
+        self.store.ensure_author("pixiv", "4476265", name="宮坂みゆ")
+        for query in ("natsuka", "なつか", "ナツカ", "huagong"):
+            matches = self.store.list_authors(query, limit=10)
+            self.assertIn(key, [item["key"] for item in matches], query)
+        self.assertEqual(self.store.list_authors("natsuka", limit=5)[0]["key"], key)
+        self.assertEqual(self.store.list_authors("huagong", limit=5)[0]["key"], key)
+
+    def test_author_search_survives_rename_and_new_artists(self) -> None:
+        key = self.store.ensure_author("pixiv", "4476264", name="花宮なつか")
+        self.assertEqual(self.store.list_authors("natsuka", limit=5)[0]["key"], key)
+        created = self.store.ensure_author("pixiv", "5566778", name="長髮の少女")
+        renamed = self.store.set_author_name(key, "花宮なつか（旧）")
+        self.assertEqual(renamed, key)
+        matches = self.store.list_authors("changfa", limit=5)
+        self.assertIn(created, [item["key"] for item in matches])
+        self.assertEqual(self.store.list_authors("natsuka", limit=5)[0]["key"], key)
+
+    def test_artist_entries_search_uses_romaji(self) -> None:
+        key = self.store.ensure_author("pixiv", "4476264", name="花宮なつか")
+        self.store.upsert_scan("p1", self.payload, _parsed("12345678_p0.png"))
+        self.store.set_fetch_result(
+            "p1",
+            {
+                "platform": "pixiv",
+                "source_id": "12345678",
+                "page": 0,
+                "url": "https://www.pixiv.net/artworks/12345678",
+                "status": "ok",
+            },
+            author_key=key,
+        )
+        entries = self.store.artist_entries(None)
+        ranked = self.store.search_artist_entries(entries, "natsuka")
+        self.assertEqual([item["key"] for item in ranked], [key])
+        self.assertGreater(ranked[0]["score"], 0.8)
+        self.assertEqual(self.store.search_artist_entries(entries, "zzzz"), [])
+
     def test_conflicting_identity_merges_artists_and_keeps_images(self) -> None:
         pixiv = self.store.ensure_author("pixiv", "100", name="Pixiv Name")
         twitter = self.store.ensure_author(
